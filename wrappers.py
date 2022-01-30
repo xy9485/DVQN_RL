@@ -3,6 +3,7 @@ from gym.spaces.box import Box
 from gym.envs.box2d.car_racing import CarRacing
 import numpy as np
 from PIL import Image
+from torchvision import transforms as T
 
 class GeneralWrapper(gym.Wrapper):
     def __init__(self, env, train):
@@ -13,16 +14,22 @@ class GeneralWrapper(gym.Wrapper):
             self.env_purpose = "eval"
         self.step_episode = 0
 
-    def step_episode_add(self):
+    def step(self):
+        if self.env.spec.id == 'CarRacing-v0':
+            #  https://github.com/openai/gym/issues/976
+            self.viewer.window.dispatch_events()
         self.step_episode += 1
 
-    def print_at_reset(self):
+    def reset(self):
+        if self.env.spec.id == 'CarRacing-v0':
+            #  https://github.com/openai/gym/issues/976
+            self.viewer.window.dispatch_events()
         print(f"====Env Reset: env_purpose: {self.env_purpose} | steps of this episode: {self.step_episode}====")
         self.step_episode = 0
 
-class LatentWrapper(GeneralWrapper):
-    def __init__(self, env, train, encoder=None, transform=None, seed=None):
-        super().__init__(env, train) # self.env = env happens in init of gym.Wrapper
+class LatentWrapper(gym.Wrapper):
+    def __init__(self, env, train, encoder=None, process_frame=None, seed=None):
+        super().__init__(env) # self.env = env happens in init of gym.Wrapper
 
         if seed:
             self.env.seed(int(seed))
@@ -30,53 +37,43 @@ class LatentWrapper(GeneralWrapper):
         #  new observation space to deal with resize
         self.observation_space = Box(
             low=0,
-            high=255,
+            high=1,
             shape=(128,),
-            # dtype=np.float32
+            dtype=np.float32
         )
 
         self._encoder = encoder
-        self._transform = transform
+        self._process_frame = process_frame
 
     def step(self, action):
-        """ one step through the environment """
-        frame, reward, done, info = self.env.step(action)
-
-        #  needed to get image rendering
-        #  https://github.com/openai/gym/issues/976
-        self.viewer.window.dispatch_events()
-
-        obs = self.process_frame(frame)
-        self.step_episode_add()
-        return obs, reward, done, info
+        obs, reward, done, info = self.env.step(action)
+        # super().step()
+        obs = self._process_frame(obs)
+        latent_obs = self.encode(obs)
+        return latent_obs, reward, done, info
 
     def reset(self):
-        """ resets and returns initial observation """
-        raw = self.env.reset()
-        # print("######raw.shape:", raw.shape)
-        #  needed to get image rendering
-        #  https://github.com/openai/gym/issues/976
-        self.viewer.window.dispatch_events()
+        obs = self.env.reset()
+        # super().reset()
+        obs = self._process_frame(obs)
+        latent_obs = self.encode(obs)
+        return latent_obs
 
-        obs = self.process_frame(raw)
-        self.print_at_reset()
-        return obs
+    # def process_frame(self, obs):
+    #     obs = self._transform(obs)
+    #     obs = obs.unsqueeze(0)
+    #     return self._encoder(obs)[0].detach().numpy()   # using mu
 
-    def process_frame(self, frame, vertical_cut=84, resized_screen=(64, 64)):
-        """ crops, scales & convert to float """
-        frame = frame[:vertical_cut, :, :]
-        frame = Image.fromarray(frame, mode='RGB')
-        obs = frame.resize(resized_screen, Image.BILINEAR)
-        obs = np.array(obs)
-        # obs = np.array(obs) / max_val     # with normalization
-
-        obs = self._transform(obs)
+    def encode(self, obs):
+        obs = T.ToTensor()(obs)
         obs = obs.unsqueeze(0)
-        return self._encoder(obs)[0].detach().numpy()
+        return self._encoder(obs)[0].squeeze().detach().numpy()  # using mu
 
-class ShapingWrapper(GeneralWrapper):
-    def __init__(self, env, train, encoder=None, transform=None, policy=None, seed=None):
-        super().__init__(env, train)
+
+
+class ShapingWrapper(gym.Wrapper):
+    def __init__(self, env, train, encoder=None, process_frame=None, policy=None, seed=None):
+        super().__init__(env)
 
         if seed:
             self.env.seed(int(seed))
@@ -84,89 +81,68 @@ class ShapingWrapper(GeneralWrapper):
         self.observation_space = Box(
             low=0,
             high=255,
-            shape=self.screen_size + (3,)
+            shape=(64,64) + (3,),
+            dtype=np.uint8
         )
 
         self._encoder = encoder
-        self._transform = transform
+        self._process_frame = process_frame
         self.policy = policy
         self.value_last_latent_state = 0
 
     def step(self, action):
-        """ one step through the environment """
-        frame, reward, done, info = self.env.step(action)
+        obs, reward, done, info = self.env.step(action)
+        # super().step()
 
-        #  needed to get image rendering
-        #  https://github.com/openai/gym/issues/976
-        self.viewer.window.dispatch_events()
-
-        latent_obs = self.process_frame(frame, to_encode=True)
+        obs = self._process_frame(obs)
+        latent_obs = self.encode(obs)
         action = self.policy.actor(latent_obs)
         new_value = self.policy.critic(latent_obs, action)
         shaping = new_value - self.value_last_latent_state
         self.value_last_latent_state = new_value
 
-        obs = self.process_frame(frame)
-        self.step_episode_add()
+        obs = self._process_frame(obs)
         return obs, reward+shaping, done, info
 
     def reset(self):
-        """ resets and returns initial observation """
-        raw = self.env.reset()
-        # print("######raw.shape:", raw.shape)
-        #  needed to get image rendering
-        #  https://github.com/openai/gym/issues/976
-        self.viewer.window.dispatch_events()
+        obs = self.env.reset()
+        # super().reset()
 
-        latent_obs = self.process_frame(raw, to_encode=True)    # or abstract obs
+        obs = self._process_frame(obs)
+        latent_obs = self.encode(obs)
         action = self.policy.actor(latent_obs)
         new_value = self.policy.critic(latent_obs, action)
         self.value_last_latent_state = new_value
 
-        obs = self.process_frame(raw)  # or ground obs
-
-        self.print_at_reset()
+        obs = self.process_frame(obs)
         return obs
 
-    def process_frame(self, frame, vertical_cut=84, resized_screen=(64, 64), to_encode=False):
-        """ crops, scales & convert to float """
-        frame = frame[:vertical_cut, :, :]
-        frame = Image.fromarray(frame, mode='RGB')
-        obs = frame.resize(resized_screen, Image.BILINEAR)
-        obs = np.array(obs)
-        if to_encode:
-            obs = self._transform(obs)
-            obs = obs.unsqueeze(0)
-            return self._encoder(obs)[0].detach().numpy()
-        return obs  # without scaling, dtype:uint8
-        # return np.array(obs) / max_val    #with scaling
+    # def process_frame(self, obs, to_encode=False):
+    #     obs = self._transform(obs)
+    #     if to_encode:
+    #         obs = obs.unsqueeze(0)
+    #         return self._encoder(obs)[0].detach().numpy()
+    #     return obs.detach().permute(1,2,0).numpy()  # without scaling, dtype:uint8
+    #     # return np.array(obs) / max_val    #with scaling
 
-class NaiveWrapper(GeneralWrapper):
+    def encode(self, obs):
+        obs = T.ToTensor()(obs)
+        obs = obs.unsqueeze(0)
+        return self._encoder(obs)[0].squeeze().detach().numpy()  # using mu
+
+class NaiveWrapper(gym.Wrapper):
     def __init__(self, env, train):
         super().__init__(env, train)
 
     def step(self, action):
-        """ one step through the environment """
-        frame, reward, done, info = self.env.step(action)
-
-        #  needed to get image rendering
-        #  https://github.com/openai/gym/issues/976
-        self.viewer.window.dispatch_events()
-
-        self.step_episode_add()
-        return frame, reward, done, info
+        obs, reward, done, info = self.env.step(action)
+        # super().step()
+        return obs, reward, done, info
 
     def reset(self):
-        """ resets and returns initial observation """
-        # print(f"reset the env:", self.env_purpose)
-        raw = self.env.reset()
-        # print("######raw.shape:", raw.shape)
-        #  needed to get image rendering
-        #  https://github.com/openai/gym/issues/976
-        self.viewer.window.dispatch_events()
-
-        self.print_at_reset()
-        return raw
+        obs = self.env.reset()
+        # super.reset()
+        return obs
 
 
 
