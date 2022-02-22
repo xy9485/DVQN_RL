@@ -1,5 +1,6 @@
 """ Some data loading utilities """
 from bisect import bisect
+import os
 from os import listdir
 from os.path import join, isdir
 from tqdm import tqdm
@@ -9,13 +10,12 @@ import numpy as np
 import glob
 
 class _RolloutDataset(torch.utils.data.Dataset): # pylint: disable=too-few-public-methods
-    def __init__(self, data_path, transform, buffer_size=200, train=True): # pylint: disable=too-many-arguments
+    def __init__(self, data_path, test_ratio = 1/3, transform=None, buffer_size=200, train=True): # pylint: disable=too-many-arguments
         self._transform = transform
 
         self._files = sorted(glob.glob(join(data_path, 'rollout_ep_[0-9][0-9][0-9].npz')))
 
         indices = np.arange(0, len(self._files))
-        test_ratio = 1/3
         self.n_trainset = int(len(indices) * (1.0 - test_ratio))
         print("self.n_trainset:", self.n_trainset)
 
@@ -39,6 +39,9 @@ class _RolloutDataset(torch.utils.data.Dataset): # pylint: disable=too-few-publi
         # print(len(self._buffer_fnames))
         self._buffer_index += self._buffer_size
         self._buffer_index = self._buffer_index % len(self._files)
+        if self._buffer_index>0:
+            self._buffer_fnames += self._files[:self._buffer_index]
+
         self._buffer = []
         self._cum_size = [0]
 
@@ -51,7 +54,7 @@ class _RolloutDataset(torch.utils.data.Dataset): # pylint: disable=too-few-publi
             with np.load(f) as data:
                 self._buffer += [{k: np.copy(v) for k, v in data.items()}]
                 self._cum_size += [self._cum_size[-1] +
-                                   self._data_per_sequence(data['reward'].shape[0])]
+                                   self._length_per_sequence(data['reward'].shape[0])]
             pbar.update(1)
         pbar.close()
 
@@ -72,7 +75,7 @@ class _RolloutDataset(torch.utils.data.Dataset): # pylint: disable=too-few-publi
     def _get_data(self, data, seq_index):
         pass
 
-    def _data_per_sequence(self, data_length):
+    def _length_per_sequence(self, data_length):
         pass
 
 
@@ -122,7 +125,7 @@ class RolloutSequenceDataset(_RolloutDataset): # pylint: disable=too-few-public-
         # (obs, action, reward, terminal, next_obs)
         return obs, action, reward, terminal, next_obs
 
-    def _data_per_sequence(self, data_length):
+    def _length_per_sequence(self, data_length):
         return data_length - self._seq_len
 
 class RolloutObservationDataset(_RolloutDataset): # pylint: disable=too-few-public-methods
@@ -147,8 +150,46 @@ class RolloutObservationDataset(_RolloutDataset): # pylint: disable=too-few-publ
     :args transform: transformation of the observations
     :args train: if True, train data, else test
     """
-    def _data_per_sequence(self, data_length):
+    def _length_per_sequence(self, data_length):
         return data_length
 
     def _get_data(self, data, seq_index):
         return self._transform(data['obs'][seq_index])
+
+class RolloutDatasetNaive(torch.utils.data.Dataset):
+    def __init__(self, data_path, transform=None, train=True, test_ratio=0.01,):
+        self.fpaths = np.array(sorted(glob.glob(os.path.join(data_path, 'rollout_ep_[0-9][0-9][0-9]*.npz'))))
+        print("len(self.fpaths):", len(self.fpaths))
+        print(os.path.join(data_path, 'rollout_ep_[0-9][0-9][0-9]*.npz'))
+        # np.random.seed(0)
+        indices = np.arange(0, len(self.fpaths))
+        n_trainset = int(len(indices)*(1.0-test_ratio))
+        self.train_indices = indices[:n_trainset]
+        self.test_indices = indices[n_trainset:]
+        # self.train_indices = np.random.choice(indices, int(len(indices)*(1.0-test_ratio)), replace=False)
+        # self.test_indices = np.delete(indices, self.train_indices)
+        self.indices = self.train_indices if train else self.test_indices
+        # import pdb; pdb.set_trace()
+        self._transform = transform
+        # print(self.indices)
+
+        self.memory = []
+        for f in self.fpaths[self.indices]:
+            with np.load(f) as data:
+                # self._buffer += [{k: np.copy(v) for k, v in data.items()}]
+                # print(data['obs'].shape)
+                self.memory += list(data['obs'])
+        self.memory = np.array(self.memory)
+        print("len(self.memory):", len(self.memory))
+
+    def __getitem__(self, idx):
+        obs = self.memory[idx]
+        obs = self._transform(obs)
+        # obs = obs.permute(2, 0, 1) # (N, C, H, W)
+        return obs
+
+    def __len__(self):
+        return len(self.memory)
+
+if __name__ == '__main__':
+    roll = RolloutDatasetNaive('../datasets/CarRacing-v0')

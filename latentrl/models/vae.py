@@ -1,19 +1,23 @@
 import torch
 import torch.nn as nn
-import numpy as np
-from hparams import HyperParams as hp
-from torchsummary import summary
+from torchvision.utils import save_image
+import time
+import os
 
 
 class VAE(nn.Module):
-    def __init__(self, img_channels, latent_dims, hidden_dims=None):
+    def __init__(self, img_channels, latent_dims, hidden_dims=None, vae_version=None):
         super().__init__()
         self.img_channels = img_channels
         self.latent_dims = latent_dims
+        self.vae_version = vae_version
+        os.makedirs(f"../reconstruction/{self.vae_version}/", exist_ok=True)
+        self.forward_call = 0
         if hidden_dims is None:
-            hidden_dims = [32, 64, 128, 256, 512]
+            hidden_dims = [32, 64, 128, 256, 512]   # last layer of encoder hidden_dims[-1] * 4
+            # hidden_dims = [32, 64, 128, 256]    # last layer of encoder hidden_dims[-1] * 16
         self.encoder = Encoder(img_channels, latent_dims, hidden_dims)
-        self.decoder = Decoder(img_channels, latent_dims,hidden_dims)
+        self.decoder = Decoder(img_channels, latent_dims, hidden_dims)
 
     def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
@@ -28,10 +32,17 @@ class VAE(nn.Module):
         return eps * std + mu
 
     def forward(self, x):
+        # print("input:")
+        # print(x)
         mu, logvar = self.encoder(x)
         # sigma = logsigma.exp()
         z = self.reparameterize(mu, logvar)
         y = self.decoder(z)
+        if self.forward_call % 5000 == 0:
+            print("save input and recon")
+            # save_image(x[:8], f"../reconstruction/{self.vae_version}/input_{time.time()}.png")
+            save_image(y[:8], f"../reconstruction/{self.vae_version}/recon_{time.time()}.png")
+        self.forward_call += 1
         return y, mu, logvar
 
     def loss_function(self,recon_x, x, mu, logvar):

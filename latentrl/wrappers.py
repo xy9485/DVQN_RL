@@ -1,0 +1,766 @@
+import time
+from collections import deque
+from statistics import mean
+
+import gym
+from gym.spaces.box import Box
+from gym.envs.box2d.car_racing import CarRacing
+from gym.envs.box2d.car_dynamics import Car
+import numpy as np
+from PIL import Image
+from gym import spaces
+from stable_baselines3 import SAC
+from stable_baselines3.common.vec_env import VecEnvWrapper, VecEnv
+from stable_baselines3.common.vec_env.base_vec_env import VecEnvStepReturn
+from torchvision import transforms as T
+from os.path import join
+import torch
+from latentrl.models.vae import VAE
+import importlib
+from typing import List, Set, Dict, Tuple, Optional, Union, Any, Callable
+
+class GeneralWrapper(gym.Wrapper):
+    def __init__(self, env, train):
+        super().__init__(env)
+        if train:
+            self.env_purpose = "train"
+        else:
+            self.env_purpose = "eval"
+        self.step_episode = 0
+
+    def step(self):
+        if self.env.spec.id == 'CarRacing-v0':
+            #  https://github.com/openai/gym/issues/976
+            self.viewer.window.dispatch_events()
+        self.step_episode += 1
+
+    def reset(self):
+        if self.env.spec.id == 'CarRacing-v0':
+            #  https://github.com/openai/gym/issues/976
+            self.viewer.window.dispatch_events()
+        print(f"====Env Reset: env_purpose: {self.env_purpose} | steps of this episode: {self.step_episode}====")
+        self.step_episode = 0
+
+class LatentWrapper(gym.Wrapper):
+    def __init__(self, env, encoder=None, process_frame=None, seed=None):
+        super().__init__(env) # self.env = env happens in init of gym.Wrapper
+
+        if seed:
+            self.env.seed(int(seed))
+
+        #  new observation space to deal with resize
+        self.observation_space = Box(
+            low=0,
+            high=1,
+            shape=(128,),
+            dtype=np.float32
+        )
+
+        self._encoder = encoder
+        self._process_frame = process_frame
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        # super().step()
+        obs = self._process_frame(obs)
+        latent_obs = self.encode(obs)
+        return latent_obs, reward, done, info
+
+    def reset(self):
+        obs = self.env.reset()
+        # super().reset()
+        obs = self._process_frame(obs)
+        latent_obs = self.encode(obs)
+        return latent_obs
+
+    # def process_frame(self, obs):
+    #     obs = self._transform(obs)
+    #     obs = obs.unsqueeze(0)
+    #     return self._encoder(obs)[0].detach().numpy()   # using mu
+
+    def encode(self, obs):
+        obs = T.ToTensor()(obs)
+        obs = obs.unsqueeze(0)
+        return self._encoder(obs)[0].squeeze().detach().numpy()  # using mu
+
+
+
+class ShapingWrapper(gym.Wrapper):
+    def __init__(self, env, encoder=None, process_frame=None, policy=None, seed=None):
+        super().__init__(env)
+
+        if seed:
+            self.env.seed(int(seed))
+        #  new observation space to deal with resize
+        self.observation_space = Box(
+            low=0,
+            high=255,
+            shape=(64,64) + (3,),
+            dtype=np.uint8
+        )
+
+        self._encoder = encoder
+        self._process_frame = process_frame
+        self.policy = policy
+        self.value_last_latent_state = 0
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        # super().step()
+
+        obs = self._process_frame(obs)
+        latent_obs = self.encode(obs)
+        action = self.policy.actor(latent_obs)
+        new_value = self.policy.critic(latent_obs, action)
+        shaping = new_value - self.value_last_latent_state
+        self.value_last_latent_state = new_value
+
+        obs = self._process_frame(obs)
+        return obs, reward+shaping, done, info
+
+    def reset(self):
+        obs = self.env.reset()
+        # super().reset()
+
+        obs = self._process_frame(obs)
+        latent_obs = self.encode(obs)
+        action = self.policy.actor(latent_obs)
+        new_value = self.policy.critic(latent_obs, action)
+        self.value_last_latent_state = new_value
+
+        obs = self._process_frame(obs)
+        return obs
+
+    # def process_frame(self, obs, to_encode=False):
+    #     obs = self._transform(obs)
+    #     if to_encode:
+    #         obs = obs.unsqueeze(0)
+    #         return self._encoder(obs)[0].detach().numpy()
+    #     return obs.detach().permute(1,2,0).numpy()  # without scaling, dtype:uint8
+    #     # return np.array(obs) / max_val    #with scaling
+
+    def encode(self, obs):
+        obs = T.ToTensor()(obs)
+        obs = obs.unsqueeze(0)
+        return self._encoder(obs)[0].squeeze().detach().numpy()  # using mu
+
+class NaiveWrapper(gym.Wrapper):
+    def __init__(self, env, train):
+        super().__init__(env, train)
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        # super().step()
+        return obs, reward, done, info
+
+    def reset(self):
+        obs = self.env.reset()
+        # super.reset()
+        return obs
+
+class CropObservationWrapper(gym.ObservationWrapper):
+    def __init__(self, env, vertical_cut=None, horizontal_cut=None):
+        super().__init__(env)
+        self.horizontal_cut = horizontal_cut
+        self.vertical_cut = vertical_cut
+
+        self.observation_space = Box(
+            low=0,
+            high=255,
+            shape=(64, 64) + (3,),
+            dtype=np.uint8
+        )
+
+    def observation(self, obs):
+        obs = obs[:self.vertical_cut, :self.horizontal_cut, :]
+        return obs
+
+class ResizeObservationWrapper(gym.ObservationWrapper):
+    def __init__(self, env, shape):
+        super().__init__(env)
+        self.shape = shape
+
+        self.observation_space = Box(
+            low=0,
+            high=255,
+            shape=(shape[0], shape[1]) + (3,),
+            dtype=np.uint8
+        )
+
+    def observation(self, obs):
+        obs_image = Image.fromarray(obs, mode='RGB')
+        obs = obs_image.resize(self.resize, Image.BILINEAR)
+        return np.array(obs)
+
+class CarRandomStartWrapper(gym.Wrapper):
+    def __init__(self, env, warm_up_steps, n_envs, always_random_start, no_random_start=False):
+        super().__init__(env)
+        self.warm_up_steps = int(warm_up_steps/n_envs)
+        self.finished_steps = 0
+        self.always_random_start = always_random_start
+        self.no_random_start = no_random_start
+        # self.prev_action = self.env.action_space.sample()
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        self.finished_steps += 1
+        return obs, reward, done, info
+
+    def reset(self):
+        obs = self.env.reset()
+        if self.no_random_start:
+            return obs
+        if self.always_random_start or (self.finished_steps < self.warm_up_steps):
+            position = np.random.randint(len(self.env.track))
+            self.env.car = Car(self.env.world, *self.env.track[position][1:4])
+            # if self.accelerated_exploration:
+            self._action = self.env.action_space.sample()
+            obs, _, _, _  = self.env.step(self._action)
+        return obs
+
+    # def step(self, action):
+    #     obs, reward, done, info = self.env.step(action)
+
+
+class PreprocessObservationWrapper(gym.ObservationWrapper):       #combination of CropObservationWrapper and ResizeObservationWrapper
+    def __init__(self, env, vertical_cut_u=None, vertical_cut_d=None, horizontal_cut_l=None,
+                 horizontal_cut_r=None, shape=64, num_output_channels=3, preprocess_mode= 'transforms'):
+        super().__init__(env)
+        self.shape = (shape, shape)
+        self.num_output_channels = num_output_channels
+        self.preprocess_mode= preprocess_mode # PIL or transforms(for Grayscale)
+
+        self.vertical_cut_u = vertical_cut_u
+        self.vertical_cut_d = vertical_cut_d
+        self.horizontal_cut_l = horizontal_cut_l
+        self.horizontal_cut_r = horizontal_cut_r
+
+        self.observation_space = Box(
+            low=0,
+            high=255,
+            shape=(shape, shape) + (num_output_channels,),
+            dtype=np.uint8  # this is important to have
+        )
+
+    def observation_(self, obs):
+        obs = obs[self.vertical_cut_u:self.vertical_cut_d, self.horizontal_cut_l:self.horizontal_cut_r, :]
+        obs = Image.fromarray(obs, mode='RGB')
+        obs = obs.resize(self.shape, Image.BILINEAR)
+        return np.array(obs)
+
+    def observation(self, obs):
+        if self.preprocess_mode == 'PIL':
+            obs = obs[self.vertical_cut_u:self.vertical_cut_d, self.horizontal_cut_l:self.horizontal_cut_r, :]
+            obs = Image.fromarray(obs, mode='RGB')
+            obs = obs.resize(self.shape, Image.BILINEAR)
+            return np.array(obs)
+        elif self.preprocess_mode == 'transforms':
+            obs = obs[self.vertical_cut_u:self.vertical_cut_d, self.horizontal_cut_l:self.horizontal_cut_r, :]
+            obs = T.ToPILImage()(obs)
+            obs = T.Resize(self.shape)(obs)  # interpolation=InterpolationMode.BILINEAR
+            obs = T.Grayscale(num_output_channels=self.num_output_channels)(obs)
+            if self.num_output_channels == 1:
+                return np.array(obs)[..., np.newaxis]
+                # or return np.expand_dims(np.array(obs), -1)
+            return np.array(obs)
+
+class EncodeWrapper(gym.Wrapper):
+    def __init__(self, env, vae_f=None, vae_sample=False, vae_inchannel=3, latent_dim=128, seed=None):
+        super().__init__(env) # self.env = env happens in init of gym.Wrapper
+
+        if seed:
+            self.env.seed(int(seed))
+
+        #  new observation space to deal with resize
+        self.observation_space = Box(
+            low=-5,
+            high=5,
+            shape=(128,),
+            dtype=np.float32
+        )
+
+        # load vae
+        best_filename = join(vae_f, 'best.tar')
+        vae_model = VAE(vae_inchannel, latent_dim)  # latent_size: 128
+        device_vae = torch.device('cpu')
+        vae_model.load_state_dict(torch.load(best_filename, map_location=device_vae)['state_dict'])
+        # vae_model.to(device)
+        vae_model.eval()
+        self._vae_model = vae_model
+        self._encoder = vae_model.encoder
+        self.vae_sample = vae_sample
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        latent_obs = self.encode(obs)
+        return latent_obs, reward, done, info
+
+    def reset(self):
+        obs = self.env.reset()
+        latent_obs = self.encode(obs)
+        return latent_obs
+
+    def encode(self, obs):
+        obs = T.ToTensor()(obs)
+        obs = obs.unsqueeze(0)
+        if self.vae_sample:
+            latent_obs = self._vae_model.reparameterize(*self._encoder(obs))
+        else:
+            latent_obs = self._encoder(obs)[0]
+        return latent_obs.squeeze().detach().numpy()  # using mu
+
+class ShapeRewardWrapper(gym.Wrapper):
+    def __init__(self, env, vae_f=None, latent_model_f=None, latent_model_class=SAC, seed=None):
+        super().__init__(env)
+
+        if seed:
+            self.env.seed(int(seed))
+        #  new observation space to deal with resize
+        self.observation_space = Box(
+            low=0,
+            high=255,
+            shape=(64, 64) + (3,),
+            dtype=np.uint8 # this is important to have
+        )
+
+        # load vae
+        best_filename = join(vae_f, 'best.tar')
+        vae_model = VAE(3, 128)  # latent_size: 128
+        device_vae = torch.device('cpu')
+        vae_model.load_state_dict(torch.load(best_filename, map_location=device_vae)['state_dict'])
+        # vae_model.to(device)
+        vae_model.eval()
+        self._encoder = vae_model.encoder
+
+        # load latent policy
+        self._latent_model_f = latent_model_f
+        self._latent_model_class = latent_model_class
+        self._latent_policy = self._latent_model_class.load(self._latent_model_f).policy
+        self._latent_policy.eval()
+        self._latent_policy.to('cpu')
+        self._last_potential_value = None
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+
+        latent_obs = self.encode(obs)
+        action = self._latent_policy.actor(latent_obs, deterministic=True)
+        q_values = [q_value.squeeze().item() for q_value in self._latent_policy.critic(latent_obs, action)]
+        new_potential_value = max(q_values) # in SAC there are 2 q-networks
+
+        assert self._last_potential_value is not None, "potential value of the old state can't be none"
+        shaping = new_potential_value - self._last_potential_value
+        self._last_potential_value = new_potential_value
+
+        return obs, reward+shaping, done, info
+
+    def reset(self):
+        obs = self.env.reset()
+        latent_obs = self.encode(obs)
+        action = self._latent_policy.actor(latent_obs, deterministic=True)
+        q_values = [q_value.squeeze().item() for q_value in self._latent_policy.critic(latent_obs, action)]
+        new_potential_value = max(q_values) # in SAC there are 2 q-networks
+        self._last_potential_value = new_potential_value
+
+        return obs
+
+    def encode(self, obs):
+        obs = T.ToTensor()(obs)
+        obs = obs.unsqueeze(0)
+        return self._encoder(obs)[0].detach()
+        # no more need of squeeze and conversion to numpy, otherwise errors rise
+
+
+class EncodeStackWrapper(gym.Wrapper):
+    def __init__(self, env, n_stack, vae_f=None, vae_inchannel=3, latent_dim=128, vae_sample=False):
+        super().__init__(env)
+        self.n_stack = n_stack
+        self.repeat_axis = -1
+        self.stack_dimension = -1
+        observation_space = Box(
+            low=-5,
+            high=5,
+            shape=(latent_dim,),
+            dtype=np.float32
+        )
+        low = np.repeat(observation_space.low, self.n_stack, axis=self.repeat_axis)
+        high = np.repeat(observation_space.high, self.n_stack, axis=self.repeat_axis)
+        self.observation_space = spaces.Box(low=low, high=high, dtype=observation_space.dtype)
+
+        # load vae
+        best_filename = join(vae_f, 'best.tar')
+        vae_model = VAE(vae_inchannel, latent_dim)  # latent_size: 128
+        device_vae = torch.device('cpu')
+        vae_model.load_state_dict(torch.load(best_filename, map_location=device_vae)['state_dict'])
+        # vae_model.to(device)
+        vae_model.eval()
+        self._vae_model = vae_model
+        self._encoder = vae_model.encoder
+        self.vae_inchannel = vae_inchannel
+        self.latent_dim = latent_dim
+        self.vae_sample = vae_sample
+
+        self.stacked_latent_obs = np.zeros(self.n_stack * self.latent_dim, np.float32)
+        self.shift_size = latent_dim
+
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        latent_obs = self.encode(obs)
+        self.stacked_latent_obs = np.roll(self.stacked_latent_obs, shift=-self.shift_size, axis=self.stack_dimension)
+        self.stacked_latent_obs[..., -self.shift_size:] = latent_obs
+        return self.stacked_latent_obs, reward, done, info
+
+    def reset(self):
+        self.stacked_latent_obs = np.zeros(self.n_stack * self.latent_dim, np.float32)
+        obs = self.env.reset()
+        latent_obs = self.encode(obs)
+        self.stacked_latent_obs[..., -self.shift_size:] = latent_obs
+        return self.stacked_latent_obs
+
+    def encode(self, obs):
+        with torch.inference_mode():
+            obs = T.ToTensor()(obs)
+            obs = obs.unsqueeze(0)
+            if self.vae_sample:
+                latent_obs = self._vae_model.reparameterize(*self._encoder(obs))
+            else:
+                latent_obs = self._encoder(obs)[0]
+            return latent_obs.squeeze().detach().numpy()  # using mu
+
+class ShapeRewardStackWrapper(gym.Wrapper):
+    def __init__(self, env, n_stack, gamma=0.96, omega=100,
+                 vae_f=None, vae_inchannel=3, latent_dim=128, vae_sample=False,
+                 latent_model_f=None, latent_deterministic=True, train=True, latent_model_class=SAC):
+        super().__init__(env)
+        self.n_stack = n_stack
+        self.gamma = gamma
+        self.omega = omega
+        self.train = train
+
+        self.repeat_axis = -1
+        self.stack_dimension = -1
+        low = np.repeat(self.env.observation_space.low, self.n_stack, axis=self.repeat_axis)
+        high = np.repeat(self.env.observation_space.high, self.n_stack, axis=self.repeat_axis)
+        self.observation_space = spaces.Box(low=low, high=high, dtype=self.env.observation_space.dtype)
+
+        self.stackedobs = np.zeros(self.observation_space.low.shape, dtype=np.uint8)
+        self.stacked_latent_obs = torch.zeros((1, self.n_stack * latent_dim), dtype=torch.float32)
+
+        self.shift_size_obs = self.env.observation_space.low.shape[self.stack_dimension]
+        self.shift_size_latent_obs = latent_dim
+        # load vae
+        best_filename = join(vae_f, 'best.tar')
+        vae_model = VAE(vae_inchannel, latent_dim)  # latent_size: 128
+        device_vae = torch.device('cpu')
+        vae_model.load_state_dict(torch.load(best_filename, map_location=device_vae)['state_dict'])
+        # vae_model.to(device)
+        vae_model.eval()
+        self._vae_model = vae_model
+        self._encoder = vae_model.encoder
+        self.vae_sample = vae_sample
+        self.vae_inchannel = vae_inchannel
+        self.latent_dim = latent_dim
+
+        # load latent policy
+        self._latent_model_f = latent_model_f
+        self._latent_model_class = latent_model_class
+        self._latent_policy = self._latent_model_class.load(self._latent_model_f).policy
+        self._latent_policy.eval()
+        self._latent_policy.to('cpu')
+        self._last_potential_value = None
+        self.latent_deterministic = latent_deterministic
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        start_time = time.time()
+        self.stackedobs = np.roll(self.stackedobs, shift=-self.shift_size_obs, axis=self.stack_dimension)
+        self.stackedobs[..., -self.shift_size_obs:] = obs
+        if not self.train:  # for evaluation, no need for computing shaping
+            return self.stackedobs, reward, done, info
+        latent_obs = self.encode(obs)
+        with torch.inference_mode():
+            self.stacked_latent_obs = torch.roll(self.stacked_latent_obs, shifts=-self.shift_size_latent_obs,
+                                              dims=self.stack_dimension)
+            self.stacked_latent_obs[..., -self.shift_size_latent_obs:] = latent_obs
+
+            action = self._latent_policy.actor(self.stacked_latent_obs, deterministic=True)
+
+            q_values = [q_value.squeeze().item() for q_value in
+                        self._latent_policy.critic(self.stacked_latent_obs, action)]
+        new_potential_value = sum(q_values)/len(q_values)  # in SAC there are 2 q-networks
+        shaping = self.omega * (self.gamma * new_potential_value - self._last_potential_value)
+        shaping = max(-50, min(shaping, 50)) # clip the value of shaping
+        self._last_potential_value = new_potential_value
+        self.shaping = shaping
+        self.reward = reward
+        self.time_step_wait = time.time() - start_time
+        return self.stackedobs, reward+shaping, done, info
+
+    def reset(self):
+        self.stackedobs = np.zeros(self.observation_space.low.shape, dtype=np.uint8)
+        self.stacked_latent_obs = torch.zeros((1, self.n_stack * self.latent_dim), dtype=torch.float32)
+
+        obs = self.env.reset()
+        self.stackedobs[..., -self.shift_size_obs:] = obs
+
+        latent_obs = self.encode(obs)
+        self.stacked_latent_obs[..., -self.shift_size_latent_obs:] = latent_obs
+        with torch.inference_mode():
+            action = self._latent_policy.actor(self.stacked_latent_obs, deterministic=self.latent_deterministic)
+            q_values = [q_value.squeeze().item() for q_value in
+                        self._latent_policy.critic(self.stacked_latent_obs, action)]
+        self._last_potential_value = mean(q_values)  # in SAC there are 2 q-networks
+
+        return self.stackedobs
+
+    def encode(self, obs): # return flatten latent representation of stacked obs
+        with torch.inference_mode():
+            obs = T.ToTensor()(obs)
+            obs = obs.unsqueeze(0)
+            if self.vae_sample:
+                latent_obs = self._vae_model.reparameterize(*self._encoder(obs))
+            else:
+                latent_obs = self._encoder(obs)[0]
+            return latent_obs.squeeze().detach()  # using mu
+
+class VecShapeReward2(VecEnvWrapper):
+    def __init__(self, venv: VecEnv, gamma=0.96, omega=100,
+                 vae_f=None, vae_sample=False, vae_inchannel=3, latent_dim=128,
+                 latent_model_f=None, latent_deterministic=True, get_potential_mode='mean',
+                 train=True, latent_model_class=SAC, seed=None):
+        super().__init__(venv=venv)
+        self.n_stack = venv.n_stack
+        self.gamma = gamma
+        self.omega = omega
+        self.get_potential_mode = get_potential_mode
+        self.train = train
+        # load vae
+        best_filename = join(vae_f, 'best.tar')
+        vae_model = VAE(vae_inchannel, latent_dim)  # latent_size: 128
+        device_vae = torch.device('cpu')
+        vae_model.load_state_dict(torch.load(best_filename, map_location=device_vae)['state_dict'])
+        # vae_model.to(device)
+        vae_model.eval()
+        self.vae_model = vae_model
+        self._encoder = vae_model.encoder
+        self.vae_sample = vae_sample
+        self.vae_inchannel = vae_inchannel
+        self.latent_dim = latent_dim
+
+
+        # load latent policy
+        self._latent_model_f = latent_model_f
+        self._latent_model_class = latent_model_class
+        self._latent_policy = self._latent_model_class.load(self._latent_model_f).policy
+        self._latent_policy.eval()
+        self._latent_policy.to('cpu')
+        self._last_potential_value = None
+        self.latent_deterministic = latent_deterministic
+
+        self.shift_size_latent_obs = latent_dim
+
+    def reset(self) -> np.ndarray:
+        obs = self.venv.reset()
+        self.stacked_latent_obs = torch.zeros((self.num_envs, 1, self.n_stack * self.latent_dim), dtype=torch.float32)
+        self._last_potential_value = np.zeros(len(obs))
+        for i_env in range(len(obs)):
+            latent_obs = self.encode2(obs[i_env])
+            self.stacked_latent_obs[i_env, ..., -self.shift_size_latent_obs:] = latent_obs
+            action = self._latent_policy.actor(self.stacked_latent_obs[i_env], deterministic=self.latent_deterministic)
+            q_values = [q.squeeze().item() for q in self._latent_policy.critic(self.stacked_latent_obs[i_env], action)]
+            if self.get_potential_mode == 'mean':
+                self._last_potential_value[i_env] = sum(q_values)/len(q_values)
+            elif self.get_potential_mode == 'max':
+                self._last_potential_value[i_env] = max(q_values)
+            elif self.get_potential_mode == 'min':
+                self._last_potential_value[i_env] = min(q_values)
+            else:
+                raise Exception("invalid get_potential_mode")
+
+        return obs
+
+    def step_async(self, actions: np.ndarray) -> None:
+        self.venv.step_async(actions)
+
+    def step_wait(self) -> VecEnvStepReturn:
+        obs, reward, done, info = self.venv.step_wait()
+        start_time= time.time()
+        # self._last_potential_value = np.empty(len(obs))
+        if not self.train:
+            return obs, reward, done, info
+        shaping = np.zeros(len(obs))
+        for i_env in range(len(obs)):
+            latent_obs = self.encode2(obs[i_env])
+            if done[i_env]:
+                self.stacked_latent_obs[i_env] = 0
+            self.stacked_latent_obs[i_env,..., -self.shift_size_latent_obs:] = latent_obs
+            action = self._latent_policy.actor(self.stacked_latent_obs[i_env], deterministic=True)
+            q_values = [q.squeeze().item() for q in self._latent_policy.critic(self.stacked_latent_obs[i_env], action)]
+            if self.get_potential_mode == 'mean':
+                new_potential_value = sum(q_values)/len(q_values)
+            elif self.get_potential_mode == 'max':
+                new_potential_value = max(q_values)
+            elif self.get_potential_mode == 'min':
+                new_potential_value = min(q_values)
+            else:
+                raise Exception("invalid get_potential_mode")
+            shaping[i_env] = self.omega * (self.gamma * new_potential_value - self._last_potential_value[i_env])
+            self._last_potential_value[i_env] = new_potential_value
+        self.shaping = np.clip(shaping, -35, 35)
+        self.reward = reward
+        self.time_step_wait = time.time()-start_time
+        return obs, reward + shaping, done, info
+
+    def encode(self, obs): # return flatten latent representation of stacked obs
+        with torch.no_grad():
+            splitted_obs = np.split(obs, self.n_stack, axis=-1)
+            splitted_obs = np.array(splitted_obs)
+            splitted_obs = torch.from_numpy(splitted_obs)
+            splitted_obs = splitted_obs.permute(0, 3, 1, 2)
+            splitted_obs = torch.div(splitted_obs, 255.0)
+            splitted_obs = self._encoder(splitted_obs)[0]
+            return splitted_obs.view(-1, torch.numel(splitted_obs))
+
+    def encode2(self, stack_obs): # return flatten latent representation of stacked obs
+        with torch.no_grad():
+            obs = stack_obs[..., -self.vae_inchannel:]
+            obs = T.ToTensor()(obs)
+            obs = obs.unsqueeze(0)
+            if self.vae_sample:
+                obs = self._vae_model.reparameterize(self._encoder(obs))
+            else:
+                obs = self._encoder(obs)[0]
+            latent_obs = obs.squeeze()
+            return latent_obs
+
+    def encode3(self, obs):
+        obs = T.ToTensor()(obs)
+        obs = obs.unsqueeze(0)
+        return self._encoder(obs)[0].detach()
+
+class VecShapeReward(VecEnvWrapper):
+    def __init__(self, venv: VecEnv, vae_f=None, latent_model_f=None, latent_model_class=SAC, seed=None):
+        super().__init__(venv=venv)
+        self.n_stack = venv.n_stack
+        # load vae
+        best_filename = join(vae_f, 'best.tar')
+        vae_model = VAE(3, 128)  # latent_size: 128
+        device_vae = torch.device('cpu')
+        vae_model.load_state_dict(torch.load(best_filename, map_location=device_vae)['state_dict'])
+        # vae_model.to(device)
+        vae_model.eval()
+        self._encoder = vae_model.encoder
+
+        # load latent policy
+        self._latent_model_f = latent_model_f
+        self._latent_model_class = latent_model_class
+        self._latent_policy = self._latent_model_class.load(self._latent_model_f).policy
+        self._latent_policy.eval()
+        self._latent_policy.to('cpu')
+        self._last_potential_value = None
+
+    def reset(self) -> np.ndarray:
+        obs = self.venv.reset()
+        self._last_potential_value = np.zeros(len(obs))
+        for i_env in range(len(obs)):
+            new_potential_value = []
+            latent_obs = []
+            for j in range(self.n_stack):
+                # print("%%%", obs[i_env].shape)
+                # print("%%%",self.encode(obs[i_env][..., j*3:(j+1)*3]).shape)
+                latent_code = self.encode(obs[i_env][..., j * 3:(j + 1) * 3])
+                latent_obs.append(latent_code)
+                # if np.all(latent_obs==0): # at the beginning, the stack might not be full
+                #     continue
+            latent_stacked_obs = torch.cat(latent_obs, dim=1)
+            # print("%%%", latent_stacked_obs.shape)
+            action = self._latent_policy.actor(latent_stacked_obs, deterministic=True)
+            q_values = [q_value.squeeze().item() for q_value in self._latent_policy.critic(latent_stacked_obs, action)]
+            new_potential_value= max(q_values)  # in SAC there are 2 q-networks
+
+            self._last_potential_value[i_env] = new_potential_value
+
+        return obs
+
+    def step_async(self, actions: np.ndarray) -> None:
+        self.venv.step_async(actions)
+
+    def step_wait(self) -> VecEnvStepReturn:
+        obs, reward, done, info = self.venv.step_wait()
+        # self._last_potential_value = np.empty(len(obs))
+        shaping = np.zeros(len(obs))
+        for i_env in range(len(obs)):
+            new_potential_value = []
+            latent_obs = []
+            for j in range(self.venv.n_stack):
+                latent_code = self.encode(obs[i_env][..., j * 3:(j + 1) * 3])
+                latent_obs.append(latent_code)
+                # if np.all(latent_obs == 0):  # at the beginning, the stack might not be full
+                #     continue
+            latent_stacked_obs = torch.cat(latent_obs, dim=1)
+            action = self._latent_policy.actor(latent_stacked_obs, deterministic=True)
+            q_values = [q_value.squeeze().item() for q_value in self._latent_policy.critic(latent_stacked_obs, action)]
+            new_potential_value = max(q_values)  # in SAC there are 2 q-networks
+
+            # assert self._last_potential_value[i] is not None, "potential value of the old state can't be none"
+            shaping[i_env] = new_potential_value - self._last_potential_value[i_env]
+            self._last_potential_value[i_env] = new_potential_value
+
+        return obs, reward + shaping, done, info
+
+    def encode(self, obs):
+        obs = T.ToTensor()(obs)
+        obs = obs.unsqueeze(0)
+        return self._encoder(obs)[0].detach()
+        # no more need of squeeze and conversion to numpy, otherwise errors rise
+
+def pack_env_wrappers(wrapper_class_list: List, wrapper_kwargs_list: List[Dict], **kwargs_dict) -> Callable:
+    # version 1: return a callable, which doesn't require kwargs
+
+    # wrapper_classes = []
+    # wrapper_kwargs = []
+    #
+    # def get_module_name(wrapper_name):
+    #     return ".".join(wrapper_name.split(".")[:-1])
+    #
+    # def get_class_name(wrapper_name):
+    #     return wrapper_name.split(".")[-1]
+    #
+    # wrapper_module = importlib.import_module(get_module_name(wrapper_name))
+    # wrapper_class = getattr(wrapper_module, get_class_name(wrapper_name))
+    #
+    # assert len(wrapper_class_list) == len(kwargs_list), "wrapper_class_list and kwargs_list must share the same length"
+    # for wrapper_class, kwargs in zip(wrapper_class_list, kwargs_list)
+    #     wrapper_classes.append(wrapper_class)
+    #     wrapper_kwargs.append(kwargs)
+
+    # def wrap_env(env):
+    #     for WrapperClassStr, _kwargs in kwargs_dict.items():
+    #         WrapperClass = globals()[WrapperClassStr]
+    #         env = WrapperClass(env, _kwargs)
+    #     return env
+    # return wrap_env
+    if len(wrapper_class_list) == 0:
+        return None
+    assert len(wrapper_class_list) == len(wrapper_kwargs_list), "two arguments(List) should share same length"
+    def wrap_env(env: gym.Env):
+        for wrapper_class, kwargs in zip(wrapper_class_list, wrapper_kwargs_list):
+            env = wrapper_class(env, **kwargs)
+        return env
+
+    return wrap_env
+
+def pack_wrappers2(env, **kwargs_dict):    # version 1: define a callable(function), which requires kwargs
+    for WrapperClassStr, _kwargs in kwargs_dict.items():
+        WrapperClass = globals()[WrapperClassStr]
+        env = WrapperClass(env, _kwargs)
+    return env
+
+
+if __name__ == '__main__':
+    env = gym.make('CarRacing-v0')
+    print(env.action_space)
+    env = PreprocessObservationWrapper(env, vertical_cut_d=84)
+    print(env.action_space)
+    env.reset()
