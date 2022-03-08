@@ -1,4 +1,8 @@
 
+class RandomRollout:
+    max_ep = 1000
+    n_rollout = 1000
+    seed = 0
 
 class HyperParams:
     vision = 'VAE'
@@ -44,7 +48,7 @@ class RNNHyperParams:
     memory = 'RNN'
 
     extra = False
-    data_dir = 'datasets'
+    data_dir = '../datasets'
     extra_dir = 'additional'
     ckpt_dir = 'ckpt'
 
@@ -72,7 +76,7 @@ class VAEHyperParams:
     vision = 'VAE'
 
     extra = False
-    data_dir = 'datasets'
+    data_dir = '../datasets'
     extra_dir = 'additional'
     ckpt_dir = 'ckpt'
 

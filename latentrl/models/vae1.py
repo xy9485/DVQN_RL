@@ -1,11 +1,9 @@
 import torch
 import torch.nn as nn
-import numpy as np
-from hparams import HyperParams as hp
 from torchsummary import summary
-
+# Design for screen size 96x96
 class VAE(nn.Module):
-    def __init__(self, latent_dims, img_channels=3):
+    def __init__(self, img_channels, latent_dims):
         super(VAE, self).__init__()
         self.encoder = Encoder(img_channels, latent_dims)
         self.decoder = Decoder(img_channels, latent_dims)
@@ -86,6 +84,6 @@ def vae_loss(recon_x, x, mu, logvar):
 
 if __name__ == "__main__":
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    vae = VAE(latent_dims=128).to(device)
+    vae = VAE(img_channels=3, latent_dims=128).to(device)
     print(vae)
     summary(vae, input_size=(3, 96, 96))

@@ -1,9 +1,12 @@
 import time
 from collections import deque
 from statistics import mean
-
+import itertools as it
 import gym
-from gym.spaces.box import Box
+# from gym.spaces.box import Box
+# from gym.spaces.discrete import Discrete
+from gym.spaces import Box
+from gym.spaces import Discrete
 from gym.envs.box2d.car_racing import CarRacing
 from gym.envs.box2d.car_dynamics import Car
 import numpy as np
@@ -207,19 +210,20 @@ class CarRandomStartWrapper(gym.Wrapper):
         return obs, reward, done, info
 
     def reset(self):
-        obs = self.env.reset()
+        self.env.unwrapped.random_start = False
+        # obs = self.env.reset()
         if self.no_random_start:
-            return obs
+            return self.env.reset()
         if self.always_random_start or (self.finished_steps < self.warm_up_steps):
-            position = np.random.randint(len(self.env.track))
-            self.env.car = Car(self.env.world, *self.env.track[position][1:4])
-            # if self.accelerated_exploration:
-            self._action = self.env.action_space.sample()
-            obs, _, _, _  = self.env.step(self._action)
-        return obs
+            self.env.unwrapped.random_start = True
+            return self.env.reset()
+        return self.env.reset()
 
-    # def step(self, action):
-    #     obs, reward, done, info = self.env.step(action)
+            # position = np.random.randint(len(self.env.track))
+            # self.env.car = Car(self.env.world, *self.env.track[position][1:4])
+            # if self.accelerated_exploration:
+            # self._action = self.env.action_space.sample()
+            # obs, reward, _, _  = self.env.step(self._action)
 
 
 class PreprocessObservationWrapper(gym.ObservationWrapper):       #combination of CropObservationWrapper and ResizeObservationWrapper
@@ -262,7 +266,37 @@ class PreprocessObservationWrapper(gym.ObservationWrapper):       #combination o
             if self.num_output_channels == 1:
                 return np.array(obs)[..., np.newaxis]
                 # or return np.expand_dims(np.array(obs), -1)
-            return np.array(obs)
+            return np.array(obs)/255.0
+
+class FrameStackWrapper(gym.Wrapper):
+    def __init__(self, env, n_stack):
+        super().__init__(env)
+        self.n_stack = n_stack
+        self.repeat_axis = -1
+        self.stack_dimension = -1
+        low = np.repeat(self.env.observation_space.low, self.n_stack, axis=self.repeat_axis)
+        high = np.repeat(self.env.observation_space.high, self.n_stack, axis=self.repeat_axis)
+        self.observation_space = spaces.Box(low=low, high=high, dtype=self.env.observation_space.dtype)
+
+        self.stackedobs = np.zeros(self.observation_space.low.shape, dtype=np.uint8)
+        self.shift_size_obs = self.env.observation_space.low.shape[self.stack_dimension]
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        # start_time = time.time()
+
+        self.stackedobs = np.roll(self.stackedobs, shift=-self.shift_size_obs, axis=self.stack_dimension)
+        self.stackedobs[..., -self.shift_size_obs:] = obs
+
+        # self.time_step_wait = time.time() - start_time
+        return self.stackedobs, reward, done, info
+
+    def reset(self):
+        self.stackedobs = np.zeros(self.observation_space.low.shape, dtype=np.uint8)
+        obs = self.env.reset()
+        self.stackedobs[..., -self.shift_size_obs:] = obs
+
+        return self.stackedobs
 
 class EncodeWrapper(gym.Wrapper):
     def __init__(self, env, vae_f=None, vae_sample=False, vae_inchannel=3, latent_dim=128, seed=None):
@@ -487,7 +521,7 @@ class ShapeRewardStackWrapper(gym.Wrapper):
             action = self._latent_policy.actor(self.stacked_latent_obs, deterministic=True)
 
             q_values = [q_value.squeeze().item() for q_value in
-                        self._latent_policy.critic(self.stacked_latent_obs, action)]
+                        self._latent_policy.critic_target(self.stacked_latent_obs, action)]
         new_potential_value = sum(q_values)/len(q_values)  # in SAC there are 2 q-networks
         shaping = self.omega * (self.gamma * new_potential_value - self._last_potential_value)
         shaping = max(-50, min(shaping, 50)) # clip the value of shaping
@@ -757,6 +791,116 @@ def pack_wrappers2(env, **kwargs_dict):    # version 1: define a callable(functi
         env = WrapperClass(env, _kwargs)
     return env
 
+class ActionDiscreteWrapper(gym.Wrapper):
+    def __init__(self, env, action_repetition=3):
+        super().__init__(env)
+        self.action_repetition = action_repetition
+        self.action_list = [k for k in it.product([-1, -0.5, 0, 0.5, 1], [1, 0], [0.2, 0])]
+        # self.action_list = [k for k in it.product([-1, -0.5, 0, 0.5, 1], [1, 0.5], [0.8, 0])]
+        self.action_space = Discrete(20)
+
+    def step(self, action:int):
+        action = self.action_list[action]
+        accumulated_reward = 0
+        for _ in range(self.action_repetition):
+            obs, reward, done, info = self.env.step(action)
+            accumulated_reward += reward
+            if done:
+                break
+        return obs, accumulated_reward, done, info
+
+    # def reset(self):
+    #     obs = self.env.reset()
+    #     return obs
+
+
+class EpisodeEarlyStopWrapper(gym.Wrapper):
+    def __init__(self, env, max_neg_rewards=100, punishment=-20):
+        super().__init__(env)
+        self.neg_reward_counter = 0
+        self.max_neg_rewards = max_neg_rewards # 12(John)
+        self.episode_reward = 0
+        self.punishment = punishment
+
+    def step(self, action:int):
+        # modify rew
+        obs, reward, done, info = self.env.step(action)
+        early_done, punishment = self.check_early_stop2(reward)
+        if early_done:
+            reward += punishment
+            done = True
+        self.episode_reward += reward
+
+        # if done or early_done:
+        #     self.episode_reward = 0
+        #     done = True
+
+        return  obs, reward, done, info
+
+    def reset(self):
+        obs = self.env.reset()
+        self.episode_reward = 0
+        return obs
+
+    def check_early_stop(self, reward):
+        # return False, 0.0
+        if reward < 0:
+            self.neg_reward_counter += 1
+            early_done = (self.neg_reward_counter > self.max_neg_rewards)
+            # punishment = -30.0
+            if early_done and self.episode_reward <= 500:
+                punishment = -20.0
+            else:
+                punishment = 0.0
+
+            if early_done:
+                self.neg_reward_counter = 0
+
+            return early_done, punishment
+        else:
+            self.neg_reward_counter = 0
+            return False, 0.0
+
+    def check_early_stop2(self, reward):
+        # return False, 0.0
+        if reward < 0:
+            self.neg_reward_counter += 1
+            early_done = (self.neg_reward_counter > self.max_neg_rewards)
+
+            if early_done:
+                punishment = self.punishment
+                self.neg_reward_counter = 0
+            else:
+                punishment = 0
+
+            return early_done, punishment
+        else:
+            self.neg_reward_counter = 0
+            return False, 0.0
+
+class PunishRewardWrapper(gym.Wrapper):
+    def __init__(self, env, max_neg_rewards=12, punishment=-1):
+        super().__init__(env)
+        self.neg_reward_counter = 0
+        self.max_neg_rewards = max_neg_rewards # 12(John)
+        self.punishment = punishment
+
+    def step(self, action:int):
+        # modify rew
+        obs, reward, done, info = self.env.step(action)
+        if reward < 0:
+            self.neg_reward_counter += 1
+            if self.neg_reward_counter > self.max_neg_rewards:
+                reward = self.punishment
+        else:
+            self.neg_reward_counter = 0
+
+        return obs, reward, done, info
+
+    def reset(self):
+        obs = self.env.reset()
+        self.neg_reward_counter = 0
+        return obs
 
 if __name__ == '__main__':
     env = gym.make('CarRacing-v0')

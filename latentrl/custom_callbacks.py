@@ -3,6 +3,7 @@ from statistics import mean
 import time
 import json
 import numpy as np
+from stable_baselines3 import DQN, SAC
 
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.results_plotter import load_results, ts2xy
@@ -81,28 +82,53 @@ class TensorboardCallback(BaseCallback):
 
 
 class HparamsWriterCallback(BaseCallback):
-    def __init__(self, run_name, extra_hparams: dict, log_freq=4):
+    def __init__(self, run_name, hparams:dict, extra_hparams: dict, log_freq=4):
         super().__init__()
         self._log_freq = log_freq
         self.run_name = run_name
         self.extra_hparams = extra_hparams
+        # self.hparams = {
+        #     'buffer_size': None,
+        #     'learning_starts': None,
+        #     'batch_size': None,
+        #     'tau': None,
+        #     'gamma': None,
+        #     'train_freq': None,
+        #     'gradient_steps': None,
+        #     "ent_coef": None,
+        #     "target_update_interval": None,
+        #     'n_stack': None,
+        #     'n_envs': None,
+        #     'use_sde': None,
+        #     'use_sde_at_warmup': None,
+        #     'policy_kwargs': None,
+        #     "accelerate_warmup": "None_"
+        # }
+
         self.hparams = {
-            'buffer_size': None,
-            'learning_starts': None,
-            'batch_size': None,
-            'tau': None,
-            'gamma': None,
-            'train_freq': None,
-            'gradient_steps': None,
-            "ent_coef": None,
-            "target_update_interval": None,
-            'n_stack': None,
-            'n_envs': None,
-            'use_sde': None,
-            'use_sde_at_warmup': None,
-            'policy_kwargs': None,
-            "accelerate_warmup": "None_"
-        }
+        # "learning_rate": linear_schedule(7.3e-4),  # linear_schedule(7.3e-4), 0.0003, 0.0004(John)
+        "buffer_size": 100_000,
+        "learning_starts": 10_000,  # 100_000   #10_000(John)
+        "batch_size": 128,
+        "tau": 1,  # 0.02/0.005/1
+        "gamma": 0.95,  #0.95(John)
+        "train_freq": 4,  # or int(8/n_envs) ?, 4(John)
+        "gradient_steps": 1,  # -1, 1(John)
+        "target_update_interval": 8, #update target per 10000 steps in John
+        "exploration_fraction": 0.9,
+        "exploration_initial_eps":  1.0,
+        "exploration_final_eps": 0.01,
+        # "tensorboard_log": f"../tensorboard_log/{algo_class.__name__}_{env_id}_5/",
+        # "tensorboard_log": f"../tensorboard_log/{env_id}/",
+        "policy_kwargs": dict(net_arch=[256, 256, 256]),
+        # "policy_kwargs": dict(share_features_extractor=False, net_arch=dict(pi=[256, 256, 256], qf=[256, 256, 256])),
+        # "policy_kwargs": dict(net_arch=dict(pi=[256, 256, 256], qf=[256, 256, 256])),
+        # "policy_kwargs": dict(net_arch=dict(pi=[512, 512], qf=[512, 512])),
+        "verbose": 1,
+        # "accelerate_warmup": False  # only for warmup stage
+    }
+
+        # self.hparams = hparams
 
 
     def _on_training_start(self):
@@ -112,7 +138,7 @@ class HparamsWriterCallback(BaseCallback):
                 if key == 'train_freq':
                     self.hparams[key] = self.model.__dict__[key].frequency
                     continue
-                elif key == 'policy_kwargs':
+                elif key == 'policy_kwargs' and isinstance(self.model, SAC):
                     pi = self.model.__dict__[key]['net_arch']['pi']
                     qf = self.model.__dict__[key]['net_arch']['qf']
                     sharing = self.model.__dict__[key].get('share_features_extractor', None)
@@ -120,6 +146,9 @@ class HparamsWriterCallback(BaseCallback):
                         self.hparams[key] = f"pi{pi}-qf{qf}-sharing"
                     else:
                         self.hparams[key] = f"pi{pi}-qf{qf}-nosharing"
+                    continue
+                elif key == 'policy_kwargs' and isinstance(self.model, DQN):
+                    self.hparams[key] = f"{self.model.__dict__[key]['net_arch']}"
                     continue
                 self.hparams[key] = self.model.__dict__[key]
         if isinstance(self.model.env, VecTransposeImage):
@@ -251,8 +280,9 @@ class TrainingRewardWriterCallback_both(BaseCallback):
 
     def _on_step(self) -> bool:
         on_step_time_start = time.time()
-        if self.model.num_timesteps <= self.model.learning_starts:
-            return
+
+        # if self.model.num_timesteps <= self.model.learning_starts:
+            # return
 
         if self.stack_mode == 'venv_stack':
             original_reward = self.model.env.venv.reward
@@ -291,3 +321,28 @@ class TrainingRewardWriterCallback_both(BaseCallback):
         self.percentage_this_callback = 100 * self.on_step_time_used / (time.time() - self.training_time_start)
 
         return True
+
+class EpisodeCounterCallback(BaseCallback):
+    def __init__(self, num_episodes=8000):
+        super().__init__()
+        self.num_episodes = num_episodes
+
+    def _on_training_start(self) -> None:
+        self.finished_episodes = 0
+
+    def _on_step(self) -> bool:
+        for idx, done in enumerate(self.locals['dones']):
+            if done:
+                self.finished_episodes += 1
+                print("finished episode:", self.finished_episodes)
+        if self.finished_episodes == self.num_episodes:
+            return False
+        else:
+            return True
+
+
+class OmegaScheduler(BaseCallback):
+
+    def __init__(self):
+        super().__init__()
+

@@ -35,19 +35,19 @@ from torchvision.utils import save_image
 from torchsummary import summary
 
 from latentrl.custom_callbacks import HparamsWriterCallback, EarlyStopCallback, TrainingRewardWriterCallback, \
-    TrainingRewardWriterCallback_both
+    TrainingRewardWriterCallback_both, EpisodeCounterCallback
 from models.vae import VAE
 from wrappers import LatentWrapper, NaiveWrapper, ShapingWrapper, PreprocessObservationWrapper, EncodeWrapper, \
     ShapeRewardWrapper, VecShapeReward, VecShapeReward2, EncodeStackWrapper, ShapeRewardStackWrapper, \
-    CarRandomStartWrapper
+    CarRandomStartWrapper, ActionDiscreteWrapper, FrameStackWrapper, EpisodeEarlyStopWrapper, PunishRewardWrapper
 from wrappers import pack_env_wrappers
 # from my_callbacks import ImageRecorderCallback
 from transforms import transform_dict
-from utils.misc import ProcessFrame, linear_schedule
+from utils.misc import ProcessFrame, linear_schedule, make_vec_env_customized
 
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecFrameStack
-from stable_baselines3 import A2C, SAC, PPO, TD3
+from stable_baselines3 import A2C, SAC, PPO, TD3, DQN
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnRewardThreshold, CallbackList
@@ -117,6 +117,360 @@ def process_hparams_for_model(hparams:Dict, algo_class, env_id):
 # hparams = {key: value for key, value in HPARAMS.__dict__.items() if not key.startswith('__') and not callable(key)}
 # _hparams = process_hparams_for_model(copy.deepcopy(hparams), SAC, env_id)
 
+def train_vanilla_discrete():
+    cuda = torch.cuda.is_available()
+    device = torch.device("cuda" if cuda else "cpu")
+
+    algo_class = DQN # DQN
+    policy = 'CnnPolicy'
+    env_id = 'CarRacing-v0'
+    total_time_steps = 1_000_000  # int(3e6)
+    n_envs = 1
+    n_stack = 4
+    stack_mode = 'gym_stack'  # or 'venv_stack or 'gym_stack' or None
+    eval_freq = 50
+    action_repetition = 3
+    max_neg_rewards = 100
+    punishment = 0.0
+
+
+
+    time_tag = time.strftime('%m-%d-%H-%M-%S', time.localtime(time.time()))
+    run_name = f"vanilla_discrete_{algo_class.__name__}_{time_tag}_normobs"
+    monitor_dir = f"../log_monitor/{run_name}"
+
+    always_random_start = True
+    no_random_start = True
+
+    save_final_model = True
+    seed = int(time.time())
+
+
+
+    hparams = {
+        "learning_rate": linear_schedule(7.3e-4),  # linear_schedule(7.3e-4), 0.0003, 0.0004(John)
+        "buffer_size": 100_000,
+        "learning_starts": 10_000,  # 100_000   #10_000(John)
+        "batch_size": 128,
+        "tau": 1,  # 0.02/0.005/1
+        "gamma": 0.95,  #0.95(John)
+        "train_freq": 4,  # or int(8/n_envs) ?, 4(John)
+        "gradient_steps": 1,  # -1, 1(John)
+        "target_update_interval": 8, #update target per 10000 steps in John
+        "exploration_fraction": 1.0,
+        "exploration_initial_eps":  1.0,
+        "exploration_final_eps": 0.05,
+        # "tensorboard_log": f"../tensorboard_log/{algo_class.__name__}_{env_id}_5/",
+        "tensorboard_log": f"../tensorboard_log/{env_id}/",
+        "policy_kwargs": dict(net_arch=[256, 256, 256]),
+        # "policy_kwargs": dict(share_features_extractor=False, net_arch=dict(pi=[256, 256, 256], qf=[256, 256, 256])),
+        # "policy_kwargs": dict(net_arch=dict(pi=[256, 256, 256], qf=[256, 256, 256])),
+        # "policy_kwargs": dict(net_arch=dict(pi=[512, 512], qf=[512, 512])),
+        "verbose": 1,
+        # "accelerate_warmup": False  # only for warmup stage
+    }
+
+    # @@prepare stuff for wappers
+    if not stack_mode or stack_mode == 'venv_stack':
+        wrapper_class_list = [
+            ActionDiscreteWrapper,
+            EpisodeEarlyStopWrapper,
+            CarRandomStartWrapper,
+            PreprocessObservationWrapper,
+        ]
+        wrapper_kwargs_list = [
+            {},
+            {},
+            {'warm_up_steps': hparams['learning_starts'], 'n_envs': n_envs,
+             'always_random_start': always_random_start, 'no_random_start': no_random_start},
+            {'vertical_cut_d': 84, 'shape': 64, 'num_output_channels': 3},
+
+        ]
+        wrapper_class_list_eval = [
+            ActionDiscreteWrapper,
+            EpisodeEarlyStopWrapper,
+            # CarRandomStartWrapper,
+            PreprocessObservationWrapper,
+        ]
+        wrapper_kwargs_list_eval = [
+            {},
+            {},
+            # {'warm_up_steps': hparams['learning_starts'], 'n_envs': n_envs,
+            #  'always_random_start': always_random_start,  'no_random_start': no_random_start},
+            {'vertical_cut_d': 84, 'shape': 64, 'num_output_channels': 3}
+        ]
+
+    elif stack_mode == 'gym_stack':
+        wrapper_class_list = [
+            ActionDiscreteWrapper,
+            EpisodeEarlyStopWrapper,
+            Monitor,
+            CarRandomStartWrapper,
+            # Monitor,
+            PreprocessObservationWrapper,
+            FrameStackWrapper,
+            # PunishRewardWrapper,
+        ]
+        wrapper_kwargs_list = [
+            {'action_repetition': action_repetition},   #ActionDiscreteWrapper
+            {'max_neg_rewards': max_neg_rewards, 'punishment': punishment},   #EpisodeEarlyStopWrapper
+            {'filename': monitor_dir},  #Monitor
+            {'warm_up_steps': hparams['learning_starts'], 'n_envs': n_envs,
+             'always_random_start': always_random_start, 'no_random_start': no_random_start},   #CarRandomStartWrapper
+            # {'filename': monitor_dir},    #Monitor
+            {'vertical_cut_d': 84, 'shape': 64, 'num_output_channels': 1}, #PreprocessObservationWrapper
+            {'n_stack': n_stack},   #FrameStackWrapper
+            # {'max_neg_rewards': max_neg_rewards, "punishment": punishment}  #PunishRewardWrapper
+        ]
+
+        wrapper_class_list_eval = [
+            ActionDiscreteWrapper,
+            # EpisodeEarlyStopWrapper,
+            Monitor,
+            # CarRandomStartWrapper,
+            # Monitor,
+            PreprocessObservationWrapper,
+            FrameStackWrapper
+        ]
+        wrapper_kwargs_list_eval = [
+            {'action_repetition': action_repetition},
+            # {'max_neg_rewards': max_neg_rewards, 'punishment': punishment},
+            {'filename': monitor_dir},
+            # {'warm_up_steps': hparams['learning_starts'], 'n_envs': n_envs,
+            #  'always_random_start': always_random_start,  'no_random_start': no_random_start},
+            # {'filename': monitor_dir},
+            {'vertical_cut_d': 84, 'shape': 64, 'num_output_channels': 1},
+            {'n_stack': n_stack}
+        ]
+    else:
+        wrapper_class_list = []
+        wrapper_kwargs_list = []
+        wrapper_class_list_eval = []
+        wrapper_kwargs_list_eval = []
+
+    # env = make_vec_env(env_id, n_envs, seed=seed, monitor_dir=monitor_dir,
+    #                    wrapper_class=pack_env_wrappers(wrapper_class_list, wrapper_kwargs_list),
+    #                    # vec_env_cls=SubprocVecEnv
+    #                    )
+    # eval_env = make_vec_env(env_id, 1, seed=seed + 1, monitor_dir=monitor_dir,
+    #                         wrapper_class=pack_env_wrappers(wrapper_class_list_eval, wrapper_kwargs_list_eval),
+    #                         # vec_env_cls=SubprocVecEnv
+    #                         )
+    env = make_vec_env_customized(env_id, n_envs, seed=seed,
+                                  wrapper_class=pack_env_wrappers(wrapper_class_list, wrapper_kwargs_list),
+                                  # vec_env_cls=SubprocVecEnv
+                            )
+    eval_env = make_vec_env_customized(env_id, 1, seed=seed + 1,
+                                       wrapper_class=pack_env_wrappers(wrapper_class_list_eval, wrapper_kwargs_list_eval),
+                                       # vec_env_cls=SubprocVecEnv
+                            )
+
+    if stack_mode == 'venv_stack' and n_stack > 1:
+        print("Using VecFrameStack VenvWrapper")
+        env = VecFrameStack(env, n_stack)
+        eval_env = VecFrameStack(eval_env, n_stack)
+
+    set_random_seed(seed + 2)
+
+    extra_hparams = dict(stack_config=f"{stack_mode}({n_stack})",
+                         omega='no_need',
+                         total_time_steps=total_time_steps,
+                         vae_inchannel='no_need',
+                         vae_latent_dim='no_need',
+                         vae_sample='no_need',
+                         always_random_start=always_random_start,
+                         no_random_start=no_random_start,
+                         max_neg_rewards=max_neg_rewards,
+                         punishment=punishment,
+                         action_repetition=action_repetition
+                         )
+    # os.makedirs('../tensorboard_log/', exist_ok=True)
+
+    # @@custom config
+    model = DQN(policy, env, **hparams)  # CnnPolicy or MlpPolicy
+    # @@default config
+    # model = SAC(policy, env, policy_kwargs=_hparams['policy_kwargs'], verbose=1,
+    #             tensorboard_log=f"../tensorboard_log/{algo_class.__name__}_{env_id}/",
+    #             device=device)  # CnnPolicy or MlpPolicy
+
+    # @@load model in order to continue training
+    # model = SAC.load("/workspace/VQVAE_RL/log_evaluation/CarRacing-v0_latent_SAC_02-03-21-47/best_model",
+    #                  tensorboard_log="CarRacing-v0_latent_SAC_02-03-21-47_1", verbose=1)
+    # env = make_vec_env(env_id, 4, seed=seed, monitor_dir=monitor_dir,
+    #                    wrapper_class=pack_wrappers(wrapper_class_list, wrapper_kwargs_list),
+    #                    vec_env_cls=SubprocVecEnv
+    #                    )
+    # model.set_env(env)
+
+    # @@prepare callbacks
+    # hp_callpack = HparamsWriterCallback(run_name, extra_hparams)
+    # early_stop_callback = EarlyStopCallback(reward_threshold=0, progress_remaining_threshold=0.4)
+    # episode_counter_callback = EpisodeCounterCallback(num_episodes=8000)
+    # callback = CallbackList([hp_callpack, episode_counter_callback])
+    # or
+    callback = HparamsWriterCallback(run_name, hparams, extra_hparams)
+
+    model.learn(total_time_steps, tb_log_name=run_name, eval_env=eval_env,
+                eval_freq=int(total_time_steps / (n_envs * eval_freq)),
+                eval_log_path=f"../log_evaluation/{run_name}", callback=callback)
+    # model.learn(total_time_steps, tb_log_name=run_name, callback=callback)
+
+    # bit dirty to write hyperparameters into tensorboard when learning finished
+    # for outputformat in model.logger.output_formats:
+    #     if isinstance(outputformat, TensorBoardOutputFormat):
+    #         torch_summary_writer = outputformat.writer
+    #         torch_summary_writer.add_hparams(hparams, {'hparam/accuracy': 10}, run_name='.')
+
+    if save_final_model:
+        model.save(f"../saved_final_model/{run_name}")
+
+def train_vanilla_continuous():
+    cuda = torch.cuda.is_available()
+    device = torch.device("cuda" if cuda else "cpu")
+
+    algo_class = DQN # DQN
+    policy = 'CnnPolicy'
+    env_id = 'CarRacing-v0'
+    total_time_steps = 2_000_000  # int(3e6)
+    n_envs = 1
+    n_stack = 4
+    stack_mode = 'gym_stack'  # or 'venv_stack or None
+    eval_freq = 50
+
+
+    time_tag = time.strftime('%m-%d-%H-%M-%S', time.localtime(time.time()))
+    run_name = f"vanilla_conti_{algo_class.__name__}_{time_tag}SAC"
+
+    always_random_start = False
+    no_random_start = False
+
+    save_final_model = True
+    seed = int(time.time())
+
+    hparams = {
+        "learning_rate": linear_schedule(7.3e-4),  # linear_schedule(7.3e-4), 0.0003
+        "buffer_size": 1_000_000,
+        "learning_starts": 100_000,  # 100_000
+        "batch_size": 256,
+        "tau": 0.02,  # 0.02/0.005
+        "gamma": 0.98,
+        "train_freq": 1,  # or int(8/n_envs) ?
+        "gradient_steps": -1,  # -1
+        "ent_coef": "auto",  # "auto",0.2
+        "target_update_interval": 1,
+        # "target_entropy": "auto",
+        "use_sde": False,
+        "use_sde_at_warmup": False,
+        "tensorboard_log": f"../tensorboard_log/{algo_class.__name__}_{env_id}_5/",
+        "policy_kwargs": dict(share_features_extractor=True, net_arch=dict(pi=[256, 256, 256], qf=[256, 256, 256])),
+        # "policy_kwargs": dict(share_features_extractor=False, net_arch=dict(pi=[256, 256, 256], qf=[256, 256, 256])),
+        # "policy_kwargs": dict(net_arch=dict(pi=[256, 256, 256], qf=[256, 256, 256])),
+        # "policy_kwargs": dict(net_arch=dict(pi=[512, 512], qf=[512, 512])),
+        "verbose": 1,
+        "accelerate_warmup": False  # only for warmup stage
+    }
+
+    # @@prepare stuff for wappers
+    if not stack_mode or stack_mode == 'venv_stack':
+        wrapper_class_list = [
+            CarRandomStartWrapper,
+            PreprocessObservationWrapper,
+        ]
+        wrapper_kwargs_list = [
+            {'warm_up_steps': hparams['learning_starts'], 'n_envs': n_envs,
+             'always_random_start': always_random_start, 'no_random_start': no_random_start},
+            {'vertical_cut_d': 84, 'shape': 64, 'num_output_channels': 3},
+
+        ]
+    elif stack_mode == 'gym_stack':
+        wrapper_class_list = [
+            CarRandomStartWrapper,
+            PreprocessObservationWrapper,
+        ]
+        wrapper_kwargs_list = [
+            {'warm_up_steps': hparams['learning_starts'], 'n_envs': n_envs,
+             'always_random_start': always_random_start, 'no_random_start': no_random_start},
+            {'vertical_cut_d': 84, 'shape': 64, 'num_output_channels': 3},
+        ]
+
+        wrapper_class_list_eval = [
+            # CarRandomStartWrapper,
+            PreprocessObservationWrapper,
+        ]
+        wrapper_kwargs_list_eval = [
+            # {'warm_up_steps': hparams['learning_starts'], 'n_envs': n_envs,
+            #  'always_random_start': always_random_start,  'no_random_start': no_random_start},
+            {'vertical_cut_d': 84, 'shape': 64, 'num_output_channels': 3},
+        ]
+    else:
+        wrapper_class_list = []
+        wrapper_kwargs_list = []
+        wrapper_class_list_eval = []
+        wrapper_kwargs_list_eval = []
+
+    monitor_dir = f"../log_monitor/{run_name}"
+    env = make_vec_env(env_id, n_envs, seed=seed, monitor_dir=monitor_dir,
+                       wrapper_class=pack_env_wrappers(wrapper_class_list, wrapper_kwargs_list),
+                       # vec_env_cls=SubprocVecEnv
+                       )
+    eval_env = make_vec_env(env_id, 1, seed=seed + 1, monitor_dir=monitor_dir,
+                            wrapper_class=pack_env_wrappers(wrapper_class_list_eval, wrapper_kwargs_list_eval),
+                            # vec_env_cls=SubprocVecEnv
+                            )
+    if stack_mode == 'venv_stack' and n_stack > 1:
+        print("Using VecFrameStack VenvWrapper")
+        env = VecFrameStack(env, n_stack)
+        eval_env = VecFrameStack(eval_env, n_stack)
+
+    set_random_seed(seed + 2)
+
+    extra_hparams = dict(stack_config=f"{stack_mode}({n_stack})",
+                         omega='no_need',
+                         total_time_steps=total_time_steps,
+                         vae_inchannel='no_need',
+                         vae_latent_dim='no_need',
+                         vae_sample='no_need',
+                         always_random_start=always_random_start,
+                         no_random_start=no_random_start)
+    # os.makedirs('../tensorboard_log/', exist_ok=True)
+
+    # @@custom config
+    model = SAC(policy, env, **hparams)  # CnnPolicy or MlpPolicy
+    # @@default config
+    # model = SAC(policy, env, policy_kwargs=_hparams['policy_kwargs'], verbose=1,
+    #             tensorboard_log=f"../tensorboard_log/{algo_class.__name__}_{env_id}/",
+    #             device=device)  # CnnPolicy or MlpPolicy
+
+    # @@load model in order to continue training
+    # model = SAC.load("/workspace/VQVAE_RL/log_evaluation/CarRacing-v0_latent_SAC_02-03-21-47/best_model",
+    #                  tensorboard_log="CarRacing-v0_latent_SAC_02-03-21-47_1", verbose=1)
+    # env = make_vec_env(env_id, 4, seed=seed, monitor_dir=monitor_dir,
+    #                    wrapper_class=pack_wrappers(wrapper_class_list, wrapper_kwargs_list),
+    #                    vec_env_cls=SubprocVecEnv
+    #                    )
+    # model.set_env(env)
+
+    # @@prepare callbacks
+    # hp_callpack = HparamsWriterCallback()
+    # early_stop_callback = EarlyStopCallback(reward_threshold=0, progress_remaining_threshold=0.4)
+    # callback = CallbackList([hp_callpack, early_stop_callback])
+    # or
+    callback = HparamsWriterCallback(run_name, extra_hparams)
+
+    model.learn(total_time_steps, tb_log_name=run_name, eval_env=eval_env,
+                eval_freq=int(total_time_steps / (n_envs * eval_freq)),
+                eval_log_path=f"../log_evaluation/{run_name}", callback=callback)
+    # model.learn(total_time_steps, tb_log_name=run_name, callback=callback)
+
+    # bit dirty to write hyperparameters into tensorboard when learning finished
+    # for outputformat in model.logger.output_formats:
+    #     if isinstance(outputformat, TensorBoardOutputFormat):
+    #         torch_summary_writer = outputformat.writer
+    #         torch_summary_writer.add_hparams(hparams, {'hparam/accuracy': 10}, run_name='.')
+
+    if save_final_model:
+        model.save(f"../saved_final_model/{run_name}")
+
 def train_latent():
     cuda = torch.cuda.is_available()
     device = torch.device("cuda" if cuda else "cpu")
@@ -156,7 +510,7 @@ def train_latent():
 
     vae_sample = True
     always_random_start = True
-    no_random_start = False
+    no_random_start = True
 
     save_final_model = True
     seed = int(time.time())
@@ -182,7 +536,7 @@ def train_latent():
         # "policy_kwargs": dict(net_arch=dict(pi=[256, 256, 256], qf=[256, 256, 256])),
         # "policy_kwargs": dict(net_arch=dict(pi=[512, 512], qf=[512, 512])),
         "verbose": 1,
-        "accelerate_warmup": True # only for warmup stage
+        # "accelerate_warmup": False # only for warmup stage
     }
     # make vec_envs # second way to achieve wrapping, this should be more beautiful
     # because following the style of stacking wrappers one by one
@@ -297,6 +651,200 @@ def train_latent():
         model.save(f"../saved_final_model/{run_name}")
 
 
+def train_latent2():
+    # cuda = torch.cuda.is_available()
+    # device = torch.device("cuda" if cuda else "cpu")
+    algo_class = DQN
+    policy = 'MlpPolicy'
+    env_id = 'CarRacing-v0'
+    total_time_steps = 1_000_000  # int(3e6)
+    n_envs = 1
+    n_stack = 4
+    stack_mode = 'gym_stack'  # or 'venv_stack or None
+    eval_freq = 50
+    vae_inchannel = 1
+    vae_latent_dim = 32
+    action_repetition = 3
+    max_neg_rewards = 100
+    punishment = 0.0
+
+
+    time_tag = time.strftime('%m-%d-%H-%M-%S', time.localtime(time.time()))
+    run_name = f"latent_{algo_class.__name__}_{time_tag}_discrete"
+    # vae_path = "/workspace/VQVAE_RL/logdir/beta3_vae32_channel3" #beta3_vae32_channel3
+    vae_path = "/workspace/VQVAE_RL/logdir/beta3_vae32_channel1"
+    # vae_path = "/workspace/VQVAE_RL/logdir/vae"
+    monitor_dir = f"../log_monitor/{run_name}"
+
+    vae_sample = True
+
+    always_random_start = True
+    no_random_start = True
+
+    save_final_model = True
+    seed = int(time.time())
+
+    hparams = {
+        "learning_rate": linear_schedule(7.3e-4),  # linear_schedule(7.3e-4), 0.0003， 0.0004(John)
+        "buffer_size": 100_000,
+        "learning_starts": 10_000,  # 100_000
+        "batch_size": 128,
+        "tau": 1,  # 0.02/0.005/1
+        "gamma": 0.95,
+        "train_freq": 4,  # or int(8/n_envs) ?
+        "gradient_steps": 1,  # -1
+        "target_update_interval": 8,
+        "exploration_fraction": 0.99,
+        "exploration_initial_eps": 1.0,
+        "exploration_final_eps": 0.05,
+        # "tensorboard_log": f"../tensorboard_log/{algo_class.__name__}_{env_id}_5/",
+        "tensorboard_log": f"../tensorboard_log/{env_id}/",
+        "policy_kwargs": dict(net_arch=[256, 256, 256]),
+        "verbose": 1,
+        # "accelerate_warmup": False  # only for warmup stage
+    }
+    # make vec_envs # second way to achieve wrapping, this should be more beautiful
+    # because following the style of stacking wrappers one by one
+
+    # @@prepare stuff for wappers
+    if not stack_mode or stack_mode == 'venv_stack':
+        wrapper_class_list = [
+            CarRandomStartWrapper,
+            PreprocessObservationWrapper,
+            EncodeWrapper
+        ]
+        wrapper_kwargs_list = [
+            {'warm_up_steps': hparams['learning_starts'], 'n_envs': n_envs,
+             'always_random_start': always_random_start, 'no_random_start': no_random_start},
+            {'vertical_cut_d': 84, 'shape': 64, 'num_output_channels': vae_inchannel},
+            {'vae_f': vae_path, 'vae_sample': vae_sample,
+             "vae_inchannel": vae_inchannel, "latent_dim": vae_latent_dim}
+        ]
+    elif stack_mode == 'gym_stack':
+
+        wrapper_class_list = [
+            ActionDiscreteWrapper,
+            EpisodeEarlyStopWrapper,
+            Monitor,
+            CarRandomStartWrapper,
+            PreprocessObservationWrapper,
+            EncodeStackWrapper,
+            # PunishRewardWrapper,
+        ]
+        wrapper_kwargs_list = [
+            {'action_repetition': action_repetition},
+            {'max_neg_rewards': max_neg_rewards, 'punishment': punishment},
+            {'filename': monitor_dir},
+            {'warm_up_steps': hparams['learning_starts'], 'n_envs': n_envs,
+             'always_random_start': always_random_start, 'no_random_start': no_random_start},
+            {'vertical_cut_d': 84, 'shape': 64, 'num_output_channels': vae_inchannel},
+            {'n_stack': n_stack, 'vae_f': vae_path, 'vae_sample': vae_sample,
+             "vae_inchannel": vae_inchannel, "latent_dim": vae_latent_dim},
+            # {'max_neg_rewards': max_neg_rewards, "punishment": punishment}
+        ]
+
+        wrapper_class_list_eval = [
+            ActionDiscreteWrapper,
+            # EpisodeEarlyStopWrapper,
+            Monitor,
+            # CarRandomStartWrapper,
+            PreprocessObservationWrapper,
+            EncodeStackWrapper
+        ]
+        wrapper_kwargs_list_eval = [
+            {'action_repetition': action_repetition},
+            # {'max_neg_rewards': max_neg_rewards, 'punishment': punishment},
+            {'filename': monitor_dir},
+            # {'warm_up_steps': hparams['learning_starts'], 'n_envs': n_envs,
+            #  'always_random_start': always_random_start, 'no_random_start': no_random_start},
+            {'vertical_cut_d': 84, 'shape': 64, 'num_output_channels': vae_inchannel},
+            {'n_stack': n_stack, 'vae_f': vae_path, 'vae_sample': vae_sample,
+             "vae_inchannel": vae_inchannel, "latent_dim": vae_latent_dim}
+        ]
+    else:
+        wrapper_class_list = []
+        wrapper_kwargs_list = []
+        wrapper_class_list_eval = []
+        wrapper_kwargs_list_eval = []
+
+    # env = make_vec_env(env_id, n_envs, seed=seed, monitor_dir=monitor_dir,
+    #                    wrapper_class=pack_env_wrappers(wrapper_class_list, wrapper_kwargs_list),
+    #                    # vec_env_cls=SubprocVecEnv
+    #                    )
+    # eval_env = make_vec_env(env_id, 1, seed=seed + 1, monitor_dir=monitor_dir,
+    #                         wrapper_class=pack_env_wrappers(wrapper_class_list_eval, wrapper_kwargs_list_eval),
+    #                         # vec_env_cls=SubprocVecEnv
+    #                         )
+
+    env = make_vec_env_customized(env_id, n_envs, seed=seed,
+                                  wrapper_class=pack_env_wrappers(wrapper_class_list, wrapper_kwargs_list),
+                                  # vec_env_cls=SubprocVecEnv
+                                  )
+    eval_env = make_vec_env_customized(env_id, 1, seed=seed + 1,
+                                       wrapper_class=pack_env_wrappers(wrapper_class_list_eval,
+                                                                       wrapper_kwargs_list_eval),
+                                       # vec_env_cls=SubprocVecEnv
+                                       )
+
+    if stack_mode == 'venv_stack' and n_stack > 1:
+        print("Using VecFrameStack VenvWrapper")
+        env = VecFrameStack(env, n_stack)
+        eval_env = VecFrameStack(eval_env, n_stack)
+
+    set_random_seed(seed + 2)
+
+    extra_hparams = dict(stack_config=f"{stack_mode}({n_stack})",
+                         omega='no_need',
+                         total_time_steps=total_time_steps,
+                         vae_inchannel=vae_inchannel,
+                         vae_latent_dim=vae_latent_dim,
+                         vae_sample=vae_sample,
+                         always_random_start=always_random_start,
+                         no_random_start=no_random_start,
+                         max_neg_rewards=max_neg_rewards,
+                         punishment=punishment,
+                         action_repetition=action_repetition
+                         )
+    # os.makedirs('../tensorboard_log/', exist_ok=True)
+
+    # @@custom config
+    model = DQN(policy, env, **hparams)  # CnnPolicy or MlpPolicy
+    # @@default config
+    # model = SAC(policy, env, policy_kwargs=_hparams['policy_kwargs'], verbose=1,
+    #             tensorboard_log=f"../tensorboard_log/{algo_class.__name__}_{env_id}/",
+    #             device=device)  # CnnPolicy or MlpPolicy
+
+    # @@load model in order to continue training
+    # model = SAC.load("/workspace/VQVAE_RL/log_evaluation/CarRacing-v0_latent_SAC_02-03-21-47/best_model",
+    #                  tensorboard_log="CarRacing-v0_latent_SAC_02-03-21-47_1", verbose=1)
+    # env = make_vec_env(env_id, 4, seed=seed, monitor_dir=monitor_dir,
+    #                    wrapper_class=pack_wrappers(wrapper_class_list, wrapper_kwargs_list),
+    #                    vec_env_cls=SubprocVecEnv
+    #                    )
+    # model.set_env(env)
+
+    # @@prepare callbacks
+    # hp_callpack = HparamsWriterCallback()
+    # early_stop_callback = EarlyStopCallback(reward_threshold=0, progress_remaining_threshold=0.4)
+    # callback = CallbackList([hp_callpack, early_stop_callback])
+    # or
+    callback = HparamsWriterCallback(run_name, hparams, extra_hparams)
+
+    model.learn(total_time_steps, tb_log_name=run_name, eval_env=eval_env,
+                eval_freq=int(total_time_steps / (n_envs * eval_freq)),
+                eval_log_path=f"../log_evaluation/{run_name}", callback=callback)
+    # model.learn(total_time_steps, tb_log_name=run_name, callback=callback)
+
+    # bit dirty to write hyperparameters into tensorboard when learning finished
+    # for outputformat in model.logger.output_formats:
+    #     if isinstance(outputformat, TensorBoardOutputFormat):
+    #         torch_summary_writer = outputformat.writer
+    #         torch_summary_writer.add_hparams(hparams, {'hparam/accuracy': 10}, run_name='.')
+
+    if save_final_model:
+        model.save(f"../saved_final_model/{run_name}")
+
+
 def train_shaping():
     # cuda = torch.cuda.is_available()
     # device = torch.device("cuda" if cuda else "cpu")
@@ -307,8 +855,8 @@ def train_shaping():
     algo_class = SAC
     policy = 'CnnPolicy'
     env_id = 'CarRacing-v0'
-    total_time_steps = 2_000_000  # int(3e6)
-    omega = 10
+    total_time_steps = 1_000_000  # int(3e6)
+    omega = 50
     n_envs = 1
     n_stack = 4
     stack_mode = 'gym_stack'  # 'gym_stack' or 'venv_stack' or None
@@ -342,7 +890,7 @@ def train_shaping():
     hparams = {
         "learning_rate": linear_schedule(7.3e-4),
         "buffer_size": 1_000_000,
-        "learning_starts": 200_000,
+        "learning_starts": 100_000,
         "batch_size": 256,
         "tau": 0.02,
         "gamma": 0.98,
@@ -462,10 +1010,10 @@ def train_shaping():
     if save_final_model:
         model.save(f"../saved_final_model/{run_name}")
 
-def train_vanilla(algo_class: Type[BaseAlgorithm], policy: str, env_id: str, total_time_steps: int, device, seed: int):
-    env = make_vec_env(env_id, 1, seed=seed)
+def train_vanilla(algo_class, policy: str, env_id: str, total_time_steps: int, device=None, seed: int =123):
+    env = make_vec_env(env_id, 3, seed=seed)
     # env = VecFrameStack(env, 4)
-
+    # print(env.action_space)
     eval_env = make_vec_env(env_id, 1, seed=seed+1)
     # eval_env = VecFrameStack(eval_env, 4)
 
@@ -473,10 +1021,95 @@ def train_vanilla(algo_class: Type[BaseAlgorithm], policy: str, env_id: str, tot
     os.makedirs('./tensorboard_log/', exist_ok=True)
 
     model = algo_class(policy, env, verbose=1,
-                       tensorboard_log=f"../tensorboard_log/{algo_class.__name__}_{env_id}/",
-                       device=device)  # CnnPolicy
-    model.learn(total_time_steps, tb_log_name=f'vanilla_ts{total_time_steps:.0e}', eval_env=eval_env,
+                       # tensorboard_log=f"../tensorboard_log/{algo_class.__name__}_{env_id}/",
+                       # device=device
+                       )  # CnnPolicy
+    model.learn(total_time_steps,
+                # tb_log_name=f'vanilla_ts{total_time_steps:.0e}',
+                eval_env=eval_env,
                 eval_freq=int(total_time_steps / 50))
+
+def run_model():
+    algo_class = DQN  # DQN
+    policy = 'CnnPolicy'
+    env_id = 'CarRacing-v0'
+    total_time_steps = 1_000_000  # int(3e6)
+    n_envs = 1
+    n_stack = 4
+    stack_mode = 'gym_stack'  # or 'venv_stack or 'gym_stack' or None
+    eval_freq = 50
+    max_neg_rewards = 100
+    action_repetition = 3
+
+    time_tag = time.strftime('%m-%d-%H-%M-%S', time.localtime(time.time()))
+    run_name = f"vanilla_discrete_{algo_class.__name__}_{time_tag}"
+    monitor_dir = f"../log_monitor/{run_name}"
+
+    always_random_start = True
+    no_random_start = True
+
+    save_final_model = True
+    seed = int(time.time())
+
+    hparams = {
+        "learning_rate": 0.0004,  # linear_schedule(7.3e-4), 0.0003, 0.0004(John)
+        "buffer_size": 100_000,
+        "learning_starts": 10_000,  # 100_000   #10_000(John)
+        "batch_size": 128,
+        "tau": 1,  # 0.02/0.005/1
+        "gamma": 0.95,  # 0.95(John)
+        "train_freq": 4,  # or int(8/n_envs) ?, 4(John)
+        "gradient_steps": 1,  # -1, 1(John)
+        "target_update_interval": 1,  # update target per 10000 steps in John
+        "exploration_fraction": 0.9,
+        "exploration_initial_eps": 1.0,
+        "exploration_final_eps": 0.01,
+        # "tensorboard_log": f"../tensorboard_log/{algo_class.__name__}_{env_id}_5/",
+        "tensorboard_log": f"../tensorboard_log/{env_id}/",
+        "policy_kwargs": dict(net_arch=[256, 256, 256]),
+        # "policy_kwargs": dict(share_features_extractor=False, net_arch=dict(pi=[256, 256, 256], qf=[256, 256, 256])),
+        # "policy_kwargs": dict(net_arch=dict(pi=[256, 256, 256], qf=[256, 256, 256])),
+        # "policy_kwargs": dict(net_arch=dict(pi=[512, 512], qf=[512, 512])),
+        "verbose": 1,
+        # "accelerate_warmup": False  # only for warmup stage
+    }
+
+    wrapper_class_list = [
+        ActionDiscreteWrapper,
+        EpisodeEarlyStopWrapper,
+        # Monitor,
+        # CarRandomStartWrapper,
+        # Monitor,
+        PreprocessObservationWrapper,
+        FrameStackWrapper
+    ]
+    wrapper_kwargs_list = [
+        {'action_repetition': action_repetition},
+        {'max_neg_rewards': max_neg_rewards},
+        # {'filename': monitor_dir},
+        # {'warm_up_steps': hparams['learning_starts'], 'n_envs': n_envs,
+        #  'always_random_start': always_random_start, 'no_random_start': no_random_start},
+        # {'filename': monitor_dir},
+        {'vertical_cut_d': 84, 'shape': 64, 'num_output_channels': 1},
+        {'n_stack': n_stack}
+    ]
+
+    env = make_vec_env_customized(env_id, n_envs, seed=seed,
+                                  wrapper_class=pack_env_wrappers(wrapper_class_list, wrapper_kwargs_list),
+                                  # vec_env_cls=SubprocVecEnv
+                                  )
+
+    # model = DQN.load("/workspace/VQVAE_RL/saved_final_model/vanilla_discrete_DQN_03-05-16-31-37.zip", env=env)
+    model = DQN.load('/workspace/VQVAE_RL/log_evaluation/vanilla_discrete_DQN_03-05-16-31-37/best_model.zip', env=env)
+    # env = model.env
+    # Enjoy trained agent
+    obs = env.reset()
+    for i in range(1000):
+        action, _states = model.predict(obs, deterministic=True)
+        obs, rewards, dones, info = env.step(action)
+        if dones[0] == True:
+            obs = env.reset()
+        env.render()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='VAE Trainer')
@@ -498,7 +1131,12 @@ if __name__ == '__main__':
     #               device=device, seed=int(time.time()))
 
     # train_latent()
-    train_shaping()
+    # train_shaping()
+    # train_vanilla_continuous()
+    # train_vanilla_discrete()
+    train_latent2()
+    # train_vanilla(DQN, 'MlpPolicy', 'LunarLander-v2', 10000)
+    # run_model()
 
 
 
