@@ -12,7 +12,7 @@ from gym.envs.box2d.car_dynamics import Car
 import numpy as np
 from PIL import Image
 from gym import spaces
-from stable_baselines3 import SAC
+from stable_baselines3 import SAC, DQN
 from stable_baselines3.common.vec_env import VecEnvWrapper, VecEnv
 from stable_baselines3.common.vec_env.base_vec_env import VecEnvStepReturn
 from torchvision import transforms as T
@@ -499,7 +499,8 @@ class ShapeRewardStackWrapper(gym.Wrapper):
         # load latent policy
         self._latent_model_f = latent_model_f
         self._latent_model_class = latent_model_class
-        self._latent_policy = self._latent_model_class.load(self._latent_model_f).policy
+        self._latent_model = self._latent_model_class.load(self._latent_model_f)
+        self._latent_policy = self._latent_model.policy
         self._latent_policy.eval()
         self._latent_policy.to('cpu')
         self._last_potential_value = None
@@ -518,13 +519,17 @@ class ShapeRewardStackWrapper(gym.Wrapper):
                                               dims=self.stack_dimension)
             self.stacked_latent_obs[..., -self.shift_size_latent_obs:] = latent_obs
 
-            action = self._latent_policy.actor(self.stacked_latent_obs, deterministic=True)
-
-            q_values = [q_value.squeeze().item() for q_value in
-                        self._latent_policy.critic_target(self.stacked_latent_obs, action)]
-        new_potential_value = sum(q_values)/len(q_values)  # in SAC there are 2 q-networks
+            if self._latent_model_class==SAC:
+                action = self._latent_policy.actor(self.stacked_latent_obs, deterministic=self.latent_deterministic)
+                # action = self._latent_model.predict(self.stacked_latent_obs, deterministic=self.latent_deterministic)
+                q_values = [q_value.squeeze().item() for q_value in
+                            self._latent_policy.critic_target(self.stacked_latent_obs, action)]
+                new_potential_value = sum(q_values)/len(q_values)  # in SAC there are 2 q-networks
+            elif self._latent_model_class==DQN:
+                q_value = self._latent_policy.q_net(self.stacked_latent_obs).max()
+                new_potential_value = q_value.item()
         shaping = self.omega * (self.gamma * new_potential_value - self._last_potential_value)
-        shaping = max(-50, min(shaping, 50)) # clip the value of shaping
+        shaping = max(-30.0, min(shaping, 30.0)) # clip the value of shaping
         self._last_potential_value = new_potential_value
         self.shaping = shaping
         self.reward = reward
@@ -541,10 +546,14 @@ class ShapeRewardStackWrapper(gym.Wrapper):
         latent_obs = self.encode(obs)
         self.stacked_latent_obs[..., -self.shift_size_latent_obs:] = latent_obs
         with torch.inference_mode():
-            action = self._latent_policy.actor(self.stacked_latent_obs, deterministic=self.latent_deterministic)
-            q_values = [q_value.squeeze().item() for q_value in
-                        self._latent_policy.critic(self.stacked_latent_obs, action)]
-        self._last_potential_value = mean(q_values)  # in SAC there are 2 q-networks
+            if self._latent_model_class==SAC:
+                # action = self._latent_model.predict(self.stacked_latent_obs, deterministic=self.latent_deterministic)
+                action = self._latent_policy.actor(self.stacked_latent_obs, deterministic=self.latent_deterministic)
+                q_values = [q_value.squeeze().item() for q_value in
+                            self._latent_policy.critic(self.stacked_latent_obs, action)]
+                self._last_potential_value = sum(q_values)/len(q_values)   # in SAC there are 2 q-networks
+            elif self._latent_model_class==DQN:
+                self._last_potential_value = self._latent_policy.q_net(self.stacked_latent_obs).max()
 
         return self.stackedobs
 

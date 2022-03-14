@@ -322,6 +322,38 @@ class TrainingRewardWriterCallback_both(BaseCallback):
 
         return True
 
+class MyRewardWriterCallback(BaseCallback):
+    def __init__(self, average_window_size=1):
+        super().__init__()
+        self.average_window_size = average_window_size
+        self.episode_rewards = []
+        self.episode_lengths = []
+        # self.episode_times = []
+    def _on_training_start(self) -> None:
+        self.episode_finished = 0
+        output_formats = self.logger.output_formats
+        self.tb_formatter = next(
+            formatter for formatter in output_formats if isinstance(formatter, TensorBoardOutputFormat))
+
+    def _on_step(self) -> bool:
+        for idx, done in enumerate(self.locals['dones']):
+            if done:
+                self.episode_finished += 1
+                info = self.locals['infos'][idx]
+                if "episode" in info.keys():
+                    self.episode_rewards.append(info["episode"]["r"])
+                    self.episode_lengths.append(info["episode"]["l"])
+                    # self.episode_times.append(info["episode"]["t"])
+                    if self.episode_finished % self.average_window_size == 0:
+                        recent_returns = self.episode_rewards[-self.average_window_size:]
+                        self.tb_formatter.writer.add_scalar(f"rollout/recent_rew({self.average_window_size}eps)_tmstp",
+                                                            sum(recent_returns)/len(recent_returns),
+                                                            self.model.num_timesteps)
+                        self.tb_formatter.writer.add_scalar(f"rollout/recent_rew({self.average_window_size}eps)_eps",
+                                                            sum(recent_returns) / len(recent_returns),
+                                                            self.episode_finished)
+                return True
+
 class EpisodeCounterCallback(BaseCallback):
     def __init__(self, num_episodes=8000):
         super().__init__()
