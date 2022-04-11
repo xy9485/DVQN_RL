@@ -77,7 +77,7 @@ transform_carracing = T.Compose([
     T.ToPILImage(),
     T.Resize((64,64)),  # interpolation=InterpolationMode.BILINEAR
     T.RandomHorizontalFlip(p=0.25),
-    T.Grayscale(num_output_channels=3),
+    T.Grayscale(num_output_channels=1),
     T.ToTensor(),    # W,H,C -> C,W,H & divide 255
     # AddGaussianNoise(0., 1.),
     # RandoBlock(output_size=16, p=0.5)

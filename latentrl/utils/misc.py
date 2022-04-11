@@ -123,7 +123,7 @@ def make_vec_env_customized(    #to customize the order of Monitor wrapper
     n_envs: int = 1,
     seed: Optional[int] = None,
     start_index: int = 0,
-    # monitor_dir: Optional[str] = None,
+    monitor_dir: Optional[str] = None,
     wrapper_class: Optional[Callable[[gym.Env], gym.Env]] = None,
     env_kwargs: Optional[Dict[str, Any]] = None,
     vec_env_cls: Optional[Type[Union[DummyVecEnv, SubprocVecEnv]]] = None,
@@ -166,6 +166,8 @@ def make_vec_env_customized(    #to customize the order of Monitor wrapper
             if seed is not None:
                 env.seed(seed + rank)
                 env.action_space.seed(seed + rank)
+            if monitor_dir:
+                os.makedirs(monitor_dir, exist_ok=True) # when monitor_dir is given, there has to be only one env
 
             # Optionally, wrap the environment with the provided wrapper
             if wrapper_class is not None:

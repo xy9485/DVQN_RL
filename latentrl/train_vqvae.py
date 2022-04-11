@@ -61,10 +61,10 @@ args = parser.parse_args()
 # os.environ["CUDA_VISIBLE_DEVICES"]="3"
 
 # check vae dir exists, if not, create it
-in_channels=3
+in_channels=1
 embedding_dim=16
 num_embeddings=64
-vae_version = 'vqvae_c3_embedding16x64'
+vae_version = 'vqvae_c1_embedding16x64_3'
 
 autoencoder_dir = join(args.logdir, vae_version)
 makedirs(autoencoder_dir, exist_ok=True)
@@ -90,7 +90,7 @@ np.random.seed(seed)
 torch.manual_seed(seed)
 
 transform= transform_dict['car_racing']
-path_datesets = '../datasets/CarRacing-v0'
+path_datesets = '/workspace/VQVAE_RL/datasets/CarRacing-v0'
 # dataset_train = RolloutObservationDataset(path_datesets,
 #                                           transform, train=True)
 # dataset_test = RolloutObservationDataset(path_datesets,
@@ -105,11 +105,11 @@ train_loader = torch.utils.data.DataLoader(
 test_loader = torch.utils.data.DataLoader(
     dataset_test, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
-
+reconstruction_path = os.makedirs(f"../reconstruction/{vae_version}/", exist_ok=True)
 model = VQVAE(in_channels=in_channels, embedding_dim=embedding_dim,
-              num_embeddings=num_embeddings, vae_version=vae_version).to(device)
+              num_embeddings=num_embeddings, reconstruction_path=reconstruction_path).to(device)
 print(model)
-# summary(model,(3,64,64))
+# summary(model,(1,64,64))
 
 optimizer = optim.Adam(model.parameters(), lr=0.0005)
 # scheduler = ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=5)

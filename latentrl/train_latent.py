@@ -35,7 +35,7 @@ from torchvision.utils import save_image
 from torchsummary import summary
 
 from latentrl.custom_callbacks import HparamsWriterCallback, EarlyStopCallback, TrainingRewardWriterCallback, \
-    TrainingRewardWriterCallback_both, EpisodeCounterCallback, MyRewardWriterCallback
+    TrainingRewardWriterCallback_both, EpisodeCounterCallback, MyRewardWriterCallback, SaveOnBestTrainingRewardCallback
 from models.vae import VAE
 from wrappers import LatentWrapper, NaiveWrapper, ShapingWrapper, PreprocessObservationWrapper, EncodeWrapper, \
     ShapeRewardWrapper, VecShapeReward, VecShapeReward2, EncodeStackWrapper, ShapeRewardStackWrapper, \
@@ -658,7 +658,7 @@ def train_latent2():
     # cuda = torch.cuda.is_available()
     # device = torch.device("cuda" if cuda else "cpu")
     algo_class = DQN
-    policy = 'MlpPolicy'
+    policy = 'MlpPolicy'    #MlpPolicy/CnnPolicy
     env_id = 'CarRacing-v0'
     total_time_steps = 1_000_000  # int(3e6)
     n_envs = 1
@@ -673,11 +673,14 @@ def train_latent2():
 
 
     time_tag = time.strftime('%m-%d-%H-%M-%S', time.localtime(time.time()))
-    run_name = f"latent_{algo_class.__name__}_{time_tag}_discrete"
+    run_name = f"latent_{algo_class.__name__}_{time_tag}_discrete_vq_c1"
     # vae_path = "/workspace/VQVAE_RL/logdir/beta3_vae32_channel3" #beta3_vae32_channel3
-    vae_path = "/workspace/VQVAE_RL/logdir/beta3_vae32_channel1"
+    # vae_path = "/workspace/VQVAE_RL/logdir/beta3_vae32_channel1"
     # vae_path = "/workspace/VQVAE_RL/logdir/vae"
     # vae_path = "/workspace/VQVAE_RL/logdir/vqvae"
+    # vae_path = "/workspace/VQVAE_RL/logdir/vqvae"
+    # vae_path = "/workspace/VQVAE_RL/logdir/vqvae_c3_embedding16x64"
+    vae_path = "/workspace/VQVAE_RL/logdir/vqvae_c1_embedding16x64"
     monitor_dir = f"../log_monitor/{run_name}"
 
     vae_sample = True
@@ -689,15 +692,15 @@ def train_latent2():
     seed = int(time.time())
 
     hparams = {
-        "learning_rate": 4e-4,  # linear_schedule(7.3e-4)/0.0003/4e-4(John)
+        "learning_rate": linear_schedule(4e-4),  # linear_schedule(7.3e-4)/0.0003/4e-4(John)
         "buffer_size": 100_000,
         "learning_starts": 10_000,  # 100_000
         "batch_size": 128,
-        "tau": 1e-2,  # 0.02/0.005/1/1e-2(John)
-        "gamma": 0.95,
-        "train_freq": 1,  # or int(8/n_envs) ?
+        "tau": 1,  # 0.02/0.005/1/1e-2(John)
+        "gamma": 0.97,
+        "train_freq": 4,  # or int(8/n_envs) ?
         "gradient_steps": 1,  # -1
-        "target_update_interval": 1,
+        "target_update_interval": 8,
         "exploration_fraction": 0.99,
         "exploration_initial_eps": 0.1,
         "exploration_final_eps": 0.01,
@@ -738,7 +741,8 @@ def train_latent2():
         wrapper_kwargs_list = [
             {'action_repetition': action_repetition},
             {'max_neg_rewards': max_neg_rewards, 'punishment': punishment},
-            {'filename': monitor_dir},
+            # {'filename': monitor_dir},
+            {'filename': os.path.join(monitor_dir, 'train')}, #just single env in this case
             {'warm_up_steps': hparams['learning_starts'], 'n_envs': n_envs,
              'always_random_start': always_random_start, 'no_random_start': no_random_start},
             {'vertical_cut_d': 84, 'shape': 64, 'num_output_channels': vae_inchannel},
@@ -758,7 +762,8 @@ def train_latent2():
         wrapper_kwargs_list_eval = [
             {'action_repetition': action_repetition},
             # {'max_neg_rewards': max_neg_rewards, 'punishment': punishment},
-            {'filename': monitor_dir},
+            # {'filename': monitor_dir},
+            {'filename': os.path.join(monitor_dir, 'eval')}, #just single env in this case
             # {'warm_up_steps': hparams['learning_starts'], 'n_envs': n_envs,
             #  'always_random_start': always_random_start, 'no_random_start': no_random_start},
             {'vertical_cut_d': 84, 'shape': 64, 'num_output_channels': vae_inchannel},
@@ -780,11 +785,11 @@ def train_latent2():
     #                         # vec_env_cls=SubprocVecEnv
     #                         )
 
-    env = make_vec_env_customized(env_id, n_envs, seed=seed,
+    env = make_vec_env_customized(env_id, n_envs, seed=seed, monitor_dir=monitor_dir,
                                   wrapper_class=pack_env_wrappers(wrapper_class_list, wrapper_kwargs_list),
                                   # vec_env_cls=SubprocVecEnv
                                   )
-    eval_env = make_vec_env_customized(env_id, 1, seed=seed + 1,
+    eval_env = make_vec_env_customized(env_id, 1, seed=seed + 1, monitor_dir=monitor_dir,
                                        wrapper_class=pack_env_wrappers(wrapper_class_list_eval,
                                                                        wrapper_kwargs_list_eval),
                                        # vec_env_cls=SubprocVecEnv
@@ -831,7 +836,8 @@ def train_latent2():
     hp_callpack = HparamsWriterCallback(run_name, hparams, extra_hparams)
     myreward_callback = MyRewardWriterCallback(average_window_size=5)
     # early_stop_callback = EarlyStopCallback(reward_threshold=0, progress_remaining_threshold=0.4)
-    callback = CallbackList([hp_callpack, myreward_callback])
+    save_best_on_training_back = SaveOnBestTrainingRewardCallback(check_freq=5000, log_dir=monitor_dir)
+    callback = CallbackList([hp_callpack, myreward_callback, save_best_on_training_back])
     # or
     # callback = HparamsWriterCallback(run_name, hparams, extra_hparams)
 
@@ -1030,11 +1036,13 @@ def train_shaping2():
     action_repetition = 3
     max_neg_rewards = 100
     punishment = -20.0
+    vae_type = 'vae'
 
     time_tag = time.strftime('%m-%d-%H-%M-%S', time.localtime(time.time()))
-    run_name = f"shaping_{algo_class.__name__}_{time_tag}_discrete"
+    run_name = f"shaping_{algo_class.__name__}_{time_tag}_vae_discrete"
     # vae_path = "/workspace/VQVAE_RL/logdir/vae"
     vae_path = "/workspace/VQVAE_RL/logdir/beta3_vae32_channel1"
+    # vae_path = "/workspace/VQVAE_RL/logdir/vqvae_c1_embedding16x64"
     monitor_dir = f"../log_monitor/{run_name}"
 
     # latent_model_path = "/workspace/VQVAE_RL/log_evaluation/CarRacing-v0_latent_SAC_02-07-10-59-48_e1/best_model"
@@ -1045,6 +1053,7 @@ def train_shaping2():
     # latent_model_path = "/workspace/VQVAE_RL/log_evaluation/CarRacing-v0_latent_SAC_02-10-20-57-29/best_model"
     # latent_model_path = "/workspace/VQVAE_RL/log_evaluation/latent_SAC_02-21-17-07-13_alwaysRS_AC/best_model"
     latent_model_path = "/workspace/VQVAE_RL/saved_final_model/latent_DQN_03-08-19-44-57_discrete.zip"
+    # latent_model_path = "/workspace/VQVAE_RL/saved_final_model/latent_DQN_04-06-19-11-05_discrete_vq_c1.zip"
 
 
     vae_sample = True
@@ -1056,7 +1065,7 @@ def train_shaping2():
     seed = int(time.time())
 
     hparams = {
-        "learning_rate": linear_schedule(7.3e-4),  # linear_schedule(7.3e-4), 0.0003, 0.0004(John)
+        "learning_rate": linear_schedule(4e-4),  # linear_schedule(7.3e-4), 0.0003, 0.0004(John)
         "buffer_size": 100_000,
         "learning_starts": 10_000,  # 100_000   #10_000(John)
         "batch_size": 128,
@@ -1096,11 +1105,11 @@ def train_shaping2():
         wrapper_kwargs_list = [
             {'action_repetition': action_repetition},
             {'max_neg_rewards': max_neg_rewards, 'punishment': punishment},
-            {'filename': monitor_dir},
+            {'filename': os.path.join(monitor_dir, 'train')},
             {'warm_up_steps': hparams['learning_starts'], 'n_envs': n_envs,
              'always_random_start': always_random_start, 'no_random_start': no_random_start},
             {'vertical_cut_d': 84, 'shape': 64, 'num_output_channels': vae_inchannel},
-            {'n_stack': n_stack, 'gamma': hparams['gamma'], 'omega': omega,
+            {'n_stack': n_stack, 'vae_type':vae_type, 'gamma': hparams['gamma'], 'omega': omega,
              'vae_f': vae_path, "vae_inchannel": vae_inchannel, "latent_dim": vae_latent_dim, 'vae_sample': vae_sample,
              'latent_model_f': latent_model_path, 'latent_deterministic': latent_deterministic,
              'train': True, 'latent_model_class':DQN}
@@ -1116,11 +1125,11 @@ def train_shaping2():
         wrapper_kwargs_list_eval = [
             {'action_repetition': action_repetition},
             # {'max_neg_rewards': max_neg_rewards, 'punishment': punishment},
-            {'filename': monitor_dir},
+            {'filename': os.path.join(monitor_dir, 'eval')},
             # {'warm_up_steps': hparams['learning_starts'], 'n_envs': n_envs,
             #  'always_random_start': always_random_start, 'no_random_start': no_random_start},
             {'vertical_cut_d': 84, 'shape': 64, 'num_output_channels': vae_inchannel},
-            {'n_stack': n_stack, 'gamma': hparams['gamma'], 'omega': omega,
+            {'n_stack': n_stack, 'vae_type':vae_type, 'gamma': hparams['gamma'], 'omega': omega,
              'vae_f': vae_path, "vae_inchannel": vae_inchannel, "latent_dim": vae_latent_dim, 'vae_sample': vae_sample,
              'latent_model_f': latent_model_path, 'latent_deterministic': latent_deterministic,
              'train': False, 'latent_model_class':DQN}
@@ -1139,11 +1148,11 @@ def train_shaping2():
     #                         wrapper_class=pack_env_wrappers(wrapper_class_list_eval, wrapper_kwargs_list_eval),
     #                         # vec_env_cls=SubprocVecEnv
     #                         )
-    env = make_vec_env_customized(env_id, n_envs, seed=seed,
+    env = make_vec_env_customized(env_id, n_envs, seed=seed, monitor_dir=monitor_dir,
                                   wrapper_class=pack_env_wrappers(wrapper_class_list, wrapper_kwargs_list),
                                   # vec_env_cls=SubprocVecEnv
                                   )
-    eval_env = make_vec_env_customized(env_id, 1, seed=seed + 1,
+    eval_env = make_vec_env_customized(env_id, 1, seed=seed + 1, monitor_dir=monitor_dir,
                                        wrapper_class=pack_env_wrappers(wrapper_class_list_eval,
                                                                        wrapper_kwargs_list_eval),
                                        # vec_env_cls=SubprocVecEnv
@@ -1332,8 +1341,8 @@ if __name__ == '__main__':
     # train_shaping()
     # train_vanilla_continuous()
     # train_vanilla_discrete()
-    train_latent2()
-    # train_shaping2()
+    # train_latent2()
+    train_shaping2()
     # train_vanilla(DQN, 'MlpPolicy', 'LunarLander-v2', 10000)
     # run_model()
 

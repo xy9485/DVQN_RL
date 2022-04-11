@@ -22,6 +22,9 @@ from latentrl.models.vae import VAE
 import importlib
 from typing import List, Set, Dict, Tuple, Optional, Union, Any, Callable
 
+from latentrl.models.vqvae import VQVAE
+
+
 class GeneralWrapper(gym.Wrapper):
     def __init__(self, env, train):
         super().__init__(env)
@@ -263,10 +266,11 @@ class PreprocessObservationWrapper(gym.ObservationWrapper):       #combination o
             obs = T.ToPILImage()(obs)
             obs = T.Resize(self.shape)(obs)  # interpolation=InterpolationMode.BILINEAR
             obs = T.Grayscale(num_output_channels=self.num_output_channels)(obs)
+            # obs = obs.float()
             if self.num_output_channels == 1:
                 return np.array(obs)[..., np.newaxis]
                 # or return np.expand_dims(np.array(obs), -1)
-            return np.array(obs)/255.0
+            return np.array(obs)
 
 class FrameStackWrapper(gym.Wrapper):
     def __init__(self, env, n_stack):
@@ -406,36 +410,60 @@ class ShapeRewardWrapper(gym.Wrapper):
 
 
 class EncodeStackWrapper(gym.Wrapper):
-    def __init__(self, env, n_stack, vae_f=None, vae_inchannel=3, latent_dim=128, vae_sample=False):
+    def __init__(self, env, n_stack, vae_type='vqvae', vae_f=None, vae_inchannel=3, latent_dim=128, vae_sample=False):
         super().__init__(env)
         self.n_stack = n_stack
         self.repeat_axis = -1
         self.stack_dimension = -1
-        observation_space = Box(
-            low=-5,
-            high=5,
-            shape=(latent_dim,),
-            dtype=np.float32
-        )
-        low = np.repeat(observation_space.low, self.n_stack, axis=self.repeat_axis)
-        high = np.repeat(observation_space.high, self.n_stack, axis=self.repeat_axis)
-        self.observation_space = spaces.Box(low=low, high=high, dtype=observation_space.dtype)
+        self.vae_type = vae_type
+        if self.vae_type=='vae':
+            observation_space = Box(
+                low=-5,
+                high=5,
+                shape=(latent_dim,),
+                dtype=np.float32
+            )
+            low = np.repeat(observation_space.low, self.n_stack, axis=self.repeat_axis)
+            high = np.repeat(observation_space.high, self.n_stack, axis=self.repeat_axis)
+            self.observation_space = spaces.Box(low=low, high=high, dtype=observation_space.dtype)
+            # load vae
+            best_filename = join(vae_f, 'best.tar')
+            vae_model = VAE(vae_inchannel, latent_dim)  # latent_size: 128
+            device_vae = torch.device('cpu')
+            vae_model.load_state_dict(torch.load(best_filename, map_location=device_vae)['state_dict'])
+            # vae_model.to(device)
+            vae_model.eval()
+            self._vae_model = vae_model
+            self._encoder = vae_model.encoder
+            self.vae_inchannel = vae_inchannel
+            self.latent_dim = latent_dim
+            self.vae_sample = vae_sample
+            self.shift_size = latent_dim
 
-        # load vae
-        best_filename = join(vae_f, 'best.tar')
-        vae_model = VAE(vae_inchannel, latent_dim)  # latent_size: 128
-        device_vae = torch.device('cpu')
-        vae_model.load_state_dict(torch.load(best_filename, map_location=device_vae)['state_dict'])
-        # vae_model.to(device)
-        vae_model.eval()
-        self._vae_model = vae_model
-        self._encoder = vae_model.encoder
-        self.vae_inchannel = vae_inchannel
-        self.latent_dim = latent_dim
-        self.vae_sample = vae_sample
-
-        self.stacked_latent_obs = np.zeros(self.n_stack * self.latent_dim, np.float32)
-        self.shift_size = latent_dim
+        elif self.vae_type=='vqvae':
+            observation_space = Box(
+                low=-5,
+                high=5,
+                shape=(16, 16, 16),
+                dtype=np.float32
+            )
+            low = np.repeat(observation_space.low, self.n_stack, axis=self.repeat_axis)
+            high = np.repeat(observation_space.high, self.n_stack, axis=self.repeat_axis)
+            self.observation_space = spaces.Box(low=low, high=high, dtype=observation_space.dtype)
+            # self.stacked_latent_obs = np.zeros(self.observation_space.low.shape, dtype=np.uint8)
+            self.shift_size = 16
+            # load vqvae
+            device_vae = torch.device('cpu')
+            best_filename = join(vae_f, 'best.tar')
+            vqvae_model = VQVAE(in_channels=vae_inchannel, embedding_dim=16,
+                                num_embeddings=64)
+            vqvae_model.load_state_dict(torch.load(best_filename, map_location=device_vae)['state_dict'])
+            vqvae_model.eval()
+            # vqvae_model = vqvae_model.float()
+            self._vae_model = vqvae_model
+            self._encoder = vqvae_model.encoder
+            self.embedding_dim = 16
+            self.num_embeddings = 64
 
 
     def step(self, action):
@@ -443,31 +471,49 @@ class EncodeStackWrapper(gym.Wrapper):
         latent_obs = self.encode(obs)
         self.stacked_latent_obs = np.roll(self.stacked_latent_obs, shift=-self.shift_size, axis=self.stack_dimension)
         self.stacked_latent_obs[..., -self.shift_size:] = latent_obs
+        # print(np.nonzero(self.stacked_latent_obs))
         return self.stacked_latent_obs, reward, done, info
 
     def reset(self):
-        self.stacked_latent_obs = np.zeros(self.n_stack * self.latent_dim, np.float32)
+        # print("self._vae_model.encoder.weight.dtype:", next(self._vae_model.parameters()).dtype)
+        self.reset_stacked_latent_obs()
+        # self.stacked_latent_obs = np.zeros(self.n_stack * self.latent_dim, np.float32)
         obs = self.env.reset()
         latent_obs = self.encode(obs)
         self.stacked_latent_obs[..., -self.shift_size:] = latent_obs
+        # print(np.nonzero(self.stacked_latent_obs))
         return self.stacked_latent_obs
 
     def encode(self, obs):
         with torch.inference_mode():
             obs = T.ToTensor()(obs)
             obs = obs.unsqueeze(0)
-            if self.vae_sample:
-                latent_obs = self._vae_model.reparameterize(*self._encoder(obs))
-            else:
-                latent_obs = self._encoder(obs)[0]
-            return latent_obs.squeeze().detach().numpy()  # using mu
+            if self.vae_type == 'vqvae':
+                encoding = self._vae_model.encoder(obs.float())
+                quantized_inputs, vq_loss = self._vae_model.vq_layer(encoding)
+                return quantized_inputs.permute(0, 2, 3, 1).squeeze().numpy()
+                #[B x D x H x W] -> [B x H x W x D]
+            elif self.vae_type == 'vae':
+                if self.vae_sample:
+                    latent_obs = self._vae_model.reparameterize(*self._encoder(obs))
+                else:
+                    latent_obs = self._encoder(obs)[0]
+                return latent_obs.squeeze().detach().numpy()  # using mu
+
+    def reset_stacked_latent_obs(self):
+        if self.vae_type == 'vae':
+            self.stacked_latent_obs = np.zeros(self.n_stack * self.latent_dim, np.float32)
+        elif self.vae_type == 'vqvae':
+            self.stacked_latent_obs = np.zeros(self.observation_space.low.shape, np.float32)
+
 
 class ShapeRewardStackWrapper(gym.Wrapper):
-    def __init__(self, env, n_stack, gamma=0.96, omega=100,
+    def __init__(self, env, n_stack, vae_type='vqvae', gamma=0.96, omega=100,
                  vae_f=None, vae_inchannel=3, latent_dim=128, vae_sample=False,
                  latent_model_f=None, latent_deterministic=True, train=True, latent_model_class=SAC):
         super().__init__(env)
         self.n_stack = n_stack
+        self.vae_type = vae_type
         self.gamma = gamma
         self.omega = omega
         self.train = train
@@ -482,19 +528,30 @@ class ShapeRewardStackWrapper(gym.Wrapper):
         self.stacked_latent_obs = torch.zeros((1, self.n_stack * latent_dim), dtype=torch.float32)
 
         self.shift_size_obs = self.env.observation_space.low.shape[self.stack_dimension]
-        self.shift_size_latent_obs = latent_dim
+
         # load vae
         best_filename = join(vae_f, 'best.tar')
-        vae_model = VAE(vae_inchannel, latent_dim)  # latent_size: 128
-        device_vae = torch.device('cpu')
-        vae_model.load_state_dict(torch.load(best_filename, map_location=device_vae)['state_dict'])
-        # vae_model.to(device)
-        vae_model.eval()
-        self._vae_model = vae_model
-        self._encoder = vae_model.encoder
-        self.vae_sample = vae_sample
-        self.vae_inchannel = vae_inchannel
-        self.latent_dim = latent_dim
+        if self.vae_type == 'vae':
+            vae_model = VAE(vae_inchannel, latent_dim)  # latent_size: 128
+            device_vae = torch.device('cpu')
+            vae_model.load_state_dict(torch.load(best_filename, map_location=device_vae)['state_dict'])
+            # vae_model.to(device)
+            vae_model.eval()
+            self._vae_model = vae_model
+            self._encoder = vae_model.encoder
+            self.vae_sample = vae_sample
+            self.latent_dim = latent_dim
+            self.shift_size_latent_obs = latent_dim
+        elif self.vae_type == 'vqvae':
+            vqvae_model = VQVAE(in_channels=vae_inchannel, embedding_dim=16,
+                                num_embeddings=64)
+            device_vae = torch.device('cpu')
+            vqvae_model.load_state_dict(torch.load(best_filename, map_location=device_vae)['state_dict'])
+            vqvae_model.eval()
+            self._vae_model = vqvae_model
+            self._encoder = vqvae_model.encoder
+            self.latent_obs_shape = (16, 16, 16)
+            self.shift_size_latent_obs = 16
 
         # load latent policy
         self._latent_model_f = latent_model_f
@@ -529,7 +586,7 @@ class ShapeRewardStackWrapper(gym.Wrapper):
                 q_value = self._latent_policy.q_net(self.stacked_latent_obs).max()
                 new_potential_value = q_value.item()
         shaping = self.omega * (self.gamma * new_potential_value - self._last_potential_value)
-        shaping = max(-30.0, min(shaping, 30.0)) # clip the value of shaping
+        shaping = max(-50.0, min(shaping, 50.0)) # clip the value of shaping
         self._last_potential_value = new_potential_value
         self.shaping = shaping
         self.reward = reward
@@ -538,7 +595,8 @@ class ShapeRewardStackWrapper(gym.Wrapper):
 
     def reset(self):
         self.stackedobs = np.zeros(self.observation_space.low.shape, dtype=np.uint8)
-        self.stacked_latent_obs = torch.zeros((1, self.n_stack * self.latent_dim), dtype=torch.float32)
+        self.reset_stacked_latent_obs()
+        # self.stacked_latent_obs = torch.zeros((1, self.n_stack * self.latent_dim), dtype=torch.float32)
 
         obs = self.env.reset()
         self.stackedobs[..., -self.shift_size_obs:] = obs
@@ -557,7 +615,35 @@ class ShapeRewardStackWrapper(gym.Wrapper):
 
         return self.stackedobs
 
-    def encode(self, obs): # return flatten latent representation of stacked obs
+    def reset_stacked_latent_obs(self):
+        if self.vae_type == 'vae':
+            self.stacked_latent_obs = torch.zeros((1, self.n_stack * self.latent_dim), dtype=torch.float32)
+        elif self.vae_type == 'vqvae':
+            self.stacked_latent_obs = torch.zeros((1,
+                                                   self.latent_obs_shape[0],
+                                                   self.latent_obs_shape[1],
+                                                   self.latent_obs_shape[2] * self.n_stack),
+                                                   dtype=torch.float32)
+            # temp_tensor = torch.zeros((1, *self.latent_obs_shape), dtype=torch.float32)
+            # self.stacked_latent_obs = torch.repeat_interleave(temp_tensor, self.n_stack, dim=self.stack_dimension)
+
+    def encode(self, obs):
+        with torch.inference_mode():
+            obs = T.ToTensor()(obs)
+            obs = obs.unsqueeze(0)
+            if self.vae_type == 'vqvae':
+                encoding = self._vae_model.encoder(obs.float())
+                quantized_inputs, vq_loss = self._vae_model.vq_layer(encoding)
+                return quantized_inputs.permute(0, 2, 3, 1).squeeze()
+                #[B x D x H x W] -> [B x H x W x D]
+            elif self.vae_type == 'vae':
+                if self.vae_sample:
+                    latent_obs = self._vae_model.reparameterize(*self._encoder(obs))
+                else:
+                    latent_obs = self._encoder(obs)[0]
+                return latent_obs.squeeze().detach()  # using mu
+
+    def encode_(self, obs): # return flatten latent representation of stacked obs
         with torch.inference_mode():
             obs = T.ToTensor()(obs)
             obs = obs.unsqueeze(0)

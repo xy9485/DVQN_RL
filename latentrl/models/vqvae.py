@@ -88,7 +88,7 @@ class VQVAE(nn.Module):
                  hidden_dims: List = None,
                  beta: float = 0.25,
                  img_size: int = 64,
-                 vae_version: str = None,
+                 reconstruction_path = None,
                  **kwargs) -> None:
         super(VQVAE, self).__init__()
 
@@ -96,9 +96,8 @@ class VQVAE(nn.Module):
         self.num_embeddings = num_embeddings
         self.img_size = img_size
         self.beta = beta
-        self.vae_version = vae_version
+        self.reconstruction_path = reconstruction_path
 
-        os.makedirs(f"../reconstruction/{self.vae_version}/", exist_ok=True)
         self.forward_call = 0
 
         modules = []
@@ -205,10 +204,10 @@ class VQVAE(nn.Module):
         quantized_inputs, vq_loss = self.vq_layer(encoding)
         recon = self.decode(quantized_inputs)
         # print(type(recon), recon.size())
-        if self.forward_call % 50 == 0:
+        if self.forward_call % 50 == 0 and self.reconstruction_path:
             print("save input and recon")
-            # save_image(input[:8], f"../reconstruction/vqvae/input_{time.time()}.png")
-            save_image(recon[:8], f"../reconstruction/{self.vae_version}/recon_{time.time()}.png")
+            # save_image(input[:8], os.path.join(self.reconstruction_path,f"input_{time.time()}.png"))
+            save_image(recon[:8], os.path.join(self.reconstruction_path,f"recon_{time.time()}.png"))
         self.forward_call += 1
         return [recon, input, vq_loss]
 
