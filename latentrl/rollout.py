@@ -9,8 +9,9 @@ from PIL import Image
 from utils.misc import sample_continuous_policy
 from gym.envs.box2d.car_dynamics import Car
 
+
 def generate_action(prev_action):
-    if np.random.randint(3) % 3:       # probability to repeat the previous action
+    if np.random.randint(3) % 3:  # probability to repeat the previous action
         return prev_action
 
     index = np.random.randn(3)
@@ -28,10 +29,10 @@ def generate_action(prev_action):
     # if action[0] < 0 and np.random.randint(3)==0: # try to prefer turning left
     #     mask[0] = 1
 
+    return action * mask
 
-    return action*mask
 
-def rollout(name_env, noise_type='white'):
+def rollout(name_env, noise_type="white"):
     env = gym.make("CarRacing-v0")
     # env = gym.make(name_env)
     # if we dont use gym.make("CarRacing-v0"), we dont need below, since CarRacingWrapper has no attribute _max_episode_steps
@@ -41,7 +42,7 @@ def rollout(name_env, noise_type='white'):
     max_ep = 1000
     seq_len = 1000  # the first 60 frames are zooming in.
 
-    feat_dir = f'datasets/{name_env}'
+    feat_dir = f"datasets/{name_env}"
 
     os.makedirs(feat_dir, exist_ok=True)
 
@@ -58,17 +59,16 @@ def rollout(name_env, noise_type='white'):
         next_obs_lst = []
         done_lst = []
 
-        if noise_type == 'white':
+        if noise_type == "white":
             action_lst = [env.action_space.sample() for _ in range(seq_len)]
-        elif noise_type == 'brown':
-            action_lst = sample_continuous_policy(env.action_space, seq_len, 1. / 50)
+        elif noise_type == "brown":
+            action_lst = sample_continuous_policy(env.action_space, seq_len, 1.0 / 50)
 
         obs = env.reset()
         t = 0
         # action = action_lst[t]
         # obs, reward, done, _ = env.step(action)
         done = False
-
 
         while not done and t < seq_len:
             # if t%60 == 0:
@@ -106,7 +106,7 @@ def rollout(name_env, noise_type='white'):
         #     done=np.stack(done_lst, axis=0),  # (T, 1)
         # )
         np.savez(
-            os.path.join(feat_dir, 'rollout_ep_{:03d}'.format(ep)),
+            os.path.join(feat_dir, "rollout_ep_{:03d}".format(ep)),
             obs=np.array(obs_lst),  # (T, H, W, C)
             action=np.array(action_lst),  # (T, a)
             reward=np.array(reward_lst),  # (T, 1)
@@ -114,19 +114,21 @@ def rollout(name_env, noise_type='white'):
             done=np.array(done_lst),  # (T, 1)
         )
 
-def rollout_naive(name_env, noise_type='white'):
+
+def rollout_naive(name_env):
     env = gym.make(name_env)
     # env = gym.make(name_env)
-
-    max_ep = 2000
-    start2save = 60
-    seq_len = 200+start2save # the first 60 frames are zooming in.
+    print(env.action_space)
+    max_ep = 1000
+    # start2save = 60
+    # seq_len = 200 + start2save  # the first 60 frames are zooming in for Carracing-v0.
+    seq_len = 1000
     # env.spec.max_episode_steps = seq_len  #not working
     env._max_episode_steps = seq_len
 
-    feat_dir = f'datasets/{name_env}-1000x300'
+    feat_dir = f"/workspace/repos_dev/VQVAE_RL/datasets/{name_env}_1000x1000"
 
-    os.makedirs(feat_dir, exist_ok=True)
+    # os.makedirs(feat_dir, exist_ok=True)
 
     obs_global = []
 
@@ -140,11 +142,13 @@ def rollout_naive(name_env, noise_type='white'):
         reward_lst = []
         done_lst = []
 
+        # env.full_action_space = True # for skiing
+
         env.reset()
         action = env.action_space.sample()
         # Little hack to make the Car start at random positions in the race-track
-        position = np.random.randint(len(env.track))
-        env.car = Car(env.world, *env.track[position][1:4])
+        # position = np.random.randint(len(env.track))
+        # env.car = Car(env.world, *env.track[position][1:4])
 
         # action = action_lst[t]
         # obs, reward, done, _ = env.step(action)
@@ -153,12 +157,15 @@ def rollout_naive(name_env, noise_type='white'):
         t = 0
         while not done and t < seq_len:
 
-            # action = env.action_space.sample()
-            action = generate_action(action)
+            action = env.action_space.sample()
+            # action = generate_action(action)
             obs, reward, done, _ = env.step(action)
+            print("reward:", reward)
+            if done:
+                print("done")
             t += 1
-            if t <= start2save:
-                continue
+            # if t <= 20:
+            #     continue
 
             env.render()
 
@@ -180,7 +187,7 @@ def rollout_naive(name_env, noise_type='white'):
         print("action_lst.shape", np.array(action_lst).shape)
 
         # np.savez(
-        #     os.path.join(feat_dir, 'rollout_ep_{:03d}'.format(ep)),
+        #     os.path.join(feat_dir, "rollout_ep_{:03d}".format(ep)),
         #     obs=np.array(obs_lst),  # (T, H, W, C)
         #     action=np.array(action_lst),  # (T, a)
         #     reward=np.array(reward_lst),  # (T, 1)
@@ -188,9 +195,13 @@ def rollout_naive(name_env, noise_type='white'):
         # )
 
 
+if __name__ == "__main__":
+    import colored_traceback.auto
 
-if __name__ == '__main__':
     np.random.seed(int(time.time()))
-    # name_env = "LunarLanderContinuous-v2"
-    name_env = "CarRacing-v0"
+    # name_env = "ALE/Freeway-v5"
+    # name_env = "ALE/Boxing-v5"
+    name_env = "Boxing-v0"
+    # name_env = "ALE/Skiing-v5"
+    # name_env = "CarRacing-v0"
     rollout_naive(name_env)

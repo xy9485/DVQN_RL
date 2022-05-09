@@ -8,13 +8,14 @@ import gym
 import torch
 import numpy as np
 from PIL import Image
+
 # from models import MDRNNCell, VAE, Controller
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
 
 
 def sample_continuous_policy(action_space, seq_len, dt):
-    """ Sample a continuous policy.
+    """Sample a continuous policy.
 
     Atm, action_space is supposed to be a box environment. The policy is
     sampled as a brownian motion a_{t+1} = a_t + sqrt(dt) N(0, 1).
@@ -29,13 +30,17 @@ def sample_continuous_policy(action_space, seq_len, dt):
     for _ in range(seq_len):
         daction_dt = np.random.randn(*actions[-1].shape)
         actions.append(
-            np.clip(actions[-1] + math.sqrt(dt) * daction_dt,
-                    action_space.low, action_space.high))
+            np.clip(
+                actions[-1] + math.sqrt(dt) * daction_dt,
+                action_space.low,
+                action_space.high,
+            )
+        )
     return actions
 
 
 def save_checkpoint(state, is_best, filename, best_filename):
-    """ Save state in filename. Also save in best_filename if is_best. """
+    """Save state in filename. Also save in best_filename if is_best."""
     torch.save(state, filename)
     if is_best:
         torch.save(state, best_filename)
@@ -72,28 +77,31 @@ def save_checkpoint(state, is_best, filename, best_filename):
 
 
 def process_frame(
-        frame,
-        resize=(64, 64),  # default value for carracing
-        vertical_cut=84,  # default value for carracing
-        horizontal_cut=None,
+    frame,
+    resize=(64, 64),  # default value for carracing
+    vertical_cut=84,  # default value for carracing
+    horizontal_cut=None,
 ):
     frame = frame[:vertical_cut, :horizontal_cut, :]
-    frame = Image.fromarray(frame, mode='RGB')
+    frame = Image.fromarray(frame, mode="RGB")
     obs = frame.resize(resize, Image.BILINEAR)
     return np.array(obs)
 
 
 class ProcessFrame:
-    def __init__(self, vertical_cut=84, horizontal_cut=None, resize=(64, 64)):  #default value for CarRacing-v0
+    def __init__(
+        self, vertical_cut=84, horizontal_cut=None, resize=(64, 64)
+    ):  # default value for CarRacing-v0
         self.resize = resize
         self.horizontal_cut = horizontal_cut
         self.vertical_cut = vertical_cut
 
     def __call__(self, frame):
-        frame = frame[:self.vertical_cut, :self.horizontal_cut, :]
-        frame = Image.fromarray(frame, mode='RGB')
+        frame = frame[: self.vertical_cut, : self.horizontal_cut, :]
+        frame = Image.fromarray(frame, mode="RGB")
         obs = frame.resize(self.resize, Image.BILINEAR)
         return np.array(obs)
+
 
 def linear_schedule(initial_value: float) -> Callable[[float], float]:
     """
@@ -103,6 +111,7 @@ def linear_schedule(initial_value: float) -> Callable[[float], float]:
     :return: schedule that computes
       current learning rate depending on remaining progress
     """
+
     def func(progress_remaining: float) -> float:
         """
         Progress will decrease from 1 (beginning) to 0.
@@ -114,11 +123,37 @@ def linear_schedule(initial_value: float) -> Callable[[float], float]:
 
     return func
 
+
+def get_linear_fn(start: float, end: float, end_fraction: float):
+    """
+    Create a function that interpolates linearly between start and end
+    between ``progress_remaining`` = 1 and ``progress_remaining`` = ``end_fraction``.
+    This is used in DQN for linearly annealing the exploration fraction
+    (epsilon for the epsilon-greedy strategy).
+
+    :params start: value to start with if ``progress_remaining`` = 1
+    :params end: value to end with if ``progress_remaining`` = 0
+    :params end_fraction: fraction of ``progress_remaining``
+        where end is reached e.g 0.1 then end is reached after 10%
+        of the complete training process.
+    :return:
+    """
+
+    def func(progress_remaining: float) -> float:
+        if (1 - progress_remaining) > end_fraction:
+            return end
+        else:
+            return start + (1 - progress_remaining) * (end - start) / end_fraction
+
+    return func
+
+
 def pretty_json(hp):
     json_hp = json.dumps(hp, indent=2)
     return "".join("\t" + line for line in json_hp.splitlines(True))
 
-def make_vec_env_customized(    #to customize the order of Monitor wrapper
+
+def make_vec_env_customized(  # to customize the order of Monitor wrapper
     env_id: Union[str, Type[gym.Env]],
     n_envs: int = 1,
     seed: Optional[int] = None,
@@ -167,7 +202,9 @@ def make_vec_env_customized(    #to customize the order of Monitor wrapper
                 env.seed(seed + rank)
                 env.action_space.seed(seed + rank)
             if monitor_dir:
-                os.makedirs(monitor_dir, exist_ok=True) # when monitor_dir is given, there has to be only one env
+                os.makedirs(
+                    monitor_dir, exist_ok=True
+                )  # when monitor_dir is given, there has to be only one env
 
             # Optionally, wrap the environment with the provided wrapper
             if wrapper_class is not None:

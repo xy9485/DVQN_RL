@@ -4,9 +4,11 @@
 # from torch import optim
 # from torch.nn import functional as F
 from torchvision import transforms as T
+
 # from torchvision.utils import save_image
 # from torchsummary import summary
 # from typing import Any, Dict, List, Optional, Tuple, Type, Union
+
 
 class Crop:
     def __init__(self, vertical_cut=None, horizontal_cut=None, channel_first=False):
@@ -16,9 +18,10 @@ class Crop:
 
     def __call__(self, sample):
         if self.channel_first:
-            return sample[:, :self._vertical_cut, :self._horizontal_cut]
+            return sample[:, : self._vertical_cut, : self._horizontal_cut]
         else:
-            return sample[:self._vertical_cut, :self._horizontal_cut, :]
+            return sample[: self._vertical_cut, : self._horizontal_cut, :]
+
 
 class RandomBlock(object):
     """Crop randomly the image in a sample.
@@ -47,9 +50,10 @@ class RandomBlock(object):
             top = np.random.randint(0, h - new_h)
             left = np.random.randint(0, w - new_w)
 
-            image[top: top + new_h, left: left + new_w] = 0
+            image[top : top + new_h, left : left + new_w] = 0
 
         return image
+
 
 class AddGaussianNoise:
     def __init__(self, mean=0, stddev=1):
@@ -72,28 +76,61 @@ class AddGaussianNoise:
 #     T.RandomHorizontalFlip(p=0.5),
 # ])
 
-transform_carracing = T.Compose([
-    Crop(vertical_cut=84, channel_first=False),
-    T.ToPILImage(),
-    T.Resize((64,64)),  # interpolation=InterpolationMode.BILINEAR
-    T.RandomHorizontalFlip(p=0.25),
-    T.Grayscale(num_output_channels=1),
-    T.ToTensor(),    # W,H,C -> C,W,H & divide 255
-    # AddGaussianNoise(0., 1.),
-    # RandoBlock(output_size=16, p=0.5)
-    # T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-])
+transform_carracing = T.Compose(
+    [
+        Crop(vertical_cut=84, channel_first=False),
+        T.ToPILImage(),
+        T.Resize((64, 64)),  # interpolation=InterpolationMode.BILINEAR
+        T.RandomHorizontalFlip(p=0.25),
+        T.Grayscale(num_output_channels=3),
+        T.ToTensor(),  # W,H,C -> C,W,H & divide 255
+        # AddGaussianNoise(0., 1.),
+        # RandoBlock(output_size=16, p=0.5)
+        # T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+    ]
+)
 
-transform_lunarlander = T.Compose([
-    T.ToTensor(),
-])
+transform_lunarlander = T.Compose(
+    [
+        T.ToTensor(),
+    ]
+)
 
-transform_dict={
-    'car_racing': transform_carracing,
-    'lunar_lander': transform_lunarlander
+transform_boxing_2d = T.Compose(
+    [
+        T.ToPILImage(),
+        T.Resize((84, 84)),  # interpolation=InterpolationMode.BILINEAR
+        # T.RandomHorizontalFlip(p=0.25),
+        # T.Grayscale(num_output_channels=1),
+        T.ToTensor(),  # W,H,C -> C,W,H & divide 255
+        # AddGaussianNoise(0., 1.),
+        # RandoBlock(output_size=16, p=0.5)
+        # T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+    ]
+)
+
+transform_skiing = T.Compose(
+    [
+        T.ToPILImage(),
+        T.Resize((84, 84)),  # interpolation=InterpolationMode.BILINEAR
+        # T.RandomHorizontalFlip(p=0.25),
+        # T.Grayscale(num_output_channels=1),
+        T.ToTensor(),  # W,H,C -> C,W,H & divide 255
+        # AddGaussianNoise(0., 1.),
+        # RandoBlock(output_size=16, p=0.5)
+        # T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+    ]
+)
+
+
+transform_dict = {
+    "car_racing": transform_carracing,
+    "lunar_lander": transform_lunarlander,
+    "Boxing-v0": transform_boxing_2d,
+    "skiing": transform_skiing,
 }
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     from PIL import Image
     from pathlib import Path
     import matplotlib.pyplot as plt
@@ -103,18 +140,17 @@ if __name__ == '__main__':
     import torch
     import torchvision.transforms as T
 
-    plt.rcParams["savefig.bbox"] = 'tight'
+    plt.rcParams["savefig.bbox"] = "tight"
     # orig_img = Image.open(Path('assets') / 'astronaut.jpg')
     env = gym.make("CarRacing-v0")
     env.reset()
     for _ in range(70):
         action = env.action_space.sample()
-        orig_img, reward, done, _  = env.step(action)
+        orig_img, reward, done, _ = env.step(action)
     # orig_img = T.ToPILImage()(orig_img)
     # if you change the seed, make sure that the randomly-applied transforms
     # properly show that the image can be both transformed and *not* transformed!
     torch.manual_seed(0)
-
 
     def plot(imgs, with_orig=True, row_title=None, **imshow_kwargs):
         if not isinstance(imgs[0], list):
@@ -132,7 +168,7 @@ if __name__ == '__main__':
                 ax.set(xticklabels=[], yticklabels=[], xticks=[], yticks=[])
 
         if with_orig:
-            axs[0, 0].set(title='Original image')
+            axs[0, 0].set(title="Original image")
             axs[0, 0].title.set_size(8)
         if row_title is not None:
             for row_idx in range(num_rows):
@@ -142,6 +178,8 @@ if __name__ == '__main__':
 
     # print(transform_carracing(orig_img).shape)
 
-    padded_imgs = [transform_carracing(orig_img).permute(1,2,0) for _ in range(3)]      #try to plot something to test the transforms
+    padded_imgs = [
+        transform_carracing(orig_img).permute(1, 2, 0) for _ in range(3)
+    ]  # try to plot something to test the transforms
     plot(padded_imgs)
     plt.show()

@@ -2,7 +2,8 @@
 from functools import partial
 from torch.optim import Optimizer
 
-class EarlyStopping(object): # pylint: disable=R0902
+
+class EarlyStopping(object):  # pylint: disable=R0902
     """
     Gives a criterion to stop training when a given metric is not
     improving anymore
@@ -27,7 +28,7 @@ class EarlyStopping(object): # pylint: disable=R0902
 
     """
 
-    def __init__(self, mode='min', patience=10, threshold=1e-4, threshold_mode='rel'):
+    def __init__(self, mode="min", patience=10, threshold=1e-4, threshold_mode="rel"):
         self.patience = patience
         self.mode = mode
         self.threshold = threshold
@@ -37,8 +38,7 @@ class EarlyStopping(object): # pylint: disable=R0902
         self.mode_worse = None  # the worse value for the chosen mode
         self.is_better = None
         self.last_epoch = -1
-        self._init_is_better(mode=mode, threshold=threshold,
-                             threshold_mode=threshold_mode)
+        self._init_is_better(mode=mode, threshold=threshold, threshold_mode=threshold_mode)
         self._reset()
 
     def _reset(self):
@@ -47,7 +47,7 @@ class EarlyStopping(object): # pylint: disable=R0902
         self.num_bad_epochs = 0
 
     def step(self, metrics, epoch=None):
-        """ Updates early stopping state """
+        """Updates early stopping state"""
         current = metrics
         if epoch is None:
             epoch = self.last_epoch = self.last_epoch + 1
@@ -61,47 +61,46 @@ class EarlyStopping(object): # pylint: disable=R0902
 
     @property
     def stop(self):
-        """ Should we stop learning? """
+        """Should we stop learning?"""
         return self.num_bad_epochs > self.patience
 
-
-    def _cmp(self, mode, threshold_mode, threshold, a, best): # pylint: disable=R0913, R0201
-        if mode == 'min' and threshold_mode == 'rel':
-            rel_epsilon = 1. - threshold
+    def _cmp(self, mode, threshold_mode, threshold, a, best):  # pylint: disable=R0913, R0201
+        if mode == "min" and threshold_mode == "rel":
+            rel_epsilon = 1.0 - threshold
             return a < best * rel_epsilon
 
-        elif mode == 'min' and threshold_mode == 'abs':
+        elif mode == "min" and threshold_mode == "abs":
             return a < best - threshold
 
-        elif mode == 'max' and threshold_mode == 'rel':
-            rel_epsilon = threshold + 1.
+        elif mode == "max" and threshold_mode == "rel":
+            rel_epsilon = threshold + 1.0
             return a > best * rel_epsilon
 
         return a > best + threshold
 
     def _init_is_better(self, mode, threshold, threshold_mode):
-        if mode not in {'min', 'max'}:
-            raise ValueError('mode ' + mode + ' is unknown!')
-        if threshold_mode not in {'rel', 'abs'}:
-            raise ValueError('threshold mode ' + threshold_mode + ' is unknown!')
+        if mode not in {"min", "max"}:
+            raise ValueError("mode " + mode + " is unknown!")
+        if threshold_mode not in {"rel", "abs"}:
+            raise ValueError("threshold mode " + threshold_mode + " is unknown!")
 
-        if mode == 'min':
-            self.mode_worse = float('inf')
+        if mode == "min":
+            self.mode_worse = float("inf")
         else:  # mode == 'max':
-            self.mode_worse = (-float('inf'))
+            self.mode_worse = -float("inf")
 
         self.is_better = partial(self._cmp, mode, threshold_mode, threshold)
 
     def state_dict(self):
-        """ Returns early stopping state """
-        return {key: value for key, value in self.__dict__.items() if key != 'is_better'}
+        """Returns early stopping state"""
+        return {key: value for key, value in self.__dict__.items() if key != "is_better"}
 
     def load_state_dict(self, state_dict):
-        """ Loads early stopping state """
+        """Loads early stopping state"""
         self.__dict__.update(state_dict)
-        self._init_is_better(mode=self.mode, threshold=self.threshold,
-                             threshold_mode=self.threshold_mode)
-
+        self._init_is_better(
+            mode=self.mode, threshold=self.threshold, threshold_mode=self.threshold_mode
+        )
 
 
 ############################################################
@@ -109,7 +108,7 @@ class EarlyStopping(object): # pylint: disable=R0902
 ####  TO BE REMOVED WITH PYTORCH 0.5                   #####
 #### IT IS COPY OF THE 0.5 VERSION OF THE LR SCHEDULER #####
 ############################################################
-class ReduceLROnPlateau(object): # pylint: disable=R0902
+class ReduceLROnPlateau(object):  # pylint: disable=R0902
     """Reduce learning rate when a metric has stopped improving.
     Models often benefit from reducing the learning rate by a factor
     of 2-10 once learning stagnates. This scheduler reads a metrics
@@ -158,23 +157,33 @@ class ReduceLROnPlateau(object): # pylint: disable=R0902
         >>>     scheduler.step(val_loss)
     """
 
-    def __init__(self, optimizer, mode='min', factor=0.1, patience=10, # pylint: disable=R0913
-                 verbose=False, threshold=1e-4, threshold_mode='rel',
-                 cooldown=0, min_lr=0, eps=1e-8):
+    def __init__(
+        self,
+        optimizer,
+        mode="min",
+        factor=0.5,
+        patience=10,  # pylint: disable=R0913
+        verbose=False,
+        threshold=1e-4,
+        threshold_mode="rel",
+        cooldown=0,
+        min_lr=0,
+        eps=1e-8,
+    ):
 
         if factor >= 1.0:
-            raise ValueError('Factor should be < 1.0.')
+            raise ValueError("Factor should be < 1.0.")
         self.factor = factor
 
         if not isinstance(optimizer, Optimizer):
-            raise TypeError('{} is not an Optimizer'.format(
-                type(optimizer).__name__))
+            raise TypeError("{} is not an Optimizer".format(type(optimizer).__name__))
         self.optimizer = optimizer
 
         if isinstance(min_lr, (list, tuple)):
             if len(min_lr) != len(optimizer.param_groups):
-                raise ValueError("expected {} min_lrs, got {}".format(
-                    len(optimizer.param_groups), len(min_lr)))
+                raise ValueError(
+                    "expected {} min_lrs, got {}".format(len(optimizer.param_groups), len(min_lr))
+                )
             self.min_lrs = list(min_lr)
         else:
             self.min_lrs = [min_lr] * len(optimizer.param_groups)
@@ -192,8 +201,7 @@ class ReduceLROnPlateau(object): # pylint: disable=R0902
         self.is_better = None
         self.eps = eps
         self.last_epoch = -1
-        self._init_is_better(mode=mode, threshold=threshold,
-                             threshold_mode=threshold_mode)
+        self._init_is_better(mode=mode, threshold=threshold, threshold_mode=threshold_mode)
         self._reset()
 
     def _reset(self):
@@ -203,7 +211,7 @@ class ReduceLROnPlateau(object): # pylint: disable=R0902
         self.num_bad_epochs = 0
 
     def step(self, metrics, epoch=None):
-        """ Updates scheduler state """
+        """Updates scheduler state"""
         current = metrics
         if epoch is None:
             epoch = self.last_epoch = self.last_epoch + 1
@@ -226,53 +234,59 @@ class ReduceLROnPlateau(object): # pylint: disable=R0902
 
     def _reduce_lr(self, epoch):
         for i, param_group in enumerate(self.optimizer.param_groups):
-            old_lr = float(param_group['lr'])
+            old_lr = float(param_group["lr"])
             new_lr = max(old_lr * self.factor, self.min_lrs[i])
             if old_lr - new_lr > self.eps:
-                param_group['lr'] = new_lr
+                param_group["lr"] = new_lr
                 if self.verbose:
-                    print('Epoch {:5d}: reducing learning rate'
-                          ' of group {} to {:.4e}.'.format(epoch, i, new_lr))
+                    print(
+                        "Epoch {:5d}: reducing learning rate"
+                        " of group {} to {:.4e}.".format(epoch, i, new_lr)
+                    )
 
     @property
     def in_cooldown(self):
-        """ Are we on CD? """
+        """Are we on CD?"""
         return self.cooldown_counter > 0
 
-    def _cmp(self, mode, threshold_mode, threshold, a, best): # pylint: disable=R0913,R0201
-        if mode == 'min' and threshold_mode == 'rel':
-            rel_epsilon = 1. - threshold
+    def _cmp(self, mode, threshold_mode, threshold, a, best):  # pylint: disable=R0913,R0201
+        if mode == "min" and threshold_mode == "rel":
+            rel_epsilon = 1.0 - threshold
             return a < best * rel_epsilon
 
-        elif mode == 'min' and threshold_mode == 'abs':
+        elif mode == "min" and threshold_mode == "abs":
             return a < best - threshold
 
-        elif mode == 'max' and threshold_mode == 'rel':
-            rel_epsilon = threshold + 1.
+        elif mode == "max" and threshold_mode == "rel":
+            rel_epsilon = threshold + 1.0
             return a > best * rel_epsilon
 
         return a > best + threshold
 
     def _init_is_better(self, mode, threshold, threshold_mode):
-        if mode not in {'min', 'max'}:
-            raise ValueError('mode ' + mode + ' is unknown!')
-        if threshold_mode not in {'rel', 'abs'}:
-            raise ValueError('threshold mode ' + threshold_mode + ' is unknown!')
+        if mode not in {"min", "max"}:
+            raise ValueError("mode " + mode + " is unknown!")
+        if threshold_mode not in {"rel", "abs"}:
+            raise ValueError("threshold mode " + threshold_mode + " is unknown!")
 
-        if mode == 'min':
-            self.mode_worse = float('inf')
+        if mode == "min":
+            self.mode_worse = float("inf")
         else:  # mode == 'max':
-            self.mode_worse = (-float('inf'))
+            self.mode_worse = -float("inf")
 
         self.is_better = partial(self._cmp, mode, threshold_mode, threshold)
 
     def state_dict(self):
-        """ Returns scheduler state """
-        return {key: value for key, value in self.__dict__.items()
-                if key not in {'optimizer', 'is_better'}}
+        """Returns scheduler state"""
+        return {
+            key: value
+            for key, value in self.__dict__.items()
+            if key not in {"optimizer", "is_better"}
+        }
 
     def load_state_dict(self, state_dict):
-        """ Loads scheduler state """
+        """Loads scheduler state"""
         self.__dict__.update(state_dict)
-        self._init_is_better(mode=self.mode, threshold=self.threshold,
-                             threshold_mode=self.threshold_mode)
+        self._init_is_better(
+            mode=self.mode, threshold=self.threshold, threshold_mode=self.threshold_mode
+        )
