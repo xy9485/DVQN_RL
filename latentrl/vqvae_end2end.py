@@ -1,3 +1,4 @@
+import datetime
 import os
 import time
 
@@ -223,12 +224,12 @@ class VQVAE(nn.Module):
         recon = self.decode(quantized_inputs)
         # print(type(recon), recon.size())
         if self.forward_call % 500 == 0 and self.reconstruction_path:
-            print("save input and recon")
-            # save_image(input[:8], os.path.join(self.reconstruction_path,f"input_{time.time()}.png"))
-            save_image(
-                recon[:8],
-                os.path.join(self.reconstruction_path, f"recon_{time.time()}.png"),
-            )
+            current_time = datetime.datetime.now().strftime("%b%d_%H-%M-%S")
+            save_to = os.path.join(self.reconstruction_path, f"recon_{current_time}.png")
+            # save_image(input[:8],save_to)
+            save_image(recon[:8], save_to)
+            print("save input and recon to path: ", save_to)
+
         self.forward_call += 1
         return [recon, quantized_inputs, input, vq_loss]
 

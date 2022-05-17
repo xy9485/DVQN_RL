@@ -5,6 +5,7 @@ import time
 from tkinter import N
 from types import SimpleNamespace
 import colored_traceback.auto
+from cv2 import mean
 import gym
 import math
 import random
@@ -27,7 +28,7 @@ from data2 import RolloutDatasetNaive
 
 from vqvae_end2end import VQVAE
 from utils.learning import EarlyStopping, ReduceLROnPlateau
-from utils.misc import get_linear_fn, make_vec_env_customized
+from utils.misc import get_linear_fn, linear_schedule, make_vec_env_customized, update_learning_rate
 from wrappers import (
     ActionRepetitionWrapper,
     EncodeStackWrapper,
@@ -49,6 +50,7 @@ def make_env(
     config,
 ):
     env = gym.make(env_id).unwrapped
+    # env = gym.make(env_id)
 
     wrapper_class_list = [
         # ActionDiscreteWrapper,
@@ -123,7 +125,16 @@ class DQN_paper(nn.Module):
             temp = temp.unsqueeze(0)
             n_flatten = self.cnn(temp.float()).shape[1]
 
-        self.linear = nn.Sequential(nn.Linear(n_flatten, action_space.n), nn.ReLU())
+        self.linear = nn.Sequential(
+            nn.Linear(n_flatten, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, n_flatten),
+            nn.ReLU(),
+            nn.Linear(n_flatten, action_space.n),
+            nn.ReLU(),
+        )
 
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         return self.linear(self.cnn(observations))
@@ -201,7 +212,7 @@ class DQN_MLP(nn.Module):
         self.fc1 = nn.Linear(np.prod(input_dim), 256)
         self.fc2 = nn.Linear(256, 256)
         self.fc3 = nn.Linear(256, 256)
-        self.fc4 = nn.Linear(256, 256)
+        # self.fc4 = nn.Linear(256, 256)
         self.head = nn.Linear(256, output_dim)
 
     def forward(self, x):
@@ -210,7 +221,7 @@ class DQN_MLP(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
-        x = F.relu(self.fc4(x))
+        # x = F.relu(self.fc4(x))
         return self.head(x)
 
 
@@ -234,7 +245,273 @@ class DVN(nn.Module):
         return self.head(x)
 
 
-class Agent:
+class VanillaDQNAgent:
+    def __init__(
+        self,
+        env,
+        config,
+    ):
+        # self.state_dim = state_dim
+        # self.action_dim = action_dim
+        # self.save_dir = save_dir
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        seed = int(time.time())
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+
+        # DQN_MLP
+        # Get number of actions from gym action space
+        self.n_actions = env.action_space.n
+        if len(env.observation_space.shape) > 1:
+            self.obs_height = env.observation_space.shape[0]
+            self.obs_width = env.observation_space.shape[1]
+
+        # self.policy_mlp_net = DQN_MLP(env.observation_space.shape, self.n_actions).to(self.device)
+        # self.target_mlp_net = DQN_MLP(env.observation_space.shape, self.n_actions).to(self.device)
+
+        self.policy_mlp_net = DQN_paper(env.observation_space, env.action_space).to(self.device)
+        self.target_mlp_net = DQN_paper(env.observation_space, env.action_space).to(self.device)
+
+        print("policy_mlp_net", self.policy_mlp_net)
+        if len(env.observation_space.shape) == 3:
+            temp = env.observation_space.sample()
+            sample = T.ToTensor()(temp)
+            summary(self.policy_mlp_net, (12, 84, 84))
+        else:
+            summary(self.policy_mlp_net, env.observation_space.shape)
+        # or
+        # self.policy_mlp_net = DQN_paper(env.observation_space, env.action_space).to(self.device)
+        # self.target_mlp_net = DQN_paper(env.observation_space, env.action_space).to(self.device)
+
+        self.target_mlp_net.load_state_dict(self.policy_mlp_net.state_dict())
+        # self.target_mlp_net.eval()
+
+        self._current_progress_remaining = 1.0
+        if isinstance(config.learning_rate, str) and config.learning_rate.startswith("lin"):
+            self.lr_scheduler = linear_schedule(float(config.learning_rate.split("_")[1]))
+            self.dqn_optimizer = optim.Adam(
+                self.policy_mlp_net.parameters(),
+                lr=self.lr_scheduler(self._current_progress_remaining),
+            )
+        elif isinstance(config.learning_rate, float):
+            self.dqn_optimizer = optim.Adam(
+                self.policy_mlp_net.parameters(), lr=config.learning_rate
+            )
+
+        self.scheduler = ReduceLROnPlateau(self.dqn_optimizer, "min")
+
+        self.earlystopping = EarlyStopping("min", patience=30)
+
+        # print(self.policy_mlp_net)
+        # summary(policy_mlp_net, (3, obs_height, obs_width))
+
+        # self.curr_step = 0
+        self.total_steps_done = 0
+        self.num_episodes_finished = 0
+
+        # Hyperparameters
+        self.num_episodes_train = config.num_episodes_train
+        self.batch_size = config.batch_size
+        # self.validation_size = config.validation_size
+        self.size_replay_memory = config.size_replay_memory
+        self.gamma = config.gamma
+        self.exploration_initial_eps = config.exploration_initial_eps
+        self.exploration_final_eps = config.exploration_final_eps
+        self.exploration_fraction = config.exploration_fraction
+        # self.eps_decay = config.eps_decay
+        # self.target_update = config.target_update
+
+        # self.exploration_rate = config.exploration_rate
+        # self.exploration_rate_decay = config.exploration_rate_decay
+        # self.exploration_rate_min = config.exploration_rate_min
+
+        # self.save_model_every = config.save_model_every
+
+        # Initialize experience replay buffer
+        self.memory = ReplayMemory(self.size_replay_memory)
+        self.Transition = namedtuple(
+            "Transition", ("state", "action", "next_state", "reward", "done")
+        )
+
+        self.init_steps = config.init_steps  # min. experiences before training
+        self.learn_every = config.learn_every  # no. of experiences between updates to Q_online
+        self.sync_every = config.sync_every  # no. of experiences between updates to Q_target
+        # self.validate_every = config.validate_every
+        self.gradient_steps = config.gradient_steps
+        # self.exploration_schedule = get_linear_fn(
+        #     self.exploration_initial_eps,
+        #     self.exploration_final_eps,
+        #     self.exploration_fraction,
+        # )
+
+        self.exploration_scheduler = get_linear_fn(
+            self.exploration_initial_eps,
+            self.exploration_final_eps,
+            self.exploration_fraction,
+        )
+
+        self.n_call_learn = 0
+        self.exploration_rate = None
+
+    def _update_current_progress_remaining(self, finished: int, total: int) -> None:
+        """
+        Compute current progress remaining (starts from 1 and ends to 0)
+
+        :param num_timesteps: current number of timesteps
+        :param total_timesteps:
+        """
+        self._current_progress_remaining = 1.0 - float(finished) / float(total)
+
+    @torch.no_grad()
+    def act(self, state):
+        # if self.num_episodes_finished < math.ceil(0.99 * self.num_episodes_train):
+        #     self.exploration_rate = (
+        #         self.exploration_initial_eps
+        #         - self.exploration_initial_eps / self.num_episodes_train * self.num_episodes_finished
+        #     )
+        self.exploration_rate = self.exploration_scheduler(self._current_progress_remaining)
+        # linear schedule on epsilon
+        # eps_threshold = (self.eps_end + (self.eps_start - self.eps_end) / math.ceil(self.train_episode * 0.9)
+        #                  * self.episodes_done)
+
+        # exploration rate exponential decay
+        # self.eps_threshold = self.eps_end + (self.eps_start - self.eps_end) * math.exp(
+        #     -1.0 * self.total_steps_done / self.eps_decay
+        # )
+
+        # # decrease exploration_rate
+        # self.exploration_rate *= self.exploration_rate_decay
+        # self.exploration_rate = max(self.exploration_rate_min, self.exploration_rate)
+
+        if len(state.shape) > 2:
+            state = T.ToTensor()(state).float().unsqueeze(0).to(self.device)
+        else:
+            state = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
+
+        sample = random.random()
+        if sample > self.exploration_rate:
+            # with torch.no_grad():
+            # action = self.policy_mlp_net(quantized_latent_state)  # for debug
+            action = self.policy_mlp_net(state).max(1)[1].view(1, 1)
+        else:
+            action = torch.tensor(
+                [[random.randrange(self.n_actions)]], device=self.device, dtype=torch.long
+            )
+
+        self.total_steps_done += 1
+        self._update_current_progress_remaining(self.num_episodes_finished, self.num_episodes_train)
+        return action
+
+    def cache(self, state, action, next_state, reward, done):
+        """Add the experience to memory"""
+        # if state is an image, convert it to a tensor
+        if len(state.shape) > 2:
+            state = T.ToTensor()(state).float().unsqueeze(0)
+            next_state = T.ToTensor()(next_state).float().unsqueeze(0)
+        else:
+            state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+            next_state = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0)
+        reward = torch.tensor([reward])
+
+        self.memory.push(state, action, next_state, reward, done)
+
+    def recall(self):
+        """Sample experiences from memory"""
+        pass
+
+    def td_estimate(self, state, action):
+        pass
+
+    @torch.no_grad()
+    def td_target(self, reward, next_state, done):
+        pass
+
+    def update_Q_online(self, td_estimate, td_target):
+        pass
+
+    def sync_Q_target(self):
+        self.target_mlp_net.load_state_dict(self.policy_mlp_net.state_dict())
+
+    def learn(self, tb_writer):
+        if self.total_steps_done % self.sync_every == 0:
+            self.sync_Q_target()
+
+        # if self.total_steps_done % self.save_model_every == 0:
+        #     pass
+        # self.save()
+
+        if self.total_steps_done < self.init_steps:
+            return None
+
+        if self.total_steps_done % self.learn_every != 0:
+            return None
+
+        # if self.n_call_learn % self.validate_every == 0:
+        # validate_loss = self.validate_vqvae()
+        # self.scheduler.step(validate_loss)
+        # self.earlystopping.step(validate_loss)
+        # pass
+
+        loss_list = []
+        for _ in range(self.gradient_steps):
+            q_loss = self.train(tb_writer)
+            loss_list.append(q_loss)
+        mean_q_loss = np.mean(loss_list)
+
+        return mean_q_loss
+
+    def train(self, tb_writer):
+        update_learning_rate(
+            self.dqn_optimizer, self.lr_scheduler(self._current_progress_remaining)
+        )
+        """Update online action value (Q) function with a batch of experiences"""
+        batch = self.memory.sample(batch_size=self.batch_size)
+
+        # state = []
+        # next_state = []
+        # for state, next_state in zip(batch.state, batch.next_state):
+        #     state.append(torch.tensor(state).float().unsqueeze(0).to(self.device))
+        #     next_state.append(torch.tensor(next_state).float().unsqueeze(0).to(self.device))
+
+        # non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
+        state_batch = torch.cat(batch.state).to(self.device)
+        action_batch = torch.cat(batch.action).to(self.device)
+        reward_batch = torch.cat(batch.reward).to(self.device)
+        done_batch = torch.tensor(batch.done).to(self.device)
+        next_state_batch = torch.cat(batch.next_state).to(self.device)
+
+        current_Q = self.policy_mlp_net(state_batch).gather(1, action_batch)
+
+        # Or Compute next_state_max_Q
+        with torch.no_grad():
+            # next_state_max_Q = next_state_max_Q   # for debug
+            next_state_max_Q = self.target_mlp_net(next_state_batch).max(1)[0]
+
+            target_Q = (
+                reward_batch + (1 - done_batch.float()) * self.gamma * next_state_max_Q
+            ).float()
+
+        criterion = nn.SmoothL1Loss()
+        q_loss = criterion(current_Q, target_Q.unsqueeze(1))
+
+        self.dqn_optimizer.zero_grad(set_to_none=True)
+        q_loss.backward()
+        # max_grad_norm = 10
+        # torch.nn.utils.clip_grad_norm_(self.policy_mlp_net.parameters(), max_grad_norm)
+        self.dqn_optimizer.step()
+
+        self.n_call_learn += 1
+
+        if self.n_call_learn % 500 == 0:
+            for name, param in self.policy_mlp_net.named_parameters():
+                tb_writer.add_histogram(f"gradients/dqn/{name}", param.grad, self.n_call_learn)
+                tb_writer.add_histogram(f"weight_bias/dqn/{name}", param, self.n_call_learn)
+
+        return q_loss.item()
+
+
+class SingelLayerAgent:
     def __init__(
         self,
         env,
@@ -267,7 +544,7 @@ class Agent:
             reconstruction_path=config.reconstruction_path,
         ).to(self.device)
 
-        self.vqvae_optimizer = optim.Adam(self.vqvae_model.parameters(), lr=5e-4)
+        self.vqvae_optimizer = optim.SGD(self.vqvae_model.parameters(), lr=5e-4)
         # or Adam
 
         # scheduler = ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=5)
@@ -290,9 +567,9 @@ class Agent:
         # self.target_mlp_net = DQN_paper(env.observation_space, env.action_space).to(self.device)
 
         self.target_mlp_net.load_state_dict(self.policy_mlp_net.state_dict())
-        self.target_mlp_net.eval()
+        # self.target_mlp_net.eval()
 
-        self.dqn_optimizer = optim.Adam(self.policy_mlp_net.parameters(), lr=5e-4)
+        self.dqn_optimizer = optim.SGD(self.policy_mlp_net.parameters(), lr=2e-4)
         # RMSProp
 
         print(self.policy_mlp_net)
@@ -370,12 +647,11 @@ class Agent:
         sample = random.random()
         if sample > self.eps_threshold:
             # with torch.no_grad():
+            # action = self.policy_mlp_net(quantized_latent_state)  # for debug
             action = self.policy_mlp_net(quantized_latent_state).max(1)[1].view(1, 1)
         else:
             action = torch.tensor(
-                [[random.randrange(self.n_actions)]],
-                device=self.device,
-                dtype=torch.long,
+                [[random.randrange(self.n_actions)]], device=self.device, dtype=torch.long
             )
 
         return action
@@ -467,7 +743,7 @@ class Agent:
         recon_loss = F.mse_loss(recon_batch, state_batch)
         recon_loss2 = F.mse_loss(recon_batch2, next_state_batch)
 
-        current_Q = self.policy_mlp_net(quantized).gather(1, action_batch)
+        current_Q = self.policy_mlp_net(quantized.detach()).gather(1, action_batch)
         # print("memory_allocated: {:.5f} MB".format(torch.cuda.memory_allocated() / (1024 * 1024)))
         # print("run policy_mlp_net")
 
@@ -481,7 +757,8 @@ class Agent:
 
         # Or Compute next_state_max_Q
         with torch.no_grad():
-            next_state_max_Q = self.target_mlp_net(quantized2).max(1)[0].detach()
+            # next_state_max_Q = next_state_max_Q   # for debug
+            next_state_max_Q = self.target_mlp_net(quantized2).max(1)[0]
 
             target_Q = (
                 reward_batch + (1 - done_batch.float()) * self.gamma * next_state_max_Q
@@ -497,7 +774,7 @@ class Agent:
         # print("run q_loss")
 
         if not self.earlystopping.stop:
-            total_loss = 0.5 * (vqloss + vqloss2 + recon_loss + recon_loss2) + q_loss
+            total_loss = 1 * (vqloss + vqloss2 + recon_loss + recon_loss2) + 1 * q_loss
 
         else:
             total_loss = q_loss
@@ -1012,13 +1289,13 @@ def train_single_layer():
                     "/workspace/repos_dev/VQVAE_RL/reconstruction/singlelayer", env_id, current_time
                 ),
                 # "reconstruction_path": None,
-                "num_episodes_train": 4000,
+                "num_episodes_train": 1000,
                 "batch_size": 128,
                 "validation_size": 128,
                 "validate_every": 10,
                 "size_replay_memory": int(1e6),
                 "gamma": 0.97,
-                "eps_start": 0.9,
+                "eps_start": 0.1,
                 "eps_end": 0.05,
                 "eps_decay": 200,
                 "target_update": 10,
@@ -1071,7 +1348,7 @@ def train_single_layer():
 
         # The main training loop
         env = make_env(env_id, config)
-        agent = Agent(env, config)
+        agent = SingelLayerAgent(env, config)
         print("agent.policy_mlp_net:", agent.policy_mlp_net)
         print("agent.vqvae_model:", agent.vqvae_model)
 
@@ -1138,6 +1415,9 @@ def train_single_layer():
 
                 # Perform one step of the optimization (on the policy network)
                 # optimize_model()
+                if agent.total_steps_done == agent.init_steps:
+                    for i in range(int(agent.init_steps / 10)):
+                        recon_loss, vq_loss, q_loss = agent.learn(tb_writer)
                 recon_loss, vq_loss, q_loss = agent.learn(tb_writer)
                 loss_list.append([recon_loss, vq_loss, q_loss])
                 # print(
@@ -1159,7 +1439,7 @@ def train_single_layer():
                         "train/episodic_negative_reward": episodic_negative_reward,
                         "train/episodic_non_zero_reward": episodic_non_zero_reward,
                         "train/total_steps_done": agent.total_steps_done,
-                        "train/time_elapsed": time.time() - time_start_training,
+                        "train/time_elapsed": (time.time() - time_start_training) / 3600,
                         "train/episode_length": t + 1,
                         "train/episodes": i_episode,
                         "train/epsilon": agent.eps_threshold,
@@ -1168,12 +1448,16 @@ def train_single_layer():
                     wandb.log({**metrics})
 
                     print(">>>>>>>>>>>>>>>>Episode Done>>>>>>>>>>>>>>>>>")
-                    print("time cost so far: {:.1f} s".format(time.time() - time_start_training))
+                    print(
+                        "time cost so far: {:.3f} h".format(
+                            (time.time() - time_start_training) / 3600
+                        )
+                    )
                     print("episodic time cost: {:.1f} s".format(time.time() - time_start_episode))
-                    print("agent.total_steps_done:", agent.total_steps_done)
-                    print("episodic_fps:", int((t + 1) / (time.time() - time_start_episode)))
+                    print("Total_steps_done:", agent.total_steps_done)
+                    print("Episodic_fps:", int((t + 1) / (time.time() - time_start_episode)))
                     print("Episode finished after {} timesteps".format(t + 1))
-                    print("Episode reward: {}".format(episodic_reward))
+                    print("Episode {} reward: {}".format(i_episode, episodic_reward))
 
                     print(
                         "memory_allocated: {:.1f} MB".format(
@@ -1422,6 +1706,230 @@ def train_duolayer():
     env.close()
 
 
+def train_vanilla_dqn():
+    env_id = "Boxing-v0"  # CarRacing-v0, ALE/Skiing-v5, Boxing-v0
+    current_time = datetime.datetime.now().strftime("%b%d_%H-%M-%S")
+
+    for _ in range(1):
+        # 🐝 initialise a wandb run
+        wandb.init(
+            project="vqvae+latent_rl",
+            config={
+                "env_id": env_id,
+                # "total_time_steps": 1e6,
+                "action_repetition": 2,
+                "n_frame_stack": 4,
+                # "lr": 1e-3,
+                # "dropout": random.uniform(0.01, 0.80),
+                # "vqvae_inchannel": int(3 * 1),
+                # "vqvae_latent_channel": 16,
+                # "vqvae_num_embeddings": 64,
+                # "reconstruction_path": os.path.join(
+                #     "/workspace/repos_dev/VQVAE_RL/reconstruction/singlelayer", env_id, current_time
+                # ),
+                # "reconstruction_path": None,
+                "num_episodes_train": 1000,
+                "batch_size": 128,
+                # "validation_size": 128,
+                # "validate_every": 10,
+                "size_replay_memory": 100_000,
+                "gamma": 0.97,
+                "exploration_fraction": 0.99,
+                "exploration_initial_eps": 0.1,
+                "exploration_final_eps": 0.01,
+                # "eps_decay": 200,
+                # "target_update": 250,
+                # "exploration_rate": 0.5,
+                # "exploration_rate_decay": 0.99999975,
+                # "exploration_rate_min": 0.1,
+                # "save_model_every": 5e5,
+                "init_steps": 1e4,
+                "learn_every": 4,
+                "sync_every": 8,
+                "gradient_steps": 1,
+                "learning_rate": "lin_5.3e-4",
+                "seed": int(time.time()),
+                "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+            },
+        )
+        config = wandb.config
+        print(type(config))
+
+        # config = {
+        #     "env_id": "Boxing-v0",
+        #     "total_time_steps": 1e6,
+        #     "action_repetition": 2,
+        #     "n_frame_stack": 4,
+        #     # "lr": 1e-3,
+        #     # "dropout": random.uniform(0.01, 0.80),
+        #     "vqvae_inchannel": int(3 * 4),
+        #     "vqvae_latent_channel": 16,
+        #     "vqvae_num_embeddings": 64,
+        #     # "reconstruction_path": os.path.join(
+        #     #     "/workspace/repos_dev/VQVAE_RL/reconstruction", env_id, vae_version
+        #     # ),
+        #     "reconstruction_path": None,
+        #     "num_episodes_train": 100,
+        #     "batch_size": 128,
+        #     "gamma": 0.99,
+        #     "eps_start": 0.9,
+        #     "eps_end": 0.05,
+        #     "eps_decay": 200,
+        #     "target_update": 10,
+        #     "exploration_rate": 0.1,
+        #     "exploration_rate_decay": 0.99999975,
+        #     "exploration_rate_min": 0.1,
+        #     "save_model_every": 5e5,
+        #     "init_steps": 1e4,
+        #     "learn_every": 4,
+        #     "sync_every": 8,
+        #     "seed": int(time.time()),
+        #     "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+        # }
+        # config = SimpleNamespace(**config)
+
+        # The main training loop
+        env = make_env(env_id, config)  # when running atari game
+        # env = gym.make(env_id)
+        agent = VanillaDQNAgent(env, config)
+        print("agent.policy_mlp_net:", agent.policy_mlp_net)
+
+        wandb.watch(agent.policy_mlp_net, log_freq=100)
+        # wandb.watch(agent.target_mlp_net, log_freq=100)
+
+        comment = ""
+        log_dir_tensorboard = f"/workspace/repos_dev/VQVAE_RL/log_tensorboard/singlelayer/{env_id}/{current_time}_{comment}"
+        tb_writer = SummaryWriter(log_dir_tensorboard)
+        print("log_dir_tensorboard:", log_dir_tensorboard)
+
+        time_start_training = time.time()
+
+        # transformer = transform_dict["Boxing-v0"]
+        for i_episode in range(config.num_episodes_train):
+            time_start_episode = time.time()
+            # Initialize the environment and state
+            state = env.reset()
+            # last_screen = get_screen()
+            # current_screen = get_screen()
+            # state = current_screen - last_screen
+            episodic_reward = 0
+            episodic_negative_reward = 0
+            episodic_non_zero_reward = 0
+            loss_list = []
+            for t in count():
+                # Select and perform an action
+                action = agent.act(state)
+                # print(
+                #     "memory_allocated: {:.5f} MB".format(
+                #         torch.cuda.memory_allocated() / (1024 * 1024)
+                #     )
+                # )
+                # print("agent.act")
+
+                next_state, reward, done, _ = env.step(action.item())
+                episodic_reward += reward
+                if reward < 0:
+                    episodic_negative_reward += reward
+                else:
+                    episodic_non_zero_reward += reward
+
+                # # Observe new state
+                # last_screen = current_screen
+                # current_screen = get_screen()
+                # if not done:
+                #     next_state = current_screen - last_screen
+                # else:
+                #     next_state = None
+
+                # Store the transition in memory
+                # agent.memory.push(state, action, next_state, reward, done)
+                agent.cache(state, action, next_state, reward, done)
+                # print(
+                #     "memory_allocated: {:.5f} MB".format(
+                #         torch.cuda.memory_allocated() / (1024 * 1024)
+                #     )
+                # )
+                # print("agent.cache")
+
+                # Move to the next state
+                state = next_state
+
+                # Perform one step of the optimization (on the policy network)
+                # optimize_model()
+                # if agent.total_steps_done == agent.init_steps:
+                #     for i in range(int(agent.init_steps / 10)):
+                #         recon_loss, vq_loss, q_loss = agent.learn(tb_writer)
+                q_loss = agent.learn(tb_writer)
+                loss_list.append(q_loss)
+                # print(
+                #     "memory_allocated: {:.5f} MB".format(
+                #         torch.cuda.memory_allocated() / (1024 * 1024)
+                #     )
+                # )
+                # print("agent.learn")
+                if done:
+                    # print("sys.getsizeof(agent.memory)", sys.getsizeof(agent.memory))
+                    # print(torch.cuda.memory_reserved()/(1024*1024), "MB")
+                    # print(torch.cuda.memory_allocated()/(1024*1024), "MB")
+
+                    agent.num_episodes_finished += 1
+                    # episode_durations.append(t + 1)
+                    # plot_durations()
+                    metrics = {
+                        "train/episodic_reward": episodic_reward,
+                        "train/episodic_negative_reward": episodic_negative_reward,
+                        "train/episodic_non_zero_reward": episodic_non_zero_reward,
+                        "train/total_steps_done": agent.total_steps_done,
+                        "train/time_elapsed": (time.time() - time_start_training) / 3600,
+                        "train/episode_length": t + 1,
+                        "train/episodes": i_episode,
+                        "train/exploration_rate": agent.exploration_rate,
+                        "train/learning_rate": agent.dqn_optimizer.param_groups[0]["lr"],
+                        "train/episodic_fps": int((t + 1) / (time.time() - time_start_episode)),
+                    }
+                    wandb.log({**metrics})
+
+                    print(">>>>>>>>>>>>>>>>Episode Done>>>>>>>>>>>>>>>>>")
+                    print(
+                        "time cost so far: {:.3f} h".format(
+                            (time.time() - time_start_training) / 3600
+                        )
+                    )
+                    print("episodic time cost: {:.1f} s".format(time.time() - time_start_episode))
+                    print("Total_steps_done:", agent.total_steps_done)
+                    print("Episodic_fps:", int((t + 1) / (time.time() - time_start_episode)))
+                    print("Episode finished after {} timesteps".format(t + 1))
+                    print("Episode({}) reward: {}".format(i_episode, episodic_reward))
+                    print("Agent.exploration_rate:", agent.exploration_rate)
+                    print(
+                        "memory_allocated: {:.1f} MB".format(
+                            torch.cuda.memory_allocated() / (1024 * 1024)
+                        )
+                    )
+                    print(
+                        "memory_reserved: {:.1f} MB".format(
+                            torch.cuda.memory_reserved() / (1024 * 1024)
+                        )
+                    )
+                    print("agent.earlystopping.stop", agent.earlystopping.stop)
+
+                    loss_list = np.array(loss_list, dtype=float)
+                    mean_losses = np.nanmean(loss_list, axis=0)
+                    print("mean losses(recon, vq, q):", np.around(mean_losses, decimals=4))
+
+                    break
+
+            # # Update the target network, copying all weights and biases in DQN
+            # if i_episode % agent.target_update == 0:
+            #     agent.target_mlp_net.load_state_dict(
+            #         agent.policy_mlp_net.state_dict())
+
+        wandb.finish()
+
+    print("Complete")
+    env.close()
+
+
 if __name__ == "__main__":
 
     # Set CUDA_DEVICE_ORDER so the IDs assigned by CUDA match those from nvidia-smi
@@ -1446,5 +1954,6 @@ if __name__ == "__main__":
 
     # sys.settrace(gpu_profile)
 
-    train_single_layer()
+    # train_single_layer()
     # train_duolayer()
+    train_vanilla_dqn()
