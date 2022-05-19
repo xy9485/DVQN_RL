@@ -35,7 +35,6 @@ from policies.vanilla_dqn_agent import VanillaDQNAgent
 from transforms import transform_dict
 from utils.learning import EarlyStopping, ReduceLROnPlateau
 from utils.misc import get_linear_fn, linear_schedule, make_vec_env_customized, update_learning_rate
-from vqvae_end2end import VQVAE
 from wrappers import (
     ActionRepetitionWrapper,
     EncodeStackWrapper,
@@ -101,44 +100,51 @@ def train_single_layer():
     env_id = "Boxing-v0"  # CarRacing-v0, ALE/Skiing-v5, Boxing-v0
     vae_version = "vqvae_c3_embedding16x64_3_end2end_2"
     current_time = datetime.datetime.now().strftime("%b%d_%H-%M-%S")
+    special_of_run = "single_layer_vanilla_dqn+vqvae(64-128)"
 
     for _ in range(1):
         # 🐝 initialise a wandb run
         wandb.init(
             project="vqvae+latent_rl",
+            name=special_of_run,
             config={
                 "env_id": "Boxing-v0",
-                "total_time_steps": 1e6,
+                "total_timesteps": 1000_000,
+                "init_steps": 10000,
                 "action_repetition": 2,
                 "n_frame_stack": 1,
-                # "lr": 1e-3,
                 # "dropout": random.uniform(0.01, 0.80),
                 "vqvae_inchannel": int(3 * 1),
-                "vqvae_latent_channel": 16,
+                "vqvae_latent_channel": 32,
                 "vqvae_num_embeddings": 64,
                 "reconstruction_path": os.path.join(
                     "/workspace/repos_dev/VQVAE_RL/reconstruction/singlelayer", env_id, current_time
                 ),
                 # "reconstruction_path": None,
-                "num_episodes_train": 1000,
+                # "total_episodes": 1000,
+                "lr_vqvae": 3e-4,
+                "lr_dqn": "lin_5.3e-4",
                 "batch_size": 128,
                 "validation_size": 128,
                 "validate_every": 10,
                 "size_replay_memory": int(1e6),
                 "gamma": 0.97,
-                "eps_start": 0.1,
-                "eps_end": 0.05,
-                "eps_decay": 200,
-                "target_update": 10,
-                "exploration_rate": 0.1,
-                "exploration_rate_decay": 0.99999975,
-                "exploration_rate_min": 0.1,
+                "exploration_fraction": 0.5,
+                "exploration_initial_eps": 1,
+                "exploration_final_eps": 0.05,
+                # "eps_start": 0.1,
+                # "eps_end": 0.05,
+                # "eps_decay": 200,
+                # "exploration_rate": 0.1,
+                # "exploration_rate_decay": 0.99999975,
+                # "exploration_rate_min": 0.1,
                 "save_model_every": 5e5,
-                "init_steps": 1e4,
                 "learn_every": 4,
                 "sync_every": 8,
+                "gradient_steps": 1,
                 "seed": int(time.time()),
                 "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+                "run_func_name": "train_single_layer",
             },
         )
         config = wandb.config
@@ -195,7 +201,8 @@ def train_single_layer():
         time_start_training = time.time()
 
         # transformer = transform_dict["Boxing-v0"]
-        for i_episode in range(config.num_episodes_train):
+        # for i_episode in range(config.num_episodes_train):
+        while agent.timesteps_done < int(config.total_timesteps + config.init_steps):
             time_start_episode = time.time()
             # Initialize the environment and state
             state = env.reset()
@@ -208,7 +215,7 @@ def train_single_layer():
             loss_list = []
             for t in count():
                 # Select and perform an action
-                action = agent.act(state)
+                action = agent.act2(state)
                 # print(
                 #     "memory_allocated: {:.5f} MB".format(
                 #         torch.cuda.memory_allocated() / (1024 * 1024)
@@ -222,6 +229,34 @@ def train_single_layer():
                     episodic_negative_reward += reward
                 else:
                     episodic_non_zero_reward += reward
+
+                if agent.timesteps_done >= int(config.total_timesteps + config.init_steps):
+                    print("training finished! Cost timesteps:", agent.timesteps_done)
+                    print("agent.lr_dqn:", agent.dqn_optimizer.param_groups[0]["lr"])
+                    print("train/exploration_rate:", agent.exploration_rate)
+                    print("_current_progress_remaining:", agent._current_progress_remaining)
+                    loss_list = np.array(loss_list, dtype=float)
+                    mean_losses = np.nanmean(loss_list, axis=0)
+                    metrics = {
+                        "train/episodic_reward": episodic_reward,
+                        "train/episodic_negative_reward": episodic_negative_reward,
+                        "train/episodic_non_zero_reward": episodic_non_zero_reward,
+                        "train/timesteps_done": agent.timesteps_done,
+                        "train/time_elapsed": (time.time() - time_start_training) / 3600,
+                        "train/episode_length": t + 1,
+                        "train/episodes_done": agent.episodes_done,
+                        "train/exploration_rate": agent.exploration_rate,
+                        "train/lr_dqn": agent.dqn_optimizer.param_groups[0]["lr"],
+                        "train/lr_vqvae": agent.vqvae_optimizer.param_groups[0]["lr"],
+                        "train/episodic_fps": int((t + 1) / (time.time() - time_start_episode)),
+                        "train/recon_loss": mean_losses[0],
+                        "train/vq_loss": mean_losses[1],
+                        "train/vqvae_loss": mean_losses[0] + mean_losses[1],
+                        "train/q_loss": mean_losses[2],
+                        "train/current_progress_remaining": agent._current_progress_remaining,
+                    }
+                    wandb.log({**metrics})
+                    break
 
                 # # Observe new state
                 # last_screen = current_screen
@@ -246,10 +281,11 @@ def train_single_layer():
 
                 # Perform one step of the optimization (on the policy network)
                 # optimize_model()
-                if agent.total_steps_done == agent.init_steps:
+                if agent.timesteps_done == agent.init_steps:
                     for i in range(int(agent.init_steps / 10)):
                         recon_loss, vq_loss, q_loss = agent.learn(tb_writer)
-                recon_loss, vq_loss, q_loss = agent.learn(tb_writer)
+                else:
+                    recon_loss, vq_loss, q_loss = agent.learn(tb_writer)
                 loss_list.append([recon_loss, vq_loss, q_loss])
                 # print(
                 #     "memory_allocated: {:.5f} MB".format(
@@ -261,6 +297,8 @@ def train_single_layer():
                     # print("sys.getsizeof(agent.memory)", sys.getsizeof(agent.memory))
                     # print(torch.cuda.memory_reserved()/(1024*1024), "MB")
                     # print(torch.cuda.memory_allocated()/(1024*1024), "MB")
+                    loss_list = np.array(loss_list, dtype=float)
+                    mean_losses = np.nanmean(loss_list, axis=0)
 
                     agent.episodes_done += 1
                     # episode_durations.append(t + 1)
@@ -269,12 +307,19 @@ def train_single_layer():
                         "train/episodic_reward": episodic_reward,
                         "train/episodic_negative_reward": episodic_negative_reward,
                         "train/episodic_non_zero_reward": episodic_non_zero_reward,
-                        "train/total_steps_done": agent.total_steps_done,
+                        "train/timesteps_done": agent.timesteps_done,
                         "train/time_elapsed": (time.time() - time_start_training) / 3600,
                         "train/episode_length": t + 1,
-                        "train/episodes": i_episode,
-                        "train/epsilon": agent.eps_threshold,
+                        "train/episodes_done": agent.episodes_done,
+                        "train/exploration_rate": agent.exploration_rate,
+                        "train/lr_dqn": agent.dqn_optimizer.param_groups[0]["lr"],
+                        "train/lr_vqvae": agent.vqvae_optimizer.param_groups[0]["lr"],
                         "train/episodic_fps": int((t + 1) / (time.time() - time_start_episode)),
+                        "train/recon_loss": mean_losses[0],
+                        "train/vq_loss": mean_losses[1],
+                        "train/vqvae_loss": mean_losses[0] + mean_losses[1],
+                        "train/q_loss": mean_losses[2],
+                        "train/current_progress_remaining": agent._current_progress_remaining,
                     }
                     wandb.log({**metrics})
 
@@ -285,26 +330,25 @@ def train_single_layer():
                         )
                     )
                     print("episodic time cost: {:.1f} s".format(time.time() - time_start_episode))
-                    print("Total_steps_done:", agent.total_steps_done)
+                    print("Total_steps_done:", agent.timesteps_done)
                     print("Episodic_fps:", int((t + 1) / (time.time() - time_start_episode)))
                     print("Episode finished after {} timesteps".format(t + 1))
-                    print("Episode {} reward: {}".format(i_episode, episodic_reward))
-
-                    print(
-                        "memory_allocated: {:.1f} MB".format(
-                            torch.cuda.memory_allocated() / (1024 * 1024)
-                        )
-                    )
-                    print(
-                        "memory_reserved: {:.1f} MB".format(
-                            torch.cuda.memory_reserved() / (1024 * 1024)
-                        )
-                    )
+                    print("Episode {} reward: {}".format(agent.episodes_done, episodic_reward))
+                    # print(
+                    #     "memory_allocated: {:.1f} MB".format(
+                    #         torch.cuda.memory_allocated() / (1024 * 1024)
+                    #     )
+                    # )
+                    # print(
+                    #     "memory_reserved: {:.1f} MB".format(
+                    #         torch.cuda.memory_reserved() / (1024 * 1024)
+                    #     )
+                    # )
                     print("agent.earlystopping.stop", agent.earlystopping.stop)
 
-                    loss_list = np.array(loss_list, dtype=float)
-                    mean_losses = np.nanmean(loss_list, axis=0)
-                    print("mean losses(recon, vq, q):", np.around(mean_losses, decimals=4))
+                    print("mean losses(recon, vq, q):", np.around(mean_losses, decimals=6))
+                    print("_current_progress_remaining:", agent._current_progress_remaining)
+                    print("train/exploration_rate:", agent.exploration_rate)
 
                     break
 
@@ -549,7 +593,7 @@ def train_vanilla_dqn():
                 "env_id": env_id,
                 # "total_time_steps": 1e6,
                 "action_repetition": 2,
-                "n_frame_stack": 4,
+                "n_frame_stack": 1,
                 # "lr": 1e-3,
                 # "dropout": random.uniform(0.01, 0.80),
                 # "vqvae_inchannel": int(3 * 1),
@@ -581,6 +625,7 @@ def train_vanilla_dqn():
                 "learning_rate": "lin_5.3e-4",
                 "seed": int(time.time()),
                 "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+                "run_func_name": "train_vanilla_dqn",
             },
         )
         config = wandb.config
@@ -706,6 +751,8 @@ def train_vanilla_dqn():
                     agent.num_episodes_finished += 1
                     # episode_durations.append(t + 1)
                     # plot_durations()
+                    loss_list = np.array(loss_list, dtype=float)
+                    mean_q_loss = np.nanmean(loss_list)
                     metrics = {
                         "train/episodic_reward": episodic_reward,
                         "train/episodic_negative_reward": episodic_negative_reward,
@@ -715,8 +762,9 @@ def train_vanilla_dqn():
                         "train/episode_length": t + 1,
                         "train/episodes": i_episode,
                         "train/exploration_rate": agent.exploration_rate,
-                        "train/learning_rate": agent.dqn_optimizer.param_groups[0]["lr"],
+                        "train/lr_dqn": agent.dqn_optimizer.param_groups[0]["lr"],
                         "train/episodic_fps": int((t + 1) / (time.time() - time_start_episode)),
+                        "train/q_loss": mean_q_loss,
                     }
                     wandb.log({**metrics})
 
@@ -732,21 +780,19 @@ def train_vanilla_dqn():
                     print("Episode finished after {} timesteps".format(t + 1))
                     print("Episode({}) reward: {}".format(i_episode, episodic_reward))
                     print("Agent.exploration_rate:", agent.exploration_rate)
-                    print(
-                        "memory_allocated: {:.1f} MB".format(
-                            torch.cuda.memory_allocated() / (1024 * 1024)
-                        )
-                    )
-                    print(
-                        "memory_reserved: {:.1f} MB".format(
-                            torch.cuda.memory_reserved() / (1024 * 1024)
-                        )
-                    )
+                    # print(
+                    #     "memory_allocated: {:.1f} MB".format(
+                    #         torch.cuda.memory_allocated() / (1024 * 1024)
+                    #     )
+                    # )
+                    # print(
+                    #     "memory_reserved: {:.1f} MB".format(
+                    #         torch.cuda.memory_reserved() / (1024 * 1024)
+                    #     )
+                    # )
                     print("agent.earlystopping.stop", agent.earlystopping.stop)
 
-                    loss_list = np.array(loss_list, dtype=float)
-                    mean_losses = np.nanmean(loss_list, axis=0)
-                    print("mean losses(recon, vq, q):", np.around(mean_losses, decimals=4))
+                    print("mean q loss:", np.around(mean_q_loss, decimals=4))
 
                     break
 
@@ -787,4 +833,4 @@ if __name__ == "__main__":
 
     train_single_layer()
     # train_duolayer()
-    train_vanilla_dqn()
+    # train_vanilla_dqn()

@@ -47,7 +47,7 @@ class VanillaDQNAgent:
         if len(env.observation_space.shape) == 3:
             temp = env.observation_space.sample()
             sample = T.ToTensor()(temp)
-            summary(self.policy_mlp_net, (12, 84, 84))
+            summary(self.policy_mlp_net, (3, 84, 84))
         else:
             summary(self.policy_mlp_net, env.observation_space.shape)
         # or

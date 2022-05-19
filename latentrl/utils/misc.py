@@ -148,6 +148,18 @@ def get_linear_fn(start: float, end: float, end_fraction: float):
     return func
 
 
+def update_learning_rate(optimizer: torch.optim.Optimizer, learning_rate: float) -> None:
+    """
+    Update the learning rate for a given optimizer.
+    Useful when doing linear schedule.
+
+    :param optimizer:
+    :param learning_rate:
+    """
+    for param_group in optimizer.param_groups:
+        param_group["lr"] = learning_rate
+
+
 def pretty_json(hp):
     json_hp = json.dumps(hp, indent=2)
     return "".join("\t" + line for line in json_hp.splitlines(True))

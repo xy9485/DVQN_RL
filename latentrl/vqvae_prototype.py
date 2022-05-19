@@ -1,6 +1,7 @@
 import datetime
 import os
 import time
+import gym
 
 import torch
 
@@ -11,6 +12,7 @@ from torchvision.utils import save_image
 
 # from .types_ import *
 from typing import Any, Dict, List, Optional, Tuple, Type, Union, TypeVar
+import torchvision.transforms as T
 
 Tensor = TypeVar("torch.tensor")
 
@@ -85,7 +87,7 @@ class ResidualLayer(nn.Module):
         return input + self.resblock(input)
 
 
-class VQVAE(nn.Module):
+class VQVAE2(nn.Module):
     def __init__(
         self,
         in_channels: int,
@@ -98,7 +100,7 @@ class VQVAE(nn.Module):
         reconstruction_path=None,
         **kwargs,
     ) -> None:
-        super(VQVAE, self).__init__()
+        super().__init__()
 
         self.embedding_dim = embedding_dim
         self.num_embeddings = num_embeddings
@@ -107,94 +109,123 @@ class VQVAE(nn.Module):
         self.reconstruction_path = reconstruction_path
         # self.device = device
         self.forward_call = 0
-        self.initial_in_channels = in_channels
+        self.n_input_channels = in_channels
 
-        modules = []
-        if hidden_dims is None:
-            hidden_dims = [64, 128]
+        # modules = []
+        # if hidden_dims is None:
+        #     hidden_dims = [64, 128]
 
-        # Build Encoder
-        for h_dim in hidden_dims:
-            modules.append(
-                nn.Sequential(
-                    nn.Conv2d(
-                        in_channels,
-                        out_channels=h_dim,
-                        kernel_size=4,
-                        stride=2,
-                        padding=1,
-                    ),
-                    nn.LeakyReLU(),
-                )
-            )
-            in_channels = h_dim
+        # # Build Encoder
+        # in_channels = self.n_input_channels
+        # for h_dim in hidden_dims:
+        #     modules.append(
+        #         nn.Sequential(
+        #             nn.Conv2d(
+        #                 in_channels,
+        #                 out_channels=h_dim,
+        #                 kernel_size=4,
+        #                 stride=2,
+        #                 padding=1,
+        #             ),
+        #             nn.LeakyReLU(),
+        #         )
+        #     )
+        #     in_channels = h_dim
 
-        modules.append(
-            nn.Sequential(
-                nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1),
-                nn.LeakyReLU(),
-            )
+        # modules.append(
+        #     nn.Sequential(
+        #         nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1),
+        #         nn.LeakyReLU(),
+        #     )
+        # )
+
+        # for _ in range(2):
+        #     modules.append(ResidualLayer(in_channels, in_channels))
+        # modules.append(nn.LeakyReLU())
+
+        # modules.append(
+        #     nn.Sequential(
+        #         nn.Conv2d(in_channels, embedding_dim, kernel_size=1, stride=1),
+        #         nn.LeakyReLU(),
+        #     )
+        # )
+
+        # self.encoder = nn.Sequential(*modules)
+
+        # self.vq_layer = VectorQuantizer(num_embeddings, embedding_dim, self.beta)
+
+        # # Build Decoder
+        # modules = []
+        # modules.append(
+        #     nn.Sequential(
+        #         nn.Conv2d(embedding_dim, hidden_dims[-1], kernel_size=3, stride=1, padding=1),
+        #         nn.LeakyReLU(),
+        #     )
+        # )
+
+        # for _ in range(2):
+        #     modules.append(ResidualLayer(hidden_dims[-1], hidden_dims[-1]))
+
+        # modules.append(nn.LeakyReLU())
+
+        # hidden_dims.reverse()
+
+        # for i in range(len(hidden_dims) - 1):
+        #     modules.append(
+        #         nn.Sequential(
+        #             nn.ConvTranspose2d(
+        #                 hidden_dims[i],
+        #                 hidden_dims[i + 1],
+        #                 kernel_size=4,
+        #                 stride=2,
+        #                 padding=1,
+        #             ),
+        #             nn.LeakyReLU(),
+        #         )
+        #     )
+
+        # modules.append(
+        #     nn.Sequential(
+        #         nn.ConvTranspose2d(
+        #             hidden_dims[-1],
+        #             out_channels=self.n_input_channels,
+        #             kernel_size=4,
+        #             stride=2,
+        #             padding=1,
+        #         ),
+        #         nn.Tanh(),
+        #     )
+        # )
+
+        # self.decoder = nn.Sequential(*modules)
+
+        # ========================================================================================
+        # use dqn of the original paper as encoder of vqvae
+        self.encoder = nn.Sequential(
+            nn.Conv2d(self.n_input_channels, 32, kernel_size=8, stride=4, padding=0),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
+            nn.ReLU(),
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=0),
+            nn.ReLU(),
+            nn.Conv2d(128, embedding_dim, kernel_size=3, stride=1, padding=0),
+            nn.ReLU(),
         )
-
-        for _ in range(2):
-            modules.append(ResidualLayer(in_channels, in_channels))
-        modules.append(nn.LeakyReLU())
-
-        modules.append(
-            nn.Sequential(
-                nn.Conv2d(in_channels, embedding_dim, kernel_size=1, stride=1),
-                nn.LeakyReLU(),
-            )
-        )
-
-        self.encoder = nn.Sequential(*modules)
 
         self.vq_layer = VectorQuantizer(num_embeddings, embedding_dim, self.beta)
 
-        # Build Decoder
-        modules = []
-        modules.append(
-            nn.Sequential(
-                nn.Conv2d(embedding_dim, hidden_dims[-1], kernel_size=3, stride=1, padding=1),
-                nn.LeakyReLU(),
-            )
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(embedding_dim, 128, kernel_size=3, stride=1, padding=0),
+            nn.ReLU(),
+            nn.ConvTranspose2d(128, 64, kernel_size=3, stride=1, padding=0),
+            nn.ReLU(),
+            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=0),
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, self.n_input_channels, kernel_size=8, stride=4, padding=0),
+            nn.ReLU(),
         )
 
-        for _ in range(2):
-            modules.append(ResidualLayer(hidden_dims[-1], hidden_dims[-1]))
-
-        modules.append(nn.LeakyReLU())
-
-        hidden_dims.reverse()
-
-        for i in range(len(hidden_dims) - 1):
-            modules.append(
-                nn.Sequential(
-                    nn.ConvTranspose2d(
-                        hidden_dims[i],
-                        hidden_dims[i + 1],
-                        kernel_size=4,
-                        stride=2,
-                        padding=1,
-                    ),
-                    nn.LeakyReLU(),
-                )
-            )
-
-        modules.append(
-            nn.Sequential(
-                nn.ConvTranspose2d(
-                    hidden_dims[-1],
-                    out_channels=self.initial_in_channels,
-                    kernel_size=4,
-                    stride=2,
-                    padding=1,
-                ),
-                nn.Tanh(),
-            )
-        )
-
-        self.decoder = nn.Sequential(*modules)
+        # ========================================================================================
 
     def encode(self, input: Tensor) -> List[Tensor]:
         """
@@ -223,11 +254,7 @@ class VQVAE(nn.Module):
         quantized_inputs, vq_loss = self.vq_layer(encoding)
         recon = self.decode(quantized_inputs)
         # print(type(recon), recon.size())
-        if (
-            self.forward_call % 500 == 0
-            and self.reconstruction_path
-            and self.initial_in_channels == 3
-        ):
+        if self.forward_call % 500 == 0 and self.reconstruction_path and self.n_input_channels == 3:
             current_time = datetime.datetime.now().strftime("%b%d_%H-%M-%S")
             save_to = os.path.join(self.reconstruction_path, f"recon_{current_time}.png")
             # save_image(input[:8],save_to)
@@ -271,18 +298,22 @@ if __name__ == "__main__":
     # model = VQVAE(3, 64, 128)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model = VQVAE(
+    env_id = "Boxing-v0"
+    env = gym.make(env_id)
+    print(env.observation_space.shape)
+    model = VQVAE2(
+        observation_space=env.observation_space,
         in_channels=3,
-        embedding_dim=16,
+        embedding_dim=32,
         num_embeddings=64,
         reconstruction_path=None,
     ).to(device)
 
-    # summary(model, (3, 64, 64))
+    # summary(model, (3, 84, 84))
     # print(model)
     summary(model.encoder, (3, 84, 84))
-    summary(model.decoder, (16, 21, 21))
-    # summary(model.vq_layer, (16, 21, 21))
+    summary(model.decoder, (32, 5, 5))
     # print(model.encoder.parameters)
     # print(model.encoder._parameters)
     # print(model.encoder._modules)
+    print("model summary done")
