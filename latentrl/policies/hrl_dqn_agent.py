@@ -44,7 +44,7 @@ class SingelLayerAgent:
                 config.reconstruction_path,
                 exist_ok=True,
             )
-        self.vqvae_model = VQVAE(
+        self.vqvae_model = VQVAE2(
             in_channels=env.observation_space.shape[-1],
             embedding_dim=config.vqvae_latent_channel,
             num_embeddings=config.vqvae_num_embeddings,
@@ -285,7 +285,7 @@ class SingelLayerAgent:
         if self.timesteps_done == self.init_steps:
             loss_list = []
             for _ in range(int(self.init_steps / 10)):
-                mean_recon_loss, mean_vq_loss, q_loss = self.train3(tb_writer)
+                mean_recon_loss, mean_vq_loss, q_loss = self.train(tb_writer)
                 loss_list.append([mean_recon_loss, mean_vq_loss, q_loss])
             loss_list = np.array(loss_list, dtype=float)
             loss_list = np.nanmean(loss_list, axis=0)
@@ -302,7 +302,7 @@ class SingelLayerAgent:
 
         loss_list = []
         for _ in range(self.gradient_steps):
-            mean_recon_loss, mean_vq_loss, q_loss = self.train3(tb_writer)
+            mean_recon_loss, mean_vq_loss, q_loss = self.train(tb_writer)
             loss_list.append([mean_recon_loss, mean_vq_loss, q_loss])
         loss_list = np.array(loss_list, dtype=float)
         loss_list = np.nanmean(loss_list, axis=0)
@@ -454,9 +454,9 @@ class SingelLayerAgent:
         return mean_recon_loss, mean_vq_loss, q_loss
 
     def train(self, tb_writer):
-        update_learning_rate(
-            self.vqvae_optimizer, self.lr_scheduler(self._current_progress_remaining)
-        )
+        # update_learning_rate(
+        #     self.vqvae_optimizer, self.lr_scheduler(self._current_progress_remaining)
+        # )
         update_learning_rate(
             self.dqn_optimizer, self.lr_scheduler(self._current_progress_remaining)
         )
@@ -487,7 +487,7 @@ class SingelLayerAgent:
         recon_loss = F.mse_loss(recon_batch, state_batch)
         recon_loss2 = F.mse_loss(recon_batch2, next_state_batch)
 
-        current_Q = self.policy_mlp_net(quantized.detach()).gather(1, action_batch)
+        current_Q = self.policy_mlp_net(quantized).gather(1, action_batch)
         # print("memory_allocated: {:.5f} MB".format(torch.cuda.memory_allocated() / (1024 * 1024)))
         # print("run policy_mlp_net")
 

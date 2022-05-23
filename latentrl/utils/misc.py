@@ -9,9 +9,14 @@ import torch
 import numpy as np
 from PIL import Image
 
+import torchvision
+from torchvision.utils import make_grid
+
 # from models import MDRNNCell, VAE, Controller
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
+from PIL import Image, ImageDraw, ImageFont, ImageColor
+import wandb
 
 
 def sample_continuous_policy(action_space, seq_len, dt):
@@ -231,3 +236,24 @@ def make_vec_env_customized(  # to customize the order of Monitor wrapper
         vec_env_cls = DummyVecEnv
 
     return vec_env_cls([make_env(i + start_index) for i in range(n_envs)], **vec_env_kwargs)
+
+
+@torch.no_grad()
+def wandb_log_image(tensor, **kwargs) -> None:
+    """
+    Save a given Tensor into an image file.
+
+    Args:
+        tensor (Tensor or list): Image to be saved. If given a mini-batch tensor,
+            saves the tensor as a grid of images by calling ``make_grid``.
+        fp (string or file object): A filename or a file object
+        format(Optional):  If omitted, the format to use is determined from the filename extension.
+            If a file object was used instead of a filename, this parameter should always be used.
+        **kwargs: Other arguments are documented in ``make_grid``.
+    """
+
+    grid = make_grid(tensor, **kwargs)
+    # Add 0.5 after unnormalizing to [0, 255] to round to nearest integer
+    ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+    im = Image.fromarray(ndarr)
+    wandb.log({"reconstructions": wandb.Image(im)})

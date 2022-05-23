@@ -14,6 +14,8 @@ from torchvision.utils import save_image
 from typing import Any, Dict, List, Optional, Tuple, Type, Union, TypeVar
 import torchvision.transforms as T
 
+from latentrl.utils.misc import wandb_log_image
+
 Tensor = TypeVar("torch.tensor")
 
 
@@ -206,18 +208,18 @@ class VQVAE2(nn.Module):
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
             nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=0),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
             nn.ReLU(),
-            nn.Conv2d(128, embedding_dim, kernel_size=3, stride=1, padding=0),
+            nn.Conv2d(64, embedding_dim, kernel_size=1, stride=1, padding=0),
             nn.ReLU(),
         )
 
         self.vq_layer = VectorQuantizer(num_embeddings, embedding_dim, self.beta)
 
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(embedding_dim, 128, kernel_size=3, stride=1, padding=0),
+            nn.ConvTranspose2d(embedding_dim, 64, kernel_size=1, stride=1, padding=0),
             nn.ReLU(),
-            nn.ConvTranspose2d(128, 64, kernel_size=3, stride=1, padding=0),
+            nn.ConvTranspose2d(64, 64, kernel_size=3, stride=1, padding=0),
             nn.ReLU(),
             nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=0),
             nn.ReLU(),
@@ -254,12 +256,19 @@ class VQVAE2(nn.Module):
         quantized_inputs, vq_loss = self.vq_layer(encoding)
         recon = self.decode(quantized_inputs)
         # print(type(recon), recon.size())
-        if self.forward_call % 500 == 0 and self.reconstruction_path and self.n_input_channels == 3:
+        if (
+            self.forward_call % 10000 == 0
+            and self.reconstruction_path
+            and self.n_input_channels == 3
+        ):
             current_time = datetime.datetime.now().strftime("%b%d_%H-%M-%S")
             save_to = os.path.join(self.reconstruction_path, f"recon_{current_time}.png")
             # save_image(input[:8],save_to)
-            save_image(recon[:8], save_to)
-            print("save input and recon to path: ", save_to)
+            # save_image(recon[:8], save_to)
+            # print("save input and recon to path: ", save_to)
+            # log recon as image to wandb
+            wandb_log_image(recon[:8])
+            print("log recons as image to wandb")
 
         self.forward_call += 1
         return [recon, quantized_inputs, input, vq_loss]
@@ -311,8 +320,8 @@ if __name__ == "__main__":
 
     # summary(model, (3, 84, 84))
     # print(model)
-    summary(model.encoder, (3, 84, 84))
-    summary(model.decoder, (32, 5, 5))
+    summary(model.encoder, (3, 64, 64))
+    # summary(model.decoder, (32, 7, 7))
     # print(model.encoder.parameters)
     # print(model.encoder._parameters)
     # print(model.encoder._modules)

@@ -10,6 +10,7 @@ from os import makedirs
 from pprint import pprint
 from tkinter import N
 from types import SimpleNamespace
+import tracemalloc
 
 import colored_traceback.auto
 import GPUtil
@@ -98,15 +99,18 @@ def make_env(
 
 def train_single_layer():
     env_id = "Boxing-v0"  # CarRacing-v0, ALE/Skiing-v5, Boxing-v0
-    vae_version = "vqvae_c3_embedding16x64_3_end2end_2"
-    current_time = datetime.datetime.now().strftime("%b%d_%H-%M-%S")
-    special_of_run = "single_layer_vanilla_dqn+vqvae(64-128)"
-
-    for _ in range(1):
+    for _ in range(3):
+        current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
+        current_time = current_time.strftime("%b%d_%H-%M-%S")
         # 🐝 initialise a wandb run
         wandb.init(
             project="vqvae+latent_rl",
-            name=special_of_run,
+            tags=[
+                "vqvae+latentdqn",
+                # "as_vanilla_dqn",
+                "vqvae2(32-64-64)",
+                "encoder&vq_attach",
+            ],  # vqvae2(32-64-128), vqvae(128-256)
             config={
                 "env_id": "Boxing-v0",
                 "total_timesteps": 1000_000,
@@ -115,7 +119,7 @@ def train_single_layer():
                 "n_frame_stack": 1,
                 # "dropout": random.uniform(0.01, 0.80),
                 "vqvae_inchannel": int(3 * 1),
-                "vqvae_latent_channel": 32,
+                "vqvae_latent_channel": 16,
                 "vqvae_num_embeddings": 64,
                 "reconstruction_path": os.path.join(
                     "/workspace/repos_dev/VQVAE_RL/reconstruction/singlelayer", env_id, current_time
@@ -124,14 +128,14 @@ def train_single_layer():
                 # "total_episodes": 1000,
                 "lr_vqvae": 3e-4,
                 "lr_dqn": "lin_5.3e-4",
-                "batch_size": 128,
+                "batch_size": 256,
                 "validation_size": 128,
                 "validate_every": 10,
-                "size_replay_memory": int(1e6),
+                "size_replay_memory": int(1e5),
                 "gamma": 0.97,
-                "exploration_fraction": 0.5,
-                "exploration_initial_eps": 1,
-                "exploration_final_eps": 0.05,
+                "exploration_fraction": 0.9,
+                "exploration_initial_eps": 0.1,
+                "exploration_final_eps": 0.01,
                 # "eps_start": 0.1,
                 # "eps_end": 0.05,
                 # "eps_decay": 200,
@@ -139,12 +143,11 @@ def train_single_layer():
                 # "exploration_rate_decay": 0.99999975,
                 # "exploration_rate_min": 0.1,
                 "save_model_every": 5e5,
-                "learn_every": 4,
-                "sync_every": 8,
-                "gradient_steps": 1,
+                "learn_every": 8,
+                "sync_every": 32,
+                "gradient_steps": 2,
                 "seed": int(time.time()),
                 "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-                "run_func_name": "train_single_layer",
             },
         )
         config = wandb.config
@@ -152,32 +155,39 @@ def train_single_layer():
 
         # config = {
         #     "env_id": "Boxing-v0",
-        #     "total_time_steps": 1e6,
+        #     "total_timesteps": 1000_000,
+        #     "init_steps": 10000,
         #     "action_repetition": 2,
-        #     "n_frame_stack": 4,
-        #     # "lr": 1e-3,
+        #     "n_frame_stack": 2,
         #     # "dropout": random.uniform(0.01, 0.80),
-        #     "vqvae_inchannel": int(3 * 4),
+        #     "vqvae_inchannel": int(3 * 1),
         #     "vqvae_latent_channel": 16,
         #     "vqvae_num_embeddings": 64,
-        #     # "reconstruction_path": os.path.join(
-        #     #     "/workspace/repos_dev/VQVAE_RL/reconstruction", env_id, vae_version
-        #     # ),
-        #     "reconstruction_path": None,
-        #     "num_episodes_train": 100,
-        #     "batch_size": 128,
-        #     "gamma": 0.99,
-        #     "eps_start": 0.9,
-        #     "eps_end": 0.05,
-        #     "eps_decay": 200,
-        #     "target_update": 10,
-        #     "exploration_rate": 0.1,
-        #     "exploration_rate_decay": 0.99999975,
-        #     "exploration_rate_min": 0.1,
+        #     "reconstruction_path": os.path.join(
+        #         "/workspace/repos_dev/VQVAE_RL/reconstruction/singlelayer", env_id, current_time
+        #     ),
+        #     # "reconstruction_path": None,
+        #     # "total_episodes": 1000,
+        #     "lr_vqvae": 3e-4,
+        #     "lr_dqn": "lin_5.3e-4",
+        #     "batch_size": 256,
+        #     "validation_size": 128,
+        #     "validate_every": 10,
+        #     "size_replay_memory": int(1e6),
+        #     "gamma": 0.97,
+        #     "exploration_fraction": 0.5,
+        #     "exploration_initial_eps": 1,
+        #     "exploration_final_eps": 0.1,
+        #     # "eps_start": 0.1,
+        #     # "eps_end": 0.05,
+        #     # "eps_decay": 200,
+        #     # "exploration_rate": 0.1,
+        #     # "exploration_rate_decay": 0.99999975,
+        #     # "exploration_rate_min": 0.1,
         #     "save_model_every": 5e5,
-        #     "init_steps": 1e4,
-        #     "learn_every": 4,
-        #     "sync_every": 8,
+        #     "learn_every": 8,
+        #     "sync_every": 32,
+        #     "gradient_steps": 2,
         #     "seed": int(time.time()),
         #     "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
         # }
@@ -189,9 +199,9 @@ def train_single_layer():
         print("agent.policy_mlp_net:", agent.policy_mlp_net)
         print("agent.vqvae_model:", agent.vqvae_model)
 
-        wandb.watch(agent.policy_mlp_net, log_freq=100)
+        # wandb.watch(agent.policy_mlp_net, log_freq=100)
         # wandb.watch(agent.target_mlp_net, log_freq=100)
-        wandb.watch(agent.vqvae_model, log_freq=100)
+        # wandb.watch(agent.vqvae_model, log_freq=100)
 
         comment = ""
         log_dir_tensorboard = f"/workspace/repos_dev/VQVAE_RL/log_tensorboard/singlelayer/{env_id}/{current_time}_{comment}"
@@ -202,6 +212,7 @@ def train_single_layer():
 
         # transformer = transform_dict["Boxing-v0"]
         # for i_episode in range(config.num_episodes_train):
+        # old_snapshot = tracemalloc.take_snapshot()
         while agent.timesteps_done < int(config.total_timesteps + config.init_steps):
             time_start_episode = time.time()
             # Initialize the environment and state
@@ -215,7 +226,7 @@ def train_single_layer():
             loss_list = []
             for t in count():
                 # Select and perform an action
-                action = agent.act2(state)
+                action = agent.act(state)
                 # print(
                 #     "memory_allocated: {:.5f} MB".format(
                 #         torch.cuda.memory_allocated() / (1024 * 1024)
@@ -281,11 +292,13 @@ def train_single_layer():
 
                 # Perform one step of the optimization (on the policy network)
                 # optimize_model()
-                if agent.timesteps_done == agent.init_steps:
-                    for i in range(int(agent.init_steps / 10)):
-                        recon_loss, vq_loss, q_loss = agent.learn(tb_writer)
-                else:
-                    recon_loss, vq_loss, q_loss = agent.learn(tb_writer)
+                # if agent.timesteps_done == agent.init_steps:
+                #     for i in range(int(agent.init_steps / 10)):
+                #         recon_loss, vq_loss, q_loss = agent.learn(tb_writer)
+                # else:
+                #     recon_loss, vq_loss, q_loss = agent.learn(tb_writer)
+
+                recon_loss, vq_loss, q_loss = agent.learn(tb_writer)
                 loss_list.append([recon_loss, vq_loss, q_loss])
                 # print(
                 #     "memory_allocated: {:.5f} MB".format(
@@ -349,6 +362,24 @@ def train_single_layer():
                     print("mean losses(recon, vq, q):", np.around(mean_losses, decimals=6))
                     print("_current_progress_remaining:", agent._current_progress_remaining)
                     print("train/exploration_rate:", agent.exploration_rate)
+
+                    print("number of vqvae model forward passes:", agent.vqvae_model.forward_call)
+
+                    print(
+                        "size of agent.memory: {} entries and {} mb".format(
+                            len(agent.memory), sys.getsizeof(agent.memory) / (1024 * 1024)
+                        )
+                    )
+
+                    # current_snapshot = tracemalloc.take_snapshot()
+                    # top_stats = current_snapshot.compare_to(old_snapshot, "lineno")
+                    # # top_stats = current_snapshot.statistics("lineno")
+                    # # top_stats = snapshot.statistics("filename")
+                    # print("[ Top 10 ]")
+                    # for stat in top_stats[:10]:
+                    #     print(stat)
+
+                    # old_snapshot = current_snapshot
 
                     break
 
@@ -807,16 +838,15 @@ def train_vanilla_dqn():
     env.close()
 
 
-if __name__ == "__main__":
-
+def find_gpu():
     # Set CUDA_DEVICE_ORDER so the IDs assigned by CUDA match those from nvidia-smi
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     # Get the first available GPU
     DEVICE_ID_LIST = GPUtil.getAvailable(
         order="random",
         limit=4,
-        maxLoad=0.5,
-        maxMemory=0.5,
+        maxLoad=0.75,
+        maxMemory=0.75,
         includeNan=False,
         excludeID=[],
         excludeUUID=[],
@@ -827,9 +857,16 @@ if __name__ == "__main__":
     # os.environ["DISPLAY"] = ":199"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(DEVICE_ID)
     os.environ["GPU_DEBUG"] = str(DEVICE_ID)
+
+
+if __name__ == "__main__":
+
     # from utils.gpu_profile import gpu_profile
 
     # sys.settrace(gpu_profile)
+    torch.set_num_threads(1)
+    # tracemalloc.start()
+    # set number of threads to 1, when using T.ToTensor() it will cause very high cpu usage and using milti-threads
 
     train_single_layer()
     # train_duolayer()
