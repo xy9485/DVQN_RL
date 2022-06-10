@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torchvision.transforms as T
-from latentrl.dqn_models import DQN, DQN_MLP, DVN
+from latentrl.dqn_models import DQN, DQN_MLP, DVN, DQN_paper
 from latentrl.policies.utils import ReplayMemory
 from latentrl.utils.learning import EarlyStopping, ReduceLROnPlateau
 from latentrl.utils.misc import get_linear_fn, linear_schedule, update_learning_rate
@@ -722,21 +722,13 @@ class DuoLayerAgent:
                 config.reconstruction_path,
                 exist_ok=True,
             )
-        self.vqvae_model = VQVAE(
-            in_channels=config.vqvae_inchannel,
+        self.vqvae_model = VQVAE2(
+            in_channels=env.observation_space.shape[-1],
             embedding_dim=config.vqvae_latent_channel,
             num_embeddings=config.vqvae_num_embeddings,
             reconstruction_path=config.reconstruction_path,
         ).to(self.device)
 
-        self.vqvae_optimizer = optim.Adam(self.vqvae_model.parameters(), lr=5e-4)
-        # or Adam
-
-        # scheduler = ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=5)
-
-        self.scheduler = ReduceLROnPlateau(self.vqvae_optimizer, "min")
-
-        self.earlystopping = EarlyStopping("min", patience=5)
         # <<<<<<<<<<<VQVAE<<<<<<<<<<<<
 
         # DQN_MLP
@@ -744,22 +736,41 @@ class DuoLayerAgent:
         self.n_actions = env.action_space.n
         self.obs_height = env.observation_space.shape[0]
         self.obs_width = env.observation_space.shape[1]
+        self.obs_shape = env.observation_space.shape
 
         # define ground leve policy
-        self.ground_Q_net = DQN(84, 84, self.n_actions).to(self.device)
-        self.ground_target_Q_net = DQN(84, 84, self.n_actions).to(self.device)
+        # self.ground_Q_net = DQN(84, 84, self.n_actions).to(self.device)
+        # self.ground_target_Q_net = DQN(84, 84, self.n_actions).to(self.device)
+        self.ground_Q_net = DQN_paper(env.observation_space, env.action_space).to(self.device)
+        self.ground_target_Q_net = DQN_paper(env.observation_space, env.action_space).to(
+            self.device
+        )
         self.ground_target_Q_net.load_state_dict(self.ground_Q_net.state_dict())
         self.ground_target_Q_net.eval()
 
-        self.ground_Q_optimizer = optim.Adam(self.ground_Q_net.parameters(), lr=5e-4)
+        # self.ground_Q_optimizer = optim.Adam(self.ground_Q_net.parameters(), lr=5e-4)
 
         # define latent level value network
-        self.abstract_V_net = DVN(16 * 21 * 21).to(self.device)
-        self.abstract_target_V_net = DVN(16 * 21 * 21).to(self.device)
+        with torch.no_grad():
+            sample = T.ToTensor()(env.observation_space.sample()).unsqueeze(0).to(self.device)
+            encoder_output_size = self.vqvae_model.encoder(sample).shape
+            input_dim_abstract = (
+                encoder_output_size[1],
+                encoder_output_size[2],
+                encoder_output_size[3],
+            )
+        self.abstract_V_net = DVN(input_dim_abstract).to(self.device)
+        self.abstract_target_V_net = DVN(input_dim_abstract).to(self.device)
         self.abstract_target_V_net.load_state_dict(self.abstract_V_net.state_dict())
         self.abstract_target_V_net.eval()
 
-        self.abstract_V_optimizer = optim.Adam(self.abstract_V_net.parameters(), lr=5e-4)
+        # self.abstract_V_optimizer = optim.Adam(self.abstract_V_net.parameters(), lr=5e-4)
+        self._current_progress_remaining = 1.0
+        self._create_optimizers(config)
+
+        # scheduler = ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=5)
+        self.vqvae_scheduler = ReduceLROnPlateau(self.vqvae_optimizer, "min")
+        self.vqvae_earlystopping = EarlyStopping("min", patience=5)
 
         # define latent level policy network
         # self.abstract_Q_net = DQN_MLP(16 * 21 * 21, self.n_actions).to(self.device)
@@ -778,24 +789,26 @@ class DuoLayerAgent:
         #     self.net = self.net.to(device="cuda")
 
         # self.curr_step = 0
-        self.total_steps_done = 0
+        self.timesteps_done = 0
         self.episodes_done = 0
 
         # Hyperparameters
-        self.num_episodes_train = config.num_episodes_train
+        # self.total_episodes = config.total_episodes
+        self.total_timesteps = config.total_timesteps
+        self.init_steps = config.init_steps  # min. experiences before training
         self.batch_size = config.batch_size
         self.validation_size = config.validation_size
         self.size_replay_memory = config.size_replay_memory
         self.gamma = config.gamma
         self.omega = config.omega
-        self.eps_start = config.eps_start
-        self.eps_end = config.eps_end
-        self.eps_decay = config.eps_decay
-        self.target_update = config.target_update
+        # self.eps_start = config.eps_start
+        # self.eps_end = config.eps_end
+        # self.eps_decay = config.eps_decay
+        # self.target_update = config.target_update
 
-        self.exploration_rate = config.exploration_rate
-        self.exploration_rate_decay = config.exploration_rate_decay
-        self.exploration_rate_min = config.exploration_rate_min
+        # self.exploration_rate = config.exploration_rate
+        # self.exploration_rate_decay = config.exploration_rate_decay
+        # self.exploration_rate_min = config.exploration_rate_min
 
         self.save_model_every = config.save_model_every
 
@@ -805,29 +818,32 @@ class DuoLayerAgent:
             "Transition", ("state", "action", "next_state", "reward", "done")
         )
 
-        self.init_steps = config.init_steps  # min. experiences before training
-        self.learn_every = config.learn_every  # no. of experiences between updates to Q_online
-        self.sync_every = config.sync_every
-        # no. of experiences between updates to abstract Q_target
-        self.sync_ground_every = self.sync_every
-        # no. of experiences between updates to ground Q_target
-        self.validate_every = config.validate_every
-        # self.exploration_schedule = get_linear_fn(
-        #     self.exploration_initial_eps,
-        #     self.exploration_final_eps,
-        #     self.exploration_fraction,
-        # )
+        self.ground_learn_every = config.ground_learn_every
+        self.ground_sync_every = config.ground_sync_every
+        self.ground_gradient_steps = config.ground_gradient_steps
+        self.abstract_learn_every = config.abstract_learn_every
+        self.abstract_sync_every = config.abstract_sync_every
+        self.abstract_gradient_steps = config.abstract_gradient_steps
 
-        self._current_progress_remaining = 1.0
-        self.n_call_learn = 0
+        self.validate_every = config.validate_every
+
+        self.exploration_scheduler = get_linear_fn(
+            config.exploration_initial_eps,
+            config.exploration_final_eps,
+            config.exploration_fraction,
+        )
+
+        self.n_call_train = 0
         self.eps_threshold = None
 
     @torch.no_grad()
     def act(self, state):
-        if self.episodes_done < math.ceil(0.99 * self.num_episodes_train):
-            self.eps_threshold = (
-                self.eps_start - self.eps_start / self.num_episodes_train * self.episodes_done
-            )
+        # if self.episodes_done < math.ceil(0.99 * self.num_episodes_train):
+        #     self.eps_threshold = (
+        #         self.eps_start - self.eps_start / self.num_episodes_train * self.episodes_done
+        #     )
+        self._update_current_progress_remaining(self.timesteps_done, self.total_timesteps)
+        self.exploration_rate = self.exploration_scheduler(self._current_progress_remaining)
         # linear schedule on epsilon
         # eps_threshold = (self.eps_end + (self.eps_start - self.eps_end) / math.ceil(self.train_episode * 0.9)
         #                  * self.episodes_done)
@@ -842,9 +858,10 @@ class DuoLayerAgent:
         # self.exploration_rate = max(self.exploration_rate_min, self.exploration_rate)
 
         state = T.ToTensor()(state).float().unsqueeze(0).to(self.device)
+        self.timesteps_done += 1
 
         sample = random.random()
-        if sample > self.eps_threshold:
+        if sample > self.exploration_rate:
             action = self.ground_Q_net(state).max(1)[1].view(1, 1)
         else:
             action = torch.tensor(
@@ -852,8 +869,6 @@ class DuoLayerAgent:
                 device=self.device,
                 dtype=torch.long,
             )
-
-        self.total_steps_done += 1
 
         return action
 
@@ -903,6 +918,130 @@ class DuoLayerAgent:
         return validate_loss
 
     def learn(self, tb_writer):
+        if self.timesteps_done % self.ground_sync_every == 0:
+            self.sync_ground_Q_target()
+        if self.timesteps_done % self.abstract_sync_every == 0:
+            self.sync_abstract_V_target()
+
+        if self.timesteps_done % self.save_model_every == 0:
+            pass
+            # self.save()
+
+        if self.timesteps_done < self.init_steps:
+            return None, None, None
+
+        if self.timesteps_done == self.init_steps:
+            loss_list = []
+            for _ in range(int(self.init_steps / 100)):
+                mean_recon_loss, mean_vq_loss, loss_Q_plus_V = self.train(tb_writer)
+                loss_list.append([mean_recon_loss, mean_vq_loss, loss_Q_plus_V])
+            loss_list = np.array(loss_list, dtype=float)
+            loss_list = np.nanmean(loss_list, axis=0)
+            return [item for item in loss_list]
+
+        if self.timesteps_done % self.ground_learn_every != 0:
+            return None, None, None
+
+        loss_list = []
+        for _ in range(self.ground_gradient_steps):
+            mean_recon_loss, mean_vq_loss, loss_Q_plus_V = self.train(tb_writer)
+            loss_list.append([mean_recon_loss, mean_vq_loss, loss_Q_plus_V])
+        loss_list = np.array(loss_list, dtype=float)
+        loss_list = np.nanmean(loss_list, axis=0)
+        return [item for item in loss_list]
+
+        # if self.n_call_train % self.validate_every == 0:
+        #     # validate_loss = self.validate_vqvae()
+        #     # self.scheduler.step(validate_loss)
+        #     # self.earlystopping.step(validate_loss)
+        #     pass
+
+    def train(self, tb_writer=None):
+        update_learning_rate(
+            self.ground_Q_optimizer, self.lr_scheduler_ground_Q(self._current_progress_remaining)
+        )
+        update_learning_rate(
+            self.abstract_V_optimizer,
+            self.lr_scheduler_abstract_V(self._current_progress_remaining),
+        )
+
+        batch = self.memory.sample(batch_size=self.batch_size)
+        state_batch = torch.cat(batch.state).to(self.device)
+        action_batch = torch.cat(batch.action).to(self.device)
+        reward_batch = torch.cat(batch.reward).to(self.device)
+        done_batch = torch.tensor(batch.done).to(self.device)
+        next_state_batch = torch.cat(batch.next_state).to(self.device)
+
+        ground_current_Q = self.ground_Q_net(state_batch).gather(1, action_batch)
+
+        recon_batch, quantized, input, vqloss = self.vqvae_model(state_batch)
+        recon_batch2, quantized2, input2, vqloss2 = self.vqvae_model(next_state_batch)
+
+        recon_loss = F.mse_loss(recon_batch, state_batch)
+        recon_loss2 = F.mse_loss(recon_batch2, next_state_batch)
+
+        abstract_current_V = self.abstract_V_net(quantized)
+        curent_Q_plus_V = ground_current_Q + self.omega * abstract_current_V
+
+        with torch.no_grad():
+            next_ground_state_max_Q = self.ground_target_Q_net(next_state_batch).max(1)[0].detach()
+            next_abstract_state_V = self.abstract_target_V_net(quantized2)
+            target_Q_plus_V = reward_batch + (1 - done_batch.float()) * (
+                self.omega * self.gamma * next_abstract_state_V.squeeze()
+                + self.gamma * next_ground_state_max_Q
+            )
+
+        criterion = nn.SmoothL1Loss()
+        loss_Q_plus_V = criterion(curent_Q_plus_V, target_Q_plus_V.unsqueeze(1))
+
+        total_loss = vqloss + vqloss2 + recon_loss + recon_loss2 + loss_Q_plus_V
+
+        # Optimize the model
+        self.ground_Q_optimizer.zero_grad(set_to_none=True)
+        self.abstract_V_optimizer.zero_grad(set_to_none=True)
+        self.vqvae_optimizer.zero_grad(set_to_none=True)
+        total_loss.backward()
+        # print("memory_allocated: {:.5f} MB".format(torch.cuda.memory_allocated() / (1024 * 1024)))
+        # print("run backward")
+
+        # 1 clamp gradients to avoid exploding gradient
+        # for param in self.policy_mlp_net.parameters():
+        #     param.grad.data.clamp_(-1, 1)
+
+        # for param in self.vqvae_model.parameters():
+        #     param.grad.data.clamp_(-1, 1)
+
+        # 2 Clip gradient norm
+        # max_grad_norm = 10
+        # torch.nn.utils.clip_grad_norm_(self.policy_mlp_net.parameters(), max_grad_norm)
+        # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
+        self.ground_Q_optimizer.step()
+        self.abstract_V_optimizer.step()
+        self.vqvae_optimizer.step()
+
+        self.n_call_train += 1
+
+        if tb_writer and self.n_call_train % 1000 == 0:
+            for name, param in self.abstract_V_net.named_parameters():
+                tb_writer.add_histogram(
+                    f"gradients/abstract_V_net/{name}", param.grad, self.n_call_train
+                )
+                tb_writer.add_histogram(
+                    f"weight_bias/abstract_V_net/{name}", param, self.n_call_train
+                )
+            for name, param in self.vqvae_model.encoder.named_parameters():
+                tb_writer.add_histogram(f"gradients/encoder/{name}", param.grad, self.n_call_train)
+                tb_writer.add_histogram(f"weight_bias/encoder/{name}", param, self.n_call_train)
+            for name, param in self.vqvae_model.decoder.named_parameters():
+                tb_writer.add_histogram(f"gradients/decoder/{name}", param.grad, self.n_call_train)
+                tb_writer.add_histogram(f"weight_bias/decoder/{name}", param, self.n_call_train)
+
+        mean_recon_loss = ((recon_loss + recon_loss2) / 2).item()
+        mean_vq_loss = ((vqloss + vqloss2) / 2).item()
+
+        return mean_recon_loss, mean_vq_loss, loss_Q_plus_V.item()
+
+    def learn_deprecated(self, tb_writer):
         if self.total_steps_done % self.sync_every == 0:
             self.sync_ground_Q_target()
             self.sync_abstract_V_target()
@@ -917,7 +1056,7 @@ class DuoLayerAgent:
         if self.total_steps_done % self.learn_every != 0:
             return None, None, None
 
-        if self.n_call_learn % self.validate_every == 0:
+        if self.n_call_train % self.validate_every == 0:
             validate_loss = self.validate_vqvae()
             self.scheduler.step(validate_loss)
             self.earlystopping.step(validate_loss)
@@ -1009,19 +1148,19 @@ class DuoLayerAgent:
             self.abstract_V_optimizer.step()
 
             for name, param in self.ground_Q_net.named_parameters():
-                tb_writer.add_histogram(f"gradients/ground_Q_net/{name}", param, self.n_call_learn)
+                tb_writer.add_histogram(f"gradients/ground_Q_net/{name}", param, self.n_call_train)
                 tb_writer.add_histogram(
-                    f"weight_bias/ground_Q_net/{name}", param, self.n_call_learn
+                    f"weight_bias/ground_Q_net/{name}", param, self.n_call_train
                 )
             for name, param in self.abstract_V_net.named_parameters():
                 tb_writer.add_histogram(
-                    f"gradients/abstract_V_net/{name}", param.grad, self.n_call_learn
+                    f"gradients/abstract_V_net/{name}", param.grad, self.n_call_train
                 )
                 tb_writer.add_histogram(
-                    f"weight_bias/abstract_V_net/{name}", param, self.n_call_learn
+                    f"weight_bias/abstract_V_net/{name}", param, self.n_call_train
                 )
 
-            self.n_call_learn += 1
+            self.n_call_train += 1
 
             composed_loss = composed_loss.item()
             return None, None, composed_loss
@@ -1052,19 +1191,19 @@ class DuoLayerAgent:
         self.abstract_V_optimizer.step()
         self.vqvae_optimizer.step()
 
-        self.n_call_learn += 1
+        self.n_call_train += 1
 
         for name, param in self.abstract_V_net.named_parameters():
             tb_writer.add_histogram(
-                f"gradients/abstract_V_net/{name}", param.grad, self.n_call_learn
+                f"gradients/abstract_V_net/{name}", param.grad, self.n_call_train
             )
-            tb_writer.add_histogram(f"weight_bias/abstract_V_net/{name}", param, self.n_call_learn)
+            tb_writer.add_histogram(f"weight_bias/abstract_V_net/{name}", param, self.n_call_train)
         for name, param in self.vqvae_model.encoder.named_parameters():
-            tb_writer.add_histogram(f"gradients/encoder/{name}", param.grad, self.n_call_learn)
-            tb_writer.add_histogram(f"weight_bias/encoder/{name}", param, self.n_call_learn)
+            tb_writer.add_histogram(f"gradients/encoder/{name}", param.grad, self.n_call_train)
+            tb_writer.add_histogram(f"weight_bias/encoder/{name}", param, self.n_call_train)
         for name, param in self.vqvae_model.decoder.named_parameters():
-            tb_writer.add_histogram(f"gradients/decoder/{name}", param.grad, self.n_call_learn)
-            tb_writer.add_histogram(f"weight_bias/decoder/{name}", param, self.n_call_learn)
+            tb_writer.add_histogram(f"gradients/decoder/{name}", param.grad, self.n_call_train)
+            tb_writer.add_histogram(f"weight_bias/decoder/{name}", param, self.n_call_train)
 
         # print("memory_allocated: {:.5f} MB".format(torch.cuda.memory_allocated() / (1024 * 1024)))
         # print("run step()")
@@ -1078,5 +1217,38 @@ class DuoLayerAgent:
         composed_loss = composed_loss.item()
         return mean_recon_loss, mean_vq_loss, composed_loss
 
-    def _update_current_progress_remaining(self, num_timesteps, total_timesteps):
-        self._current_progress_remaining = 1.0 - float(num_timesteps) / float(total_timesteps)
+    def _update_current_progress_remaining(self, timesteps_done, total_timesteps):
+        # self._current_progress_remaining = 1.0 - float(num_timesteps) / float(total_timesteps)
+        finished_time_steps_after_init = timesteps_done - self.init_steps
+        if finished_time_steps_after_init < 0:
+            self._current_progress_remaining = 1.0
+        else:
+            self._current_progress_remaining = (
+                1.0 - finished_time_steps_after_init / total_timesteps
+            )
+
+    def _create_optimizers(self, config):
+        self.vqvae_optimizer = optim.Adam(self.vqvae_model.parameters(), lr=config.lr_vqvae)
+
+        if isinstance(config.lr_ground_Q, str) and config.lr_ground_Q.startswith("lin"):
+            self.lr_scheduler_ground_Q = linear_schedule(float(config.lr_ground_Q.split("_")[1]))
+            self.ground_Q_optimizer = optim.Adam(
+                self.ground_Q_net.parameters(),
+                lr=self.lr_scheduler_ground_Q(self._current_progress_remaining),
+            )
+        elif isinstance(config.lr_ground_Q, float):
+            self.ground_Q_optimizer = optim.Adam(
+                self.ground_Q_net.parameters(),
+                lr=config.lr_ground_Q,
+            )
+
+        if isinstance(config.lr_abstract_V, str) and config.lr_abstract_V.startswith("lin"):
+            self.lr_scheduler_abstract_V = linear_schedule(
+                float(config.lr_abstract_V.split("_")[1])
+            )
+            self.abstract_V_optimizer = optim.Adam(
+                self.abstract_V_net.parameters(),
+                lr=self.lr_scheduler_abstract_V(self._current_progress_remaining),
+            )
+        elif isinstance(config.lr_abstract_V, float):
+            self.abstract_V_optimizer = optim.Adam(self.abstract_V_net.parameters(), lr=5e-4)

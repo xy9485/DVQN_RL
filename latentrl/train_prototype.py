@@ -29,6 +29,7 @@ from tensorboard import summary
 from torch.utils.tensorboard import SummaryWriter
 from torchsummary import summary
 
+print("sys.path:", sys.path)
 import wandb
 from data2 import RolloutDatasetNaive
 from policies.hrl_dqn_agent import DuoLayerAgent, SingelLayerAgent
@@ -114,7 +115,7 @@ def train_single_layer():
             config={
                 "env_id": "Boxing-v0",
                 "total_timesteps": 1000_000,
-                "init_steps": 10000,
+                "init_steps": 1000,
                 "action_repetition": 2,
                 "n_frame_stack": 1,
                 # "dropout": random.uniform(0.01, 0.80),
@@ -399,43 +400,48 @@ def train_duolayer():
     vae_version = "vqvae_c3_embedding16x64_3_duolayer"
 
     for _ in range(1):
+        current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
+        current_time = current_time.strftime("%b%d_%H-%M-%S")
         # 🐝 initialise a wandb run
         wandb.init(
             project="vqvae+latent_rl",
             config={
                 "env_id": "Boxing-v0",
-                "total_time_steps": 1e6,
+                "total_timesteps": 1000_000,
+                "init_steps": 1000,
                 "action_repetition": 2,
-                "n_frame_stack": 1,  # make sure matching with vqvae_inchannel
-                # "lr": 1e-3,
+                "n_frame_stack": 1,
                 # "dropout": random.uniform(0.01, 0.80),
                 "vqvae_inchannel": int(3 * 1),
-                "vqvae_latent_channel": 16,
+                "vqvae_latent_channel": 32,
                 "vqvae_num_embeddings": 64,
                 "reconstruction_path": os.path.join(
-                    "/workspace/repos_dev/VQVAE_RL/reconstruction", env_id, vae_version
-                ),  # using when n_frame_stack=1
+                    "/workspace/repos_dev/VQVAE_RL/reconstruction/duolayer", env_id, current_time
+                ),
                 # "reconstruction_path": None,
-                "num_episodes_train": 1000,
+                # "total_episodes": 1000,
+                "lr_vqvae": 5e-4,
+                "lr_ground_Q": "lin_5.3e-4",
+                "lr_abstract_V": "lin_5.3e-4",
                 "batch_size": 128,
                 "validation_size": 128,
                 "validate_every": 10,
                 "size_replay_memory": int(1e6),
                 "gamma": 0.97,
                 "omega": 2.5e-3,
-                "eps_start": 0.9,
-                "eps_end": 0.05,
-                "eps_decay": 200,
-                "target_update": 10,
-                "exploration_rate": 0.1,
-                "exploration_rate_decay": 0.99999975,
-                "exploration_rate_min": 0.1,
+                "exploration_fraction": 0.9,
+                "exploration_initial_eps": 0.1,
+                "exploration_final_eps": 0.01,
                 "save_model_every": 5e5,
-                "init_steps": 1e4,
-                "learn_every": 4,
-                "sync_every": 8,
+                "ground_learn_every": 4,
+                "ground_sync_every": 8,
+                "ground_gradient_steps": 1,
+                "abstract_learn_every": 4,
+                "abstract_sync_every": 8,
+                "abstract_gradient_steps": 1,
                 "seed": int(time.time()),
                 "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+                "run_func_name": "train_duo_layer",
             },
         )
         config = wandb.config
@@ -480,9 +486,9 @@ def train_duolayer():
         # print("agent.policy_mlp_net:", agent.ground_Q_net)
         # print("agent.vqvae_model:", agent.vqvae_model)
 
-        wandb.watch(agent.ground_Q_net, log_freq=1000)
-        wandb.watch(agent.abstract_V_net, log_freq=1000)
-        wandb.watch(agent.vqvae_model, log_freq=1000)
+        # wandb.watch(agent.ground_Q_net, log_freq=1000)
+        # wandb.watch(agent.abstract_V_net, log_freq=1000)
+        # wandb.watch(agent.vqvae_model, log_freq=1000)
 
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
         current_time = current_time.strftime("%b%d_%H-%M-%S")
@@ -496,7 +502,8 @@ def train_duolayer():
         time_start_training = time.time()
 
         # transformer = transform_dict["Boxing-v0"]
-        for i_episode in range(config.num_episodes_train):
+        # for i_episode in range(config.total_episodes):
+        while agent.timesteps_done < int(config.total_timesteps + config.init_steps):
             time_start_episode = time.time()
             # Initialize the environment and state
             state = env.reset()
@@ -524,6 +531,9 @@ def train_duolayer():
                 else:
                     episodic_non_zero_reward += reward
 
+                if agent.timesteps_done >= int(config.total_timesteps + config.init_steps):
+                    break
+
                 # # Observe new state
                 # last_screen = current_screen
                 # current_screen = get_screen()
@@ -547,8 +557,8 @@ def train_duolayer():
 
                 # Perform one step of the optimization (on the policy network)
                 # optimize_model()
-                recon_loss, vq_loss, q_loss = agent.learn(tb_writer)
-                loss_list.append([recon_loss, vq_loss, q_loss])
+                recon_loss, vq_loss, loss_Q_plus_V = agent.learn(tb_writer)
+                loss_list.append([recon_loss, vq_loss, loss_Q_plus_V])
                 # print(
                 #     "memory_allocated: {:.5f} MB".format(
                 #         torch.cuda.memory_allocated() / (1024 * 1024)
@@ -559,6 +569,8 @@ def train_duolayer():
                     # print("sys.getsizeof(agent.memory)", sys.getsizeof(agent.memory))
                     # print(torch.cuda.memory_reserved()/(1024*1024), "MB")
                     # print(torch.cuda.memory_allocated()/(1024*1024), "MB")
+                    loss_list = np.array(loss_list, dtype=float)
+                    mean_losses = np.nanmean(loss_list, axis=0)
 
                     agent.episodes_done += 1
                     # episode_durations.append(t + 1)
@@ -567,22 +579,38 @@ def train_duolayer():
                         "train/episodic_reward": episodic_reward,
                         "train/episodic_negative_reward": episodic_negative_reward,
                         "train/episodic_non_zero_reward": episodic_non_zero_reward,
-                        "train/total_steps_done": agent.total_steps_done,
-                        "train/time_elapsed": time.time() - time_start_training,
+                        "train/timesteps_done": agent.timesteps_done,
+                        "train/time_elapsed": (time.time() - time_start_training) / 3600,
                         "train/episode_length": t + 1,
-                        "train/episodes": i_episode,
-                        "train/epsilon": agent.eps_threshold,
+                        "train/episodes_done": agent.episodes_done,
+                        "train/exploration_rate": agent.exploration_rate,
                         "train/episodic_fps": int((t + 1) / (time.time() - time_start_episode)),
+                        "train/lr_vqvae_optimizer": agent.vqvae_optimizer.param_groups[0]["lr"],
+                        "train/lr_ground_Q_optimizer": agent.ground_Q_optimizer.param_groups[0][
+                            "lr"
+                        ],
+                        "train/lr_abstract_V_optimizer": agent.abstract_V_optimizer.param_groups[0][
+                            "lr"
+                        ],
+                        "train/recon_loss": mean_losses[0],
+                        "train/vq_loss": mean_losses[1],
+                        "train/vqvae_loss": mean_losses[0] + mean_losses[1],
+                        "train/q_loss": mean_losses[2],
+                        "train/current_progress_remaining": agent._current_progress_remaining,
                     }
                     wandb.log({**metrics})
 
                     print(">>>>>>>>>>>>>>>>Episode Done>>>>>>>>>>>>>>>>>")
-                    print("time cost so far: {:.1f} s".format(time.time() - time_start_training))
+                    print(
+                        "time cost so far: {:.3f} h".format(
+                            (time.time() - time_start_training) / 3600
+                        )
+                    )
                     print("episodic time cost: {:.1f} s".format(time.time() - time_start_episode))
-                    print("agent.total_steps_done:", agent.total_steps_done)
-                    print("episodic_fps:", int((t + 1) / (time.time() - time_start_episode)))
+                    print("Total_steps_done:", agent.timesteps_done)
+                    print("Episodic_fps:", int((t + 1) / (time.time() - time_start_episode)))
                     print("Episode finished after {} timesteps".format(t + 1))
-                    print("Episode reward: {}".format(episodic_reward))
+                    print("Episode {} reward: {}".format(agent.episodes_done, episodic_reward))
 
                     print(
                         "memory_allocated: {:.1f} MB".format(
@@ -594,10 +622,19 @@ def train_duolayer():
                             torch.cuda.memory_reserved() / (1024 * 1024)
                         )
                     )
-                    print("agent.earlystopping.stop", agent.earlystopping.stop)
-                    loss_list = np.array(loss_list, dtype=float)
-                    mean_losses = np.nanmean(loss_list, axis=0)
-                    print("mean losses(recon, vq, q):", np.around(mean_losses, decimals=4))
+                    print("agent.vqvae_earlystopping.stop", agent.vqvae_earlystopping.stop)
+
+                    print("mean losses(recon, vq, q):", np.around(mean_losses, decimals=6))
+                    print("_current_progress_remaining:", agent._current_progress_remaining)
+                    print("train/exploration_rate:", agent.exploration_rate)
+
+                    print("number of vqvae model forward passes:", agent.vqvae_model.forward_call)
+
+                    print(
+                        "size of agent.memory: {} entries and {} mb".format(
+                            len(agent.memory), sys.getsizeof(agent.memory) / (1024 * 1024)
+                        )
+                    )
 
                     break
 
@@ -868,6 +905,6 @@ if __name__ == "__main__":
     # tracemalloc.start()
     # set number of threads to 1, when using T.ToTensor() it will cause very high cpu usage and using milti-threads
 
-    train_single_layer()
-    # train_duolayer()
+    # train_single_layer()
+    train_duolayer()
     # train_vanilla_dqn()
