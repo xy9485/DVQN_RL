@@ -10,7 +10,8 @@ from os import makedirs
 from pprint import pprint
 from tkinter import N
 from types import SimpleNamespace
-import tracemalloc
+
+# import tracemalloc
 
 import colored_traceback.auto
 import GPUtil
@@ -25,7 +26,8 @@ import torch.optim as optim
 import torchvision.transforms as T
 from cv2 import mean
 from PIL import Image
-from tensorboard import summary
+
+# from tensorboard import summary
 from torch.utils.tensorboard import SummaryWriter
 from torchsummary import summary
 
@@ -38,8 +40,11 @@ from transforms import transform_dict
 from utils.learning import EarlyStopping, ReduceLROnPlateau
 from utils.misc import get_linear_fn, linear_schedule, make_vec_env_customized, update_learning_rate
 from wrappers import (
+    ActionDiscreteWrapper,
     ActionRepetitionWrapper,
+    CarRandomStartWrapper,
     EncodeStackWrapper,
+    EpisodeEarlyStopWrapper,
     FrameStackWrapper,
     PreprocessObservationWrapper,
     pack_env_wrappers,
@@ -53,10 +58,48 @@ def make_env(
     env = gym.make(env_id).unwrapped
     # env = gym.make(env_id)
 
+    # wrapper_class_list = [
+    #     # ActionDiscreteWrapper,
+    #     ActionRepetitionWrapper,
+    #     # EpisodeEarlyStopWrapper,
+    #     # Monitor,
+    #     # CarRandomStartWrapper,
+    #     PreprocessObservationWrapper,
+    #     # EncodeStackWrapper,
+    #     # PunishRewardWrapper,
+    #     FrameStackWrapper,
+    # ]
+    # wrapper_kwargs_list = [
+    #     {"action_repetition": config.action_repetition},
+    #     # {"max_neg_rewards": max_neg_rewards, "punishment": punishment},
+    #     # {'filename': monitor_dir},
+    #     # {"filename": os.path.join(monitor_dir, "train")},  # just single env in this case
+    #     # {
+    #     #     "warm_up_steps": hparams["learning_starts"],
+    #     #     "n_envs": n_envs,
+    #     #     "always_random_start": always_random_start,
+    #     #     "no_random_start": no_random_start,
+    #     # },
+    #     {
+    #         "vertical_cut_d": 84,
+    #         "shape": 84,
+    #         "num_output_channels": 3,
+    #     },
+    #     # {
+    #     #     "n_stack": n_stack,
+    #     #     "vae_f": vae_path,
+    #     #     "vae_sample": vae_sample,
+    #     #     "vae_inchannel": vae_inchannel,
+    #     #     "latent_dim": vae_latent_dim,
+    #     # },
+    #     # {'max_neg_rewards': max_neg_rewards, "punishment": punishment}
+    #     {"n_frame_stack": config.n_frame_stack},
+    # ]
+    # For carracing-v0
     wrapper_class_list = [
-        # ActionDiscreteWrapper,
-        ActionRepetitionWrapper,
-        # EpisodeEarlyStopWrapper,
+        ActionDiscreteWrapper,
+        # ActionRepetitionWrapper,
+        EpisodeEarlyStopWrapper,
         # Monitor,
         # CarRandomStartWrapper,
         PreprocessObservationWrapper,
@@ -66,7 +109,7 @@ def make_env(
     ]
     wrapper_kwargs_list = [
         {"action_repetition": config.action_repetition},
-        # {"max_neg_rewards": max_neg_rewards, "punishment": punishment},
+        {"max_neg_rewards": 100, "punishment": 0.0},
         # {'filename': monitor_dir},
         # {"filename": os.path.join(monitor_dir, "train")},  # just single env in this case
         # {
@@ -396,7 +439,8 @@ def train_single_layer():
 
 
 def train_duolayer():
-    env_id = "Boxing-v0"  # CarRacing-v0, ALE/Skiing-v5, Boxing-v0
+    env_id = "CarRacing-v0"
+    # CarRacing-v0, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5
     vae_version = "vqvae_c3_embedding16x64_3_duolayer"
 
     for _ in range(1):
@@ -405,30 +449,39 @@ def train_duolayer():
         # 🐝 initialise a wandb run
         wandb.init(
             project="vqvae+latent_rl",
+            tags=[
+                "duolayer",
+                # "as_vanilla_dqn",
+                "vqvae2(32-64-64)",
+                "encoder_detach",
+                # "polyak",
+                "learn3",
+            ],  # vqvae2(32-64-128), vqvae(128-256)
             config={
                 "env_id": "Boxing-v0",
                 "total_timesteps": 1000_000,
-                "init_steps": 1000,
-                "action_repetition": 2,
-                "n_frame_stack": 1,
+                "init_steps": 10000,
+                "action_repetition": 3,  # 3 for carracing, 2 for boxing
+                "n_frame_stack": 4,
                 # "dropout": random.uniform(0.01, 0.80),
                 "vqvae_inchannel": int(3 * 1),
-                "vqvae_latent_channel": 32,
-                "vqvae_num_embeddings": 64,
+                "vqvae_latent_channel": 16,  # 16
+                "vqvae_num_embeddings": 64,  # 64
                 "reconstruction_path": os.path.join(
                     "/workspace/repos_dev/VQVAE_RL/reconstruction/duolayer", env_id, current_time
                 ),
                 # "reconstruction_path": None,
                 # "total_episodes": 1000,
                 "lr_vqvae": 5e-4,
-                "lr_ground_Q": "lin_5.3e-4",
-                "lr_abstract_V": "lin_5.3e-4",
-                "batch_size": 128,
+                "lr_ground_Q": "lin_5.3e-4",  # "lin_5.3e-4", 5e-4
+                "lr_abstract_V": "lin_5.3e-4",  # "lin_5.3e-4", 5e-4
+                "batch_size": 256,
                 "validation_size": 128,
                 "validate_every": 10,
-                "size_replay_memory": int(1e6),
+                "size_replay_memory": int(1e5),
                 "gamma": 0.97,
-                "omega": 2.5e-3,
+                "omega": 2.5e-3,  # 2.5e-3, 1
+                "tau": 0.9,
                 "exploration_fraction": 0.9,
                 "exploration_initial_eps": 0.1,
                 "exploration_final_eps": 0.01,
@@ -557,8 +610,7 @@ def train_duolayer():
 
                 # Perform one step of the optimization (on the policy network)
                 # optimize_model()
-                recon_loss, vq_loss, loss_Q_plus_V = agent.learn(tb_writer)
-                loss_list.append([recon_loss, vq_loss, loss_Q_plus_V])
+                loss_list.append(agent.learn3(tb_writer))
                 # print(
                 #     "memory_allocated: {:.5f} MB".format(
                 #         torch.cuda.memory_allocated() / (1024 * 1024)
@@ -595,7 +647,8 @@ def train_duolayer():
                         "train/recon_loss": mean_losses[0],
                         "train/vq_loss": mean_losses[1],
                         "train/vqvae_loss": mean_losses[0] + mean_losses[1],
-                        "train/q_loss": mean_losses[2],
+                        "train/abstract_td_error": mean_losses[2],
+                        "train/ground_td_error": mean_losses[3],
                         "train/current_progress_remaining": agent._current_progress_remaining,
                     }
                     wandb.log({**metrics})
@@ -624,7 +677,10 @@ def train_duolayer():
                     )
                     print("agent.vqvae_earlystopping.stop", agent.vqvae_earlystopping.stop)
 
-                    print("mean losses(recon, vq, q):", np.around(mean_losses, decimals=6))
+                    print(
+                        "mean losses(recon, vq, abstract_td_error, ground_td_error):",
+                        np.around(mean_losses, decimals=6),
+                    )
                     print("_current_progress_remaining:", agent._current_progress_remaining)
                     print("train/exploration_rate:", agent.exploration_rate)
 

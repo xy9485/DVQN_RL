@@ -40,7 +40,7 @@ class DQN_paper(nn.Module):
             nn.Linear(256, n_flatten),
             nn.ReLU(),
             nn.Linear(n_flatten, action_space.n),
-            nn.ReLU(),
+            # nn.ReLU(),
         )
 
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
@@ -136,8 +136,8 @@ class DVN(nn.Module):
     def __init__(self, input_dim):
         super(DVN, self).__init__()
         self.flatten_layer = nn.Flatten()
-        self.fc1 = nn.Linear(np.prod(input_dim), 128)
-        self.fc2 = nn.Linear(128, 256)
+        self.fc1 = nn.Linear(np.prod(input_dim), 256)
+        self.fc2 = nn.Linear(256, 256)
         self.fc3 = nn.Linear(256, 256)
         # self.fc4 = nn.Linear(256, 256)
         self.head = nn.Linear(256, 1)

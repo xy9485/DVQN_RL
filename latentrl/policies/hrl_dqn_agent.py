@@ -13,7 +13,7 @@ import torchvision.transforms as T
 from latentrl.dqn_models import DQN, DQN_MLP, DVN, DQN_paper
 from latentrl.policies.utils import ReplayMemory
 from latentrl.utils.learning import EarlyStopping, ReduceLROnPlateau
-from latentrl.utils.misc import get_linear_fn, linear_schedule, update_learning_rate
+from latentrl.utils.misc import get_linear_fn, linear_schedule, polyak_sync, update_learning_rate
 from latentrl.vqvae_end2end import VQVAE
 from latentrl.vqvae_prototype import VQVAE2
 
@@ -308,6 +308,7 @@ class SingelLayerAgent:
         loss_list = np.nanmean(loss_list, axis=0)
         return [item for item in loss_list]
 
+    # vqvae starts updating only when loss of vqvae surpasses the threshold
     def train2(self, tb_writer):
         # update_learning_rate(
         #     self.vqvae_optimizer, self.lr_scheduler(self._current_progress_remaining)
@@ -488,6 +489,9 @@ class SingelLayerAgent:
         recon_loss2 = F.mse_loss(recon_batch2, next_state_batch)
 
         current_Q = self.policy_mlp_net(quantized).gather(1, action_batch)
+        # make sure q loss won't effect weights of the encoder
+        # current_Q = self.policy_mlp_net(quantized.detach()).gather(1, action_batch)
+
         # print("memory_allocated: {:.5f} MB".format(torch.cuda.memory_allocated() / (1024 * 1024)))
         # print("run policy_mlp_net")
 
@@ -588,6 +592,7 @@ class SingelLayerAgent:
         q_loss = q_loss.item()
         return mean_recon_loss, mean_vq_loss, q_loss
 
+    # work as vanilla dqn
     def train3(self, tb_writer):
         # update_learning_rate(
         #     self.vqvae_optimizer, self.lr_scheduler(self._current_progress_remaining)
@@ -801,6 +806,7 @@ class DuoLayerAgent:
         self.size_replay_memory = config.size_replay_memory
         self.gamma = config.gamma
         self.omega = config.omega
+        self.tau = config.tau
         # self.eps_start = config.eps_start
         # self.eps_end = config.eps_end
         # self.eps_decay = config.eps_decay
@@ -932,9 +938,8 @@ class DuoLayerAgent:
 
         if self.timesteps_done == self.init_steps:
             loss_list = []
-            for _ in range(int(self.init_steps / 100)):
-                mean_recon_loss, mean_vq_loss, loss_Q_plus_V = self.train(tb_writer)
-                loss_list.append([mean_recon_loss, mean_vq_loss, loss_Q_plus_V])
+            for _ in range(int(self.init_steps / 10)):
+                loss_list.append(self.train(tb_writer))
             loss_list = np.array(loss_list, dtype=float)
             loss_list = np.nanmean(loss_list, axis=0)
             return [item for item in loss_list]
@@ -944,8 +949,7 @@ class DuoLayerAgent:
 
         loss_list = []
         for _ in range(self.ground_gradient_steps):
-            mean_recon_loss, mean_vq_loss, loss_Q_plus_V = self.train(tb_writer)
-            loss_list.append([mean_recon_loss, mean_vq_loss, loss_Q_plus_V])
+            loss_list.append(self.train(tb_writer))
         loss_list = np.array(loss_list, dtype=float)
         loss_list = np.nanmean(loss_list, axis=0)
         return [item for item in loss_list]
@@ -955,6 +959,87 @@ class DuoLayerAgent:
         #     # self.scheduler.step(validate_loss)
         #     # self.earlystopping.step(validate_loss)
         #     pass
+
+    def learn2(self, tb_writer):
+        if self.timesteps_done % self.ground_sync_every == 0:
+            self.sync_ground_Q_target()
+            # polyak_sync(
+            #     self.ground_Q_net.parameters(), self.ground_target_Q_net.parameters(), self.tau
+            # )
+
+        if self.timesteps_done % self.abstract_sync_every == 0:
+            self.sync_abstract_V_target()
+            # polyak_sync(
+            #     self.abstract_V_net.parameters(), self.abstract_target_V_net.parameters(), self.tau
+            # )
+
+        if self.timesteps_done % self.save_model_every == 0:
+            pass
+            # self.save()
+
+        if self.timesteps_done < self.init_steps:
+            return None, None, None, None
+
+        if self.timesteps_done == self.init_steps:
+            loss_list = []
+            for _ in range(int(self.init_steps / 100)):
+                loss_list.append(self.train2(tb_writer))
+            loss_list = np.array(loss_list, dtype=float)
+            loss_list = np.nanmean(loss_list, axis=0)
+            return [item for item in loss_list]
+
+        if self.timesteps_done % self.ground_learn_every != 0:
+            return None, None, None, None
+
+        loss_list = []
+        for _ in range(self.ground_gradient_steps):
+            loss_list.append(self.train2(tb_writer))
+        loss_list = np.array(loss_list, dtype=float)
+        loss_list = np.nanmean(loss_list, axis=0)
+        return [item for item in loss_list]
+
+    def learn3(self, tb_writer):
+        if self.timesteps_done % self.ground_sync_every == 0:
+            self.sync_ground_Q_target()
+            # polyak_sync(
+            #     self.ground_Q_net.parameters(), self.ground_target_Q_net.parameters(), self.tau
+            # )
+
+        if self.timesteps_done % self.abstract_sync_every == 0:
+            self.sync_abstract_V_target()
+            # polyak_sync(
+            #     self.abstract_V_net.parameters(), self.abstract_target_V_net.parameters(), self.tau
+            # )
+
+        if self.timesteps_done % self.save_model_every == 0:
+            pass
+            # self.save()
+
+        if self.timesteps_done < self.init_steps:
+            return None, None, None, None
+
+        if self.timesteps_done == self.init_steps:
+            loss_list = []
+            for _ in range(int(self.init_steps / 100)):
+                loss_list.append(
+                    self.train3(tb_writer, train_abstract_V=True, train_ground_Q=False)
+                )
+            loss_list = np.array(loss_list, dtype=float)
+            loss_list = np.nanmean(loss_list, axis=0)
+            return [item for item in loss_list]
+
+        if self.timesteps_done % self.ground_learn_every != 0:
+            return None, None, None, None
+
+        loss_list = []
+        for _ in range(self.ground_gradient_steps):
+            loss_list.append(self.train3(tb_writer, train_abstract_V=True, train_ground_Q=True))
+        for _ in range(self.ground_gradient_steps * 2):
+            self.train3(tb_writer, train_abstract_V=True, train_ground_Q=False)
+
+        loss_list = np.array(loss_list, dtype=float)
+        loss_list = np.nanmean(loss_list, axis=0)
+        return [item for item in loss_list]
 
     def train(self, tb_writer=None):
         update_learning_rate(
@@ -981,6 +1066,8 @@ class DuoLayerAgent:
         recon_loss2 = F.mse_loss(recon_batch2, next_state_batch)
 
         abstract_current_V = self.abstract_V_net(quantized)
+        # make sure loss of vqvae wont't update weights of the encoder
+        # abstract_current_V = self.abstract_V_net(quantized.detach())
         curent_Q_plus_V = ground_current_Q + self.omega * abstract_current_V
 
         with torch.no_grad():
@@ -994,7 +1081,9 @@ class DuoLayerAgent:
         criterion = nn.SmoothL1Loss()
         loss_Q_plus_V = criterion(curent_Q_plus_V, target_Q_plus_V.unsqueeze(1))
 
-        total_loss = vqloss + vqloss2 + recon_loss + recon_loss2 + loss_Q_plus_V
+        loss_vqvae = (vqloss + vqloss2 + recon_loss + recon_loss2) / 2
+        beta = 2
+        total_loss = beta * loss_vqvae + loss_Q_plus_V
 
         # Optimize the model
         self.ground_Q_optimizer.zero_grad(set_to_none=True)
@@ -1040,6 +1129,250 @@ class DuoLayerAgent:
         mean_vq_loss = ((vqloss + vqloss2) / 2).item()
 
         return mean_recon_loss, mean_vq_loss, loss_Q_plus_V.item()
+
+    def train2(self, tb_writer=None):
+        if hasattr(self, "lr_scheduler_ground_Q"):
+            update_learning_rate(
+                self.ground_Q_optimizer,
+                self.lr_scheduler_ground_Q(self._current_progress_remaining),
+            )
+        if hasattr(self, "lr_scheduler_abstract_V"):
+            update_learning_rate(
+                self.abstract_V_optimizer,
+                self.lr_scheduler_abstract_V(self._current_progress_remaining),
+            )
+
+        batch = self.memory.sample(batch_size=self.batch_size)
+        state_batch = torch.cat(batch.state).to(self.device)
+        action_batch = torch.cat(batch.action).to(self.device)
+        reward_batch = torch.cat(batch.reward).to(self.device).unsqueeze(1)
+        done_batch = torch.tensor(batch.done).to(self.device).unsqueeze(1)
+        next_state_batch = torch.cat(batch.next_state).to(self.device)
+
+        # vqvae inference
+        recon_batch, quantized, input, vqloss = self.vqvae_model(state_batch)
+        recon_batch2, next_quantized, input2, vqloss2 = self.vqvae_model(next_state_batch)
+        recon_loss = F.mse_loss(recon_batch, state_batch)
+        recon_loss2 = F.mse_loss(recon_batch2, next_state_batch)
+
+        # make sure loss of vqvae wont't update weights of the encoder
+        quantized = quantized.detach()
+        next_quantized = next_quantized.detach()
+
+        # Compute abstract TD error
+        abstract_current_V = self.abstract_V_net(quantized)
+        with torch.no_grad():
+            abstract_next_V = self.abstract_target_V_net(next_quantized)
+            abstract_target_V = (
+                reward_batch + (1 - done_batch.float()) * self.gamma * abstract_next_V
+            ).float()
+
+        criterion = nn.SmoothL1Loss()
+        abstract_td_error = criterion(abstract_current_V, abstract_target_V)
+
+        # Compute ground TD error
+        ground_current_Q = self.ground_Q_net(state_batch).gather(1, action_batch)
+
+        with torch.no_grad():
+            ground_next_max_Q = self.ground_target_Q_net(next_state_batch).max(1)[0].unsqueeze(1)
+
+            abstract_current_V = self.abstract_target_V_net(quantized)
+            abstract_next_V = self.abstract_target_V_net(next_quantized)
+            shaping = self.gamma * abstract_next_V - abstract_current_V
+            ground_target_Q = (
+                reward_batch
+                + self.omega * shaping
+                + (1 - done_batch.float()) * self.gamma * ground_next_max_Q
+            ).float()
+
+        criterion = nn.SmoothL1Loss()
+        ground_td_error = criterion(ground_current_Q, ground_target_Q)
+        # sum losses
+        loss_vqvae = (vqloss + vqloss2 + recon_loss + recon_loss2) / 2
+        total_loss = abstract_td_error + ground_td_error + loss_vqvae
+
+        # Optimize the model
+        self.ground_Q_optimizer.zero_grad(set_to_none=True)
+        self.abstract_V_optimizer.zero_grad(set_to_none=True)
+        self.vqvae_optimizer.zero_grad(set_to_none=True)
+        total_loss.backward()
+        # print("memory_allocated: {:.5f} MB".format(torch.cuda.memory_allocated() / (1024 * 1024)))
+        # print("run backward")
+
+        # 1 clamp gradients to avoid exploding gradient
+        # for param in self.policy_mlp_net.parameters():
+        #     param.grad.data.clamp_(-1, 1)
+
+        # for param in self.vqvae_model.parameters():
+        #     param.grad.data.clamp_(-1, 1)
+
+        # 2 Clip gradient norm
+        # max_grad_norm = 10
+        # torch.nn.utils.clip_grad_norm_(self.policy_mlp_net.parameters(), max_grad_norm)
+        # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
+        self.ground_Q_optimizer.step()
+        self.abstract_V_optimizer.step()
+        self.vqvae_optimizer.step()
+
+        self.n_call_train += 1
+
+        if tb_writer and self.n_call_train % 1000 == 0:
+            for name, param in self.abstract_V_net.named_parameters():
+                tb_writer.add_histogram(
+                    f"gradients/abstract_V_net/{name}", param.grad, self.n_call_train
+                )
+                tb_writer.add_histogram(
+                    f"weight_bias/abstract_V_net/{name}", param, self.n_call_train
+                )
+            for name, param in self.vqvae_model.encoder.named_parameters():
+                tb_writer.add_histogram(f"gradients/encoder/{name}", param.grad, self.n_call_train)
+                tb_writer.add_histogram(f"weight_bias/encoder/{name}", param, self.n_call_train)
+            for name, param in self.vqvae_model.decoder.named_parameters():
+                tb_writer.add_histogram(f"gradients/decoder/{name}", param.grad, self.n_call_train)
+                tb_writer.add_histogram(f"weight_bias/decoder/{name}", param, self.n_call_train)
+
+        mean_recon_loss = ((recon_loss + recon_loss2) / 2).item()
+        mean_vq_loss = ((vqloss + vqloss2) / 2).item()
+
+        return mean_recon_loss, mean_vq_loss, abstract_td_error.item(), ground_td_error.item()
+
+    # another way to train the model
+    def train3(self, tb_writer=None, train_abstract_V=True, train_ground_Q=True):
+        if hasattr(self, "lr_scheduler_ground_Q"):
+            update_learning_rate(
+                self.ground_Q_optimizer,
+                self.lr_scheduler_ground_Q(self._current_progress_remaining),
+            )
+        if hasattr(self, "lr_scheduler_abstract_V"):
+            update_learning_rate(
+                self.abstract_V_optimizer,
+                self.lr_scheduler_abstract_V(self._current_progress_remaining),
+            )
+        if train_abstract_V:
+            batch_a = self.memory.sample(batch_size=self.batch_size)
+            state_batch_a = torch.cat(batch_a.state).to(self.device)
+            action_batch_a = torch.cat(batch_a.action).to(self.device)
+            reward_batch_a = torch.cat(batch_a.reward).to(self.device).unsqueeze(1)
+            done_batch_a = torch.tensor(batch_a.done).to(self.device).unsqueeze(1)
+            next_state_batch_a = torch.cat(batch_a.next_state).to(self.device)
+        if train_ground_Q:
+            batch_g = self.memory.sample(batch_size=self.batch_size)
+            state_batch_g = torch.cat(batch_g.state).to(self.device)
+            action_batch_g = torch.cat(batch_g.action).to(self.device)
+            reward_batch_g = torch.cat(batch_g.reward).to(self.device).unsqueeze(1)
+            done_batch_g = torch.tensor(batch_g.done).to(self.device).unsqueeze(1)
+            next_state_batch_g = torch.cat(batch_g.next_state).to(self.device)
+        if train_abstract_V:
+            # vqvae inference
+            recon_batch_a, quantized_a, input_a, vqloss_a = self.vqvae_model(state_batch_a)
+            (
+                recon_batch_a_next,
+                next_quantized_a_next,
+                input_a_next,
+                vqloss_a_next,
+            ) = self.vqvae_model(next_state_batch_a)
+            recon_loss_a = F.mse_loss(recon_batch_a, state_batch_a)
+            recon_loss_a_next = F.mse_loss(recon_batch_a_next, next_state_batch_a)
+            loss_vqvae_a = (vqloss_a + vqloss_a_next + recon_loss_a + recon_loss_a_next) / 2
+
+            # make sure loss of vqvae wont't update weights of the encoder
+            quantized_a = quantized_a.detach()
+            next_quantized_a_next = next_quantized_a_next.detach()
+
+            # Compute abstract TD error
+            abstract_current_V = self.abstract_V_net(quantized_a)
+            with torch.no_grad():
+                abstract_next_V = self.abstract_target_V_net(next_quantized_a_next)
+                abstract_target_V = (
+                    reward_batch_a + (1 - done_batch_a.float()) * self.gamma * abstract_next_V
+                ).float()
+
+            criterion = nn.SmoothL1Loss()
+            abstract_td_error = criterion(abstract_current_V, abstract_target_V)
+        if train_ground_Q:
+            # Compute ground TD error
+            ground_current_Q = self.ground_Q_net(state_batch_g).gather(1, action_batch_g)
+
+            with torch.no_grad():
+                recon_batch_g, quantized_g, input_g, vqloss_g = self.vqvae_model(state_batch_g)
+                (
+                    recon_batch_g_next,
+                    next_quantized_g_next,
+                    input_g_next,
+                    vqloss_g_next,
+                ) = self.vqvae_model(next_state_batch_g)
+                recon_loss_g = F.mse_loss(recon_batch_g, state_batch_g)
+                recon_loss_g_next = F.mse_loss(recon_batch_g_next, next_state_batch_g)
+                loss_vqvae_g = (vqloss_g + vqloss_g_next + recon_loss_g + recon_loss_g_next) / 2
+
+                ground_next_max_Q = (
+                    self.ground_target_Q_net(next_state_batch_g).max(1)[0].unsqueeze(1)
+                )
+
+                abstract_current_V = self.abstract_target_V_net(quantized_g)
+                abstract_next_V = self.abstract_target_V_net(next_quantized_g_next)
+                shaping = self.gamma * abstract_next_V - abstract_current_V
+                ground_target_Q = (
+                    reward_batch_g
+                    + self.omega * shaping
+                    + (1 - done_batch_g.float()) * self.gamma * ground_next_max_Q
+                ).float()
+
+            criterion = nn.SmoothL1Loss()
+            ground_td_error = criterion(ground_current_Q, ground_target_Q)
+        # sum losses
+        if train_abstract_V and train_ground_Q:
+            total_loss = abstract_td_error + ground_td_error + loss_vqvae_a
+        elif train_abstract_V:
+            ground_td_error = torch.tensor(0.0)
+            total_loss = abstract_td_error + loss_vqvae_a
+        elif train_ground_Q:
+            total_loss = ground_td_error
+
+        # Optimize the model
+        self.ground_Q_optimizer.zero_grad(set_to_none=True)
+        self.abstract_V_optimizer.zero_grad(set_to_none=True)
+        self.vqvae_optimizer.zero_grad(set_to_none=True)
+        total_loss.backward()
+        # print("memory_allocated: {:.5f} MB".format(torch.cuda.memory_allocated() / (1024 * 1024)))
+        # print("run backward")
+
+        # 1 clamp gradients to avoid exploding gradient
+        # for param in self.policy_mlp_net.parameters():
+        #     param.grad.data.clamp_(-1, 1)
+
+        # for param in self.vqvae_model.parameters():
+        #     param.grad.data.clamp_(-1, 1)
+
+        # 2 Clip gradient norm
+        # max_grad_norm = 10
+        # torch.nn.utils.clip_grad_norm_(self.policy_mlp_net.parameters(), max_grad_norm)
+        # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
+        self.ground_Q_optimizer.step()
+        self.abstract_V_optimizer.step()
+        self.vqvae_optimizer.step()
+
+        self.n_call_train += 1
+
+        if tb_writer and self.n_call_train % 1000 == 0:
+            for name, param in self.abstract_V_net.named_parameters():
+                tb_writer.add_histogram(
+                    f"gradients/abstract_V_net/{name}", param.grad, self.n_call_train
+                )
+                tb_writer.add_histogram(
+                    f"weight_bias/abstract_V_net/{name}", param, self.n_call_train
+                )
+            for name, param in self.vqvae_model.encoder.named_parameters():
+                tb_writer.add_histogram(f"gradients/encoder/{name}", param.grad, self.n_call_train)
+                tb_writer.add_histogram(f"weight_bias/encoder/{name}", param, self.n_call_train)
+            for name, param in self.vqvae_model.decoder.named_parameters():
+                tb_writer.add_histogram(f"gradients/decoder/{name}", param.grad, self.n_call_train)
+                tb_writer.add_histogram(f"weight_bias/decoder/{name}", param, self.n_call_train)
+
+        mean_recon_loss = ((recon_loss_a + recon_loss_a_next) / 2).item()
+        mean_vq_loss = ((vqloss_a + vqloss_a_next) / 2).item()
+
+        return mean_recon_loss, mean_vq_loss, abstract_td_error.item(), ground_td_error.item()
 
     def learn_deprecated(self, tb_writer):
         if self.total_steps_done % self.sync_every == 0:

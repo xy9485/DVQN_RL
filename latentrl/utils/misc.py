@@ -1,8 +1,10 @@
 """ Various auxiliary utilities """
+from itertools import zip_longest
 import json
 import math
 import os
-from typing import Any, Callable, Dict, Optional, Type, Union
+from typing import Any, Callable, Dict, Optional, Type, Union, Tuple, Iterable
+
 
 import gym
 import torch
@@ -257,3 +259,34 @@ def wandb_log_image(tensor, **kwargs) -> None:
     ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
     im = Image.fromarray(ndarr)
     wandb.log({"reconstructions": wandb.Image(im)})
+
+
+def polyak_sync(
+    params: Iterable[torch.nn.Parameter],
+    target_params: Iterable[torch.nn.Parameter],
+    tau: float,
+) -> None:
+    with torch.no_grad():
+        # zip does not raise an exception if length of parameters does not match.
+        for param, target_param in zip(params, target_params):
+            target_param.data.mul_(tau)
+            target_param.data.add_((1 - tau) * param.data)
+            # torch.add(target_param.data, param.data, alpha=(1 - tau), out=target_param.data)
+
+
+def zip_strict(*iterables: Iterable) -> Iterable:
+    r"""
+    ``zip()`` function but enforces that iterables are of equal length.
+    Raises ``ValueError`` if iterables not of equal length.
+    Code inspired by Stackoverflow answer for question #32954486.
+
+    :param \*iterables: iterables to ``zip()``
+    """
+    # As in Stackoverflow #32954486, use
+    # new object for "empty" in case we have
+    # Nones in iterable.
+    sentinel = object()
+    for combo in zip_longest(*iterables, fillvalue=sentinel):
+        if sentinel in combo:
+            raise ValueError("Iterables have different lengths")
+        yield combo
