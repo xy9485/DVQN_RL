@@ -109,7 +109,7 @@ def make_env(
     ]
     wrapper_kwargs_list = [
         {"action_repetition": config.action_repetition},
-        {"max_neg_rewards": 100, "punishment": 0.0},
+        {"max_neg_rewards": 100, "punishment": -20.0},
         # {'filename': monitor_dir},
         # {"filename": os.path.join(monitor_dir, "train")},  # just single env in this case
         # {
@@ -121,7 +121,7 @@ def make_env(
         {
             "vertical_cut_d": 84,
             "shape": 84,
-            "num_output_channels": 3,
+            "num_output_channels": 1,
         },
         # {
         #     "n_stack": n_stack,
@@ -142,7 +142,7 @@ def make_env(
 
 
 def train_single_layer():
-    env_id = "Boxing-v0"  # CarRacing-v0, ALE/Skiing-v5, Boxing-v0
+    env_id = "CarRacing-v0"  # CarRacing-v0, ALE/Skiing-v5, Boxing-v0
     for _ in range(3):
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
         current_time = current_time.strftime("%b%d_%H-%M-%S")
@@ -158,11 +158,11 @@ def train_single_layer():
             config={
                 "env_id": "Boxing-v0",
                 "total_timesteps": 1000_000,
-                "init_steps": 1000,
-                "action_repetition": 2,
-                "n_frame_stack": 1,
+                "init_steps": 10000,
+                "action_repetition": 3,
+                "n_frame_stack": 4,
                 # "dropout": random.uniform(0.01, 0.80),
-                "vqvae_inchannel": int(3 * 1),
+                # "vqvae_inchannel": int(3 * 1),
                 "vqvae_latent_channel": 16,
                 "vqvae_num_embeddings": 64,
                 "reconstruction_path": os.path.join(
@@ -170,12 +170,12 @@ def train_single_layer():
                 ),
                 # "reconstruction_path": None,
                 # "total_episodes": 1000,
-                "lr_vqvae": 3e-4,
-                "lr_dqn": "lin_5.3e-4",
+                "lr_vqvae": 5e-4,
+                "lr_dqn": "lin_2.5e-4",
                 "batch_size": 256,
                 "validation_size": 128,
                 "validate_every": 10,
-                "size_replay_memory": int(1e5),
+                "size_replay_memory": int(5e5),
                 "gamma": 0.97,
                 "exploration_fraction": 0.9,
                 "exploration_initial_eps": 0.1,
@@ -187,9 +187,9 @@ def train_single_layer():
                 # "exploration_rate_decay": 0.99999975,
                 # "exploration_rate_min": 0.1,
                 "save_model_every": 5e5,
-                "learn_every": 8,
-                "sync_every": 32,
-                "gradient_steps": 2,
+                "learn_every": 4,
+                "sync_every": 8,
+                "gradient_steps": 1,
                 "seed": int(time.time()),
                 "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
             },
@@ -454,13 +454,13 @@ def train_duolayer():
                 # "as_vanilla_dqn",
                 "vqvae2(32-64-64)",
                 "encoder_detach",
-                # "polyak",
-                "learn3",
+                # "polyak_abstract",
+                "learn2",
             ],  # vqvae2(32-64-128), vqvae(128-256)
             config={
                 "env_id": "Boxing-v0",
-                "total_timesteps": 1000_000,
-                "init_steps": 10000,
+                "total_timesteps": 200_000,
+                "init_steps": 1000,
                 "action_repetition": 3,  # 3 for carracing, 2 for boxing
                 "n_frame_stack": 4,
                 # "dropout": random.uniform(0.01, 0.80),
@@ -473,9 +473,9 @@ def train_duolayer():
                 # "reconstruction_path": None,
                 # "total_episodes": 1000,
                 "lr_vqvae": 5e-4,
-                "lr_ground_Q": "lin_5.3e-4",  # "lin_5.3e-4", 5e-4
-                "lr_abstract_V": "lin_5.3e-4",  # "lin_5.3e-4", 5e-4
-                "batch_size": 256,
+                "lr_ground_Q": "lin_2.5e-4",  # "lin_5.3e-4", 5e-4
+                "lr_abstract_V": "lin_2.5e-4",  # "lin_5.3e-4", 5e-4
+                "batch_size": 512,
                 "validation_size": 128,
                 "validate_every": 10,
                 "size_replay_memory": int(1e5),
@@ -610,7 +610,7 @@ def train_duolayer():
 
                 # Perform one step of the optimization (on the policy network)
                 # optimize_model()
-                loss_list.append(agent.learn3(tb_writer))
+                loss_list.append(agent.learn2(tb_writer))
                 # print(
                 #     "memory_allocated: {:.5f} MB".format(
                 #         torch.cuda.memory_allocated() / (1024 * 1024)
@@ -955,7 +955,7 @@ def find_gpu():
 if __name__ == "__main__":
 
     # from utils.gpu_profile import gpu_profile
-
+    find_gpu()
     # sys.settrace(gpu_profile)
     torch.set_num_threads(1)
     # tracemalloc.start()

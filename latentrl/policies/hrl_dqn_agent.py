@@ -1149,6 +1149,13 @@ class DuoLayerAgent:
         done_batch = torch.tensor(batch.done).to(self.device).unsqueeze(1)
         next_state_batch = torch.cat(batch.next_state).to(self.device)
 
+        # mask = torch.eq(state_batch, next_state_batch)
+        # num_same_aggregation = 0
+        # for sample_mask in mask:
+        #     if torch.all(sample_mask):
+        #         num_same_aggregation += 1
+        # print("num_same_aggregation:", num_same_aggregation)
+
         # vqvae inference
         recon_batch, quantized, input, vqloss = self.vqvae_model(state_batch)
         recon_batch2, next_quantized, input2, vqloss2 = self.vqvae_model(next_state_batch)
@@ -1166,6 +1173,15 @@ class DuoLayerAgent:
             abstract_target_V = (
                 reward_batch + (1 - done_batch.float()) * self.gamma * abstract_next_V
             ).float()
+
+        mask_ = ~torch.tensor(
+            [
+                [torch.equal(a_state, next_a_state)]
+                for a_state, next_a_state in zip(quantized, next_quantized)
+            ]
+        ).to(self.device)
+        abstract_current_V *= mask_
+        abstract_target_V *= mask_
 
         criterion = nn.SmoothL1Loss()
         abstract_td_error = criterion(abstract_current_V, abstract_target_V)
@@ -1236,7 +1252,7 @@ class DuoLayerAgent:
 
         return mean_recon_loss, mean_vq_loss, abstract_td_error.item(), ground_td_error.item()
 
-    # another way to train the model
+    # Whether to train abstract_V and train_ground_Q can be seperatly controled
     def train3(self, tb_writer=None, train_abstract_V=True, train_ground_Q=True):
         if hasattr(self, "lr_scheduler_ground_Q"):
             update_learning_rate(
