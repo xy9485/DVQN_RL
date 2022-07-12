@@ -12,6 +12,8 @@ from torchvision.utils import save_image
 # from .types_ import *
 from typing import Any, Dict, List, Optional, Tuple, Type, Union, TypeVar
 
+from latentrl.utils.misc import wandb_log_image
+
 Tensor = TypeVar("torch.tensor")
 
 
@@ -111,7 +113,7 @@ class VQVAE(nn.Module):
 
         modules = []
         if hidden_dims is None:
-            hidden_dims = [64, 128]
+            hidden_dims = [128, 256]
 
         # Build Encoder
         for h_dim in hidden_dims:
@@ -136,7 +138,7 @@ class VQVAE(nn.Module):
             )
         )
 
-        for _ in range(2):
+        for _ in range(3):
             modules.append(ResidualLayer(in_channels, in_channels))
         modules.append(nn.LeakyReLU())
 
@@ -160,7 +162,7 @@ class VQVAE(nn.Module):
             )
         )
 
-        for _ in range(2):
+        for _ in range(3):
             modules.append(ResidualLayer(hidden_dims[-1], hidden_dims[-1]))
 
         modules.append(nn.LeakyReLU())
@@ -224,15 +226,18 @@ class VQVAE(nn.Module):
         recon = self.decode(quantized_inputs)
         # print(type(recon), recon.size())
         if (
-            self.forward_call % 500 == 0
+            self.forward_call % 10000 == 0
             and self.reconstruction_path
-            and self.initial_in_channels == 3
+            # and self.initial_in_channels == 3
         ):
-            current_time = datetime.datetime.now().strftime("%b%d_%H-%M-%S")
-            save_to = os.path.join(self.reconstruction_path, f"recon_{current_time}.png")
-            # save_image(input[:8],save_to)
-            save_image(recon[:8], save_to)
-            print("save input and recon to path: ", save_to)
+            # current_time = datetime.datetime.now().strftime("%b%d_%H-%M-%S")
+            # save_to = os.path.join(self.reconstruction_path, f"recon_{current_time}.png")
+            # # save_image(input[:8],save_to)
+            # save_image(recon[:8], save_to)
+            # print("save input and recon to path: ", save_to)
+
+            wandb_log_image(recon[:8, :1])
+            print("log recons as image to wandb")
 
         self.forward_call += 1
         return [recon, quantized_inputs, input, vq_loss]

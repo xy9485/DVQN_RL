@@ -727,7 +727,7 @@ class DuoLayerAgent:
                 config.reconstruction_path,
                 exist_ok=True,
             )
-        self.vqvae_model = VQVAE2(
+        self.vqvae_model = VQVAE(
             in_channels=env.observation_space.shape[-1],
             embedding_dim=config.vqvae_latent_channel,
             num_embeddings=config.vqvae_num_embeddings,
