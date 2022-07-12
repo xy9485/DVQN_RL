@@ -1190,8 +1190,15 @@ class DuoLayerAgent:
         ground_current_Q = self.ground_Q_net(state_batch).gather(1, action_batch)
 
         with torch.no_grad():
+            # Vanilla DQN
             ground_next_max_Q = self.ground_target_Q_net(next_state_batch).max(1)[0].unsqueeze(1)
+            # Double DQN
+            # action_argmax_target = self.ground_target_Q_net(next_state_batch).argmax(
+            #     dim=1, keepdim=True
+            # )
+            # ground_next_max_Q = self.ground_Q_net(next_state_batch).gather(1, action_argmax_target)
 
+            # Compute ground target Q value
             abstract_current_V = self.abstract_target_V_net(quantized)
             abstract_next_V = self.abstract_target_V_net(next_quantized)
             shaping = self.gamma * abstract_next_V - abstract_current_V

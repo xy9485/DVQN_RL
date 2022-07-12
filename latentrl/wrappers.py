@@ -265,6 +265,9 @@ class PreprocessObservationWrapper(
             obs = T.ToPILImage()(obs)
             # interpolation=InterpolationMode.BILINEAR
             obs = T.Resize(self.shape)(obs)
+            if self.num_output_channels == 1:
+                obs = T.Grayscale(num_output_channels=self.num_output_channels)(obs)
+                return np.array(obs)[..., np.newaxis]
             # obs = T.Grayscale(num_output_channels=self.num_output_channels)(obs)
             # obs = obs.float()
             return np.array(obs)
@@ -1065,6 +1068,8 @@ class ActionRepetitionWrapper(gym.Wrapper):
         accumulated_reward = 0
         positive_accumulated_reward = 0
         for _ in range(self.action_repetition):
+            # self.env.render(mode="human")
+            # time.sleep(0.1)
             obs, reward, done, info = self.env.step(action)
             accumulated_reward += reward
             if reward >= 0:

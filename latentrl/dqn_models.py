@@ -68,7 +68,7 @@ class DVN_paper(nn.Module):
                 T.ToTensor()(observation_space.sample()).unsqueeze(0).float()
             ).shape[1]
 
-        self.linear = nn.Sequential(nn.Linear(n_flatten, 1), nn.ReLU())
+        self.linear = nn.Linear(n_flatten, 1)
 
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         return self.linear(self.cnn(observations))

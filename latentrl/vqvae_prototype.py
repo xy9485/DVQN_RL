@@ -259,7 +259,7 @@ class VQVAE2(nn.Module):
         if (
             self.forward_call % 10000 == 0
             and self.reconstruction_path
-            and self.n_input_channels == 3
+            # and self.n_input_channels == 3
         ):
             current_time = datetime.datetime.now().strftime("%b%d_%H-%M-%S")
             save_to = os.path.join(self.reconstruction_path, f"recon_{current_time}.png")
@@ -267,7 +267,7 @@ class VQVAE2(nn.Module):
             # save_image(recon[:8], save_to)
             # print("save input and recon to path: ", save_to)
             # log recon as image to wandb
-            wandb_log_image(recon[:8])
+            wandb_log_image(recon[:8, :1])
             print("log recons as image to wandb")
 
         self.forward_call += 1
