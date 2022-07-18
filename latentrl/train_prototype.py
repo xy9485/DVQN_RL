@@ -55,8 +55,8 @@ def make_env(
     env_id,
     config,
 ):
-    env = gym.make(env_id).unwrapped
-    # env = gym.make(env_id)
+    # env = gym.make(env_id).unwrapped
+    env = gym.make(env_id)
 
     # wrapper_class_list = [
     #     # ActionDiscreteWrapper,
@@ -156,7 +156,7 @@ def train_single_layer():
                 "encoder&vq_attach",
             ],  # vqvae2(32-64-128), vqvae(128-256)
             config={
-                "env_id": "Boxing-v0",
+                "env_id": env_id,
                 "total_timesteps": 1000_000,
                 "init_steps": 10000,
                 "action_repetition": 3,
@@ -441,7 +441,7 @@ def train_single_layer():
 def train_duolayer():
     env_id = "CarRacing-v0"
     # CarRacing-v0, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5
-    vae_version = "vqvae_c3_embedding16x64_3_duolayer"
+    # vae_version = "vqvae_c3_embedding16x64_3_duolayer"
 
     for _ in range(1):
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
@@ -454,12 +454,13 @@ def train_duolayer():
                 # "as_vanilla_dqn",
                 "vqvae2(32-64-64)",
                 "encoder_detach",
+                # "DDQN"
                 # "polyak_abstract",
                 "learn2",
             ],  # vqvae2(32-64-128), vqvae(128-256)
             config={
-                "env_id": "Boxing-v0",
-                "total_timesteps": 200_000,
+                "env_id": env_id,
+                "total_timesteps": 300_000,
                 "init_steps": 1000,
                 "action_repetition": 3,  # 3 for carracing, 2 for boxing
                 "n_frame_stack": 4,
@@ -578,6 +579,7 @@ def train_duolayer():
                 # print("agent.act")
 
                 next_state, reward, done, _ = env.step(action.item())
+                # env.render()
                 episodic_reward += reward
                 if reward < 0:
                     episodic_negative_reward += reward
@@ -938,7 +940,7 @@ def find_gpu():
     DEVICE_ID_LIST = GPUtil.getAvailable(
         order="random",
         limit=4,
-        maxLoad=0.75,
+        maxLoad=0.95,
         maxMemory=0.75,
         includeNan=False,
         excludeID=[],

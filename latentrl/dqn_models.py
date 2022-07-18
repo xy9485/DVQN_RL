@@ -37,9 +37,9 @@ class DQN_paper(nn.Module):
             nn.ReLU(),
             nn.Linear(256, 256),
             nn.ReLU(),
-            nn.Linear(256, n_flatten),
-            nn.ReLU(),
-            nn.Linear(n_flatten, action_space.n),
+            # nn.Linear(256, 256),
+            # nn.ReLU(),
+            nn.Linear(256, action_space.n),
             # nn.ReLU(),
         )
 
@@ -150,3 +150,23 @@ class DVN(nn.Module):
         x = F.relu(self.fc3(x))
         # x = F.relu(self.fc4(x))
         return self.head(x)
+
+
+class DQN_MLP(nn.Module):
+    def __init__(self, input_dim, action_space):
+        super().__init__()
+        self.flatten_layer = nn.Flatten()
+        self.linears = nn.Sequential(
+            nn.Linear(np.prod(input_dim), 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, action_space.n),
+            # nn.ReLU(),
+        )
+
+    def forward(self, x) -> torch.Tensor:
+        x = self.flatten_layer(x)
+        return self.linears(x)

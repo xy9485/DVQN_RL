@@ -237,7 +237,7 @@ class VQVAE2(nn.Module):
         :return: (Tensor) List of latent codes
         """
         result = self.encoder(input)
-        return [result]
+        return result
 
     def decode(self, z: Tensor) -> Tensor:
         """
@@ -252,8 +252,8 @@ class VQVAE2(nn.Module):
 
     def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
         # input = input.to(self.device)
-        encoding = self.encode(input)[0]
-        quantized_inputs, vq_loss = self.vq_layer(encoding)
+        encoded = self.encode(input)
+        quantized_inputs, vq_loss = self.vq_layer(encoded)
         recon = self.decode(quantized_inputs)
         # print(type(recon), recon.size())
         if (
@@ -271,7 +271,7 @@ class VQVAE2(nn.Module):
             print("log recons as image to wandb")
 
         self.forward_call += 1
-        return [recon, quantized_inputs, input, vq_loss]
+        return [recon, quantized_inputs, encoded, vq_loss]
 
     def loss_function(self, *args, **kwargs) -> dict:
         """

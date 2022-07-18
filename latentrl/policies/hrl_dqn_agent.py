@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torchvision.transforms as T
-from latentrl.dqn_models import DQN, DQN_MLP, DVN, DQN_paper
+from latentrl.dqn_models import DQN, DQN_MLP, DVN, DQN_MLP_SingleOutput, DQN_paper
 from latentrl.policies.utils import ReplayMemory
 from latentrl.utils.learning import EarlyStopping, ReduceLROnPlateau
 from latentrl.utils.misc import get_linear_fn, linear_schedule, polyak_sync, update_learning_rate
@@ -746,12 +746,12 @@ class DuoLayerAgent:
         # define ground leve policy
         # self.ground_Q_net = DQN(84, 84, self.n_actions).to(self.device)
         # self.ground_target_Q_net = DQN(84, 84, self.n_actions).to(self.device)
-        self.ground_Q_net = DQN_paper(env.observation_space, env.action_space).to(self.device)
-        self.ground_target_Q_net = DQN_paper(env.observation_space, env.action_space).to(
-            self.device
-        )
-        self.ground_target_Q_net.load_state_dict(self.ground_Q_net.state_dict())
-        self.ground_target_Q_net.eval()
+        # self.ground_Q_net = DQN_paper(env.observation_space, env.action_space).to(self.device)
+        # self.ground_target_Q_net = DQN_paper(env.observation_space, env.action_space).to(
+        #     self.device
+        # )
+        # self.ground_target_Q_net.load_state_dict(self.ground_Q_net.state_dict())
+        # self.ground_target_Q_net.eval()
 
         # self.ground_Q_optimizer = optim.Adam(self.ground_Q_net.parameters(), lr=5e-4)
 
@@ -759,13 +759,16 @@ class DuoLayerAgent:
         with torch.no_grad():
             sample = T.ToTensor()(env.observation_space.sample()).unsqueeze(0).to(self.device)
             encoder_output_size = self.vqvae_model.encoder(sample).shape
-            input_dim_abstract = (
-                encoder_output_size[1],
-                encoder_output_size[2],
-                encoder_output_size[3],
-            )
-        self.abstract_V_net = DVN(input_dim_abstract).to(self.device)
-        self.abstract_target_V_net = DVN(input_dim_abstract).to(self.device)
+
+        self.ground_Q_net = DQN_MLP(encoder_output_size[1:], env.action_space).to(self.device)
+        self.ground_target_Q_net = DQN_MLP(encoder_output_size[1:], env.action_space).to(
+            self.device
+        )
+        self.ground_target_Q_net.load_state_dict(self.ground_Q_net.state_dict())
+        self.ground_target_Q_net.eval()
+
+        self.abstract_V_net = DVN(encoder_output_size[1:]).to(self.device)
+        self.abstract_target_V_net = DVN(encoder_output_size[1:]).to(self.device)
         self.abstract_target_V_net.load_state_dict(self.abstract_V_net.state_dict())
         self.abstract_target_V_net.eval()
 
@@ -868,7 +871,11 @@ class DuoLayerAgent:
 
         sample = random.random()
         if sample > self.exploration_rate:
-            action = self.ground_Q_net(state).max(1)[1].view(1, 1)
+            # VQVAE and ground_Q_net sharing the same encoder
+            encoded = self.vqvae_model.encoder(state)
+            action = self.ground_Q_net(encoded).max(1)[1].view(1, 1)
+            # VQVAE and ground_Q_net not sharing the same encoder
+            # action = self.ground_Q_net(state).max(1)[1].view(1, 1)
         else:
             action = torch.tensor(
                 [[random.randrange(self.n_actions)]],
@@ -1157,8 +1164,8 @@ class DuoLayerAgent:
         # print("num_same_aggregation:", num_same_aggregation)
 
         # vqvae inference
-        recon_batch, quantized, input, vqloss = self.vqvae_model(state_batch)
-        recon_batch2, next_quantized, input2, vqloss2 = self.vqvae_model(next_state_batch)
+        recon_batch, quantized, encoded, vqloss = self.vqvae_model(state_batch)
+        recon_batch2, next_quantized, encoded2, vqloss2 = self.vqvae_model(next_state_batch)
         recon_loss = F.mse_loss(recon_batch, state_batch)
         recon_loss2 = F.mse_loss(recon_batch2, next_state_batch)
 
@@ -1187,16 +1194,30 @@ class DuoLayerAgent:
         abstract_td_error = criterion(abstract_current_V, abstract_target_V)
 
         # Compute ground TD error
-        ground_current_Q = self.ground_Q_net(state_batch).gather(1, action_batch)
+
+        # VQVAE and ground_Q_net not sharing the same encoder
+        # ground_current_Q = self.ground_Q_net(state_batch).gather(1, action_batch)
+
+        # VQVAE and ground_Q_net sharing the same encoder
+        ground_current_Q = self.ground_Q_net(encoded).gather(1, action_batch)
 
         with torch.no_grad():
             # Vanilla DQN
-            ground_next_max_Q = self.ground_target_Q_net(next_state_batch).max(1)[0].unsqueeze(1)
+
+            # VQVAE and ground_Q_net not sharing the same encoder
+            # ground_next_max_Q = self.ground_target_Q_net(next_state_batch).max(1)[0].unsqueeze(1)
+
+            # VQVAE and ground_Q_net sharing the same encoder
+            ground_next_max_Q = self.ground_target_Q_net(encoded2).max(1)[0].unsqueeze(1)
+
             # Double DQN
             # action_argmax_target = self.ground_target_Q_net(next_state_batch).argmax(
             #     dim=1, keepdim=True
             # )
             # ground_next_max_Q = self.ground_Q_net(next_state_batch).gather(1, action_argmax_target)
+
+            # action_argmax_target = self.ground_target_Q_net(encoded2).argmax(dim=1, keepdim=True)
+            # ground_next_max_Q = self.ground_Q_net(encoded2).gather(1, action_argmax_target)
 
             # Compute ground target Q value
             abstract_current_V = self.abstract_target_V_net(quantized)
