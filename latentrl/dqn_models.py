@@ -170,3 +170,25 @@ class DQN_MLP(nn.Module):
     def forward(self, x) -> torch.Tensor:
         x = self.flatten_layer(x)
         return self.linears(x)
+
+
+class DQN_MLP_SingleOutput(nn.Module):
+    def __init__(self, input_dim, action_dim):
+        super().__init__()
+        self.flatten_layer = nn.Flatten()
+        self.linears = nn.Sequential(
+            nn.Linear(np.prod(input_dim) + action_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 1),
+            # nn.ReLU(),
+        )
+
+    def forward(self, obs, action) -> torch.Tensor:
+        assert obs.size(0) == action.size(0)
+        obs = self.flatten_layer(obs)
+        obs_action = torch.cat([obs, action], dim=1)
+        return self.linears(obs_action)

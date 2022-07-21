@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torchvision.transforms as T
-from latentrl.dqn_models import DQN, DQN_MLP, DVN, DQN_MLP_SingleOutput, DQN_paper
+from latentrl.dqn_models import DQN, DQN_MLP, DVN, DQN_paper
 from latentrl.policies.utils import ReplayMemory
 from latentrl.utils.learning import EarlyStopping, ReduceLROnPlateau
 from latentrl.utils.misc import get_linear_fn, linear_schedule, polyak_sync, update_learning_rate
