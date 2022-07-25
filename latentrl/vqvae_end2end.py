@@ -12,6 +12,8 @@ from torchvision.utils import save_image
 # from .types_ import *
 from typing import Any, Dict, List, Optional, Tuple, Type, Union, TypeVar
 
+from latentrl.utils.misc import wandb_log_image
+
 Tensor = TypeVar("torch.tensor")
 
 
@@ -219,23 +221,26 @@ class VQVAE(nn.Module):
 
     def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
         # input = input.to(self.device)
-        encoding = self.encode(input)[0]
-        quantized_inputs, vq_loss = self.vq_layer(encoding)
+        encoded = self.encode(input)[0]
+        quantized_inputs, vq_loss = self.vq_layer(encoded)
         recon = self.decode(quantized_inputs)
         # print(type(recon), recon.size())
         if (
-            self.forward_call % 500 == 0
+            self.forward_call % 10000 == 0
             and self.reconstruction_path
-            and self.initial_in_channels == 3
+            # and self.initial_in_channels == 3
         ):
-            current_time = datetime.datetime.now().strftime("%b%d_%H-%M-%S")
-            save_to = os.path.join(self.reconstruction_path, f"recon_{current_time}.png")
+            # current_time = datetime.datetime.now().strftime("%b%d_%H-%M-%S")
+            # save_to = os.path.join(self.reconstruction_path, f"recon_{current_time}.png")
             # save_image(input[:8],save_to)
-            save_image(recon[:8], save_to)
-            print("save input and recon to path: ", save_to)
+            # save_image(recon[:8], save_to)
+            # print("save input and recon to path: ", save_to)
+            stacked = torch.cat((recon[:7, :1], input[:1, :1]), dim=0)
+            wandb_log_image(stacked)
+            print("log recons as image to wandb")
 
         self.forward_call += 1
-        return [recon, quantized_inputs, input, vq_loss]
+        return [recon, quantized_inputs, encoded, vq_loss]
 
     def loss_function(self, *args, **kwargs) -> dict:
         """

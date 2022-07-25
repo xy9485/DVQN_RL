@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import colored_traceback.auto
 import GPUtil
 import gym
+from gym.wrappers import *
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -43,12 +44,17 @@ from wrappers import (
     ActionDiscreteWrapper,
     ActionRepetitionWrapper,
     CarRandomStartWrapper,
+    ClipRewardEnvCustom,
     EncodeStackWrapper,
     EpisodeEarlyStopWrapper,
+    EpisodicLifeEnvCustom,
+    FrameStackCustom,
     FrameStackWrapper,
     PreprocessObservationWrapper,
     pack_env_wrappers,
 )
+
+from atari_wrapper import *
 
 
 def make_env(
@@ -57,50 +63,36 @@ def make_env(
 ):
     # env = gym.make(env_id).unwrapped
     env = gym.make(env_id)
+    # env = gym.make(
+    #     env_id,
+    #     # frameskip=(3, 7),
+    #     # repeat_action_probability=0.25,
+    #     full_action_space=False,
+    #     # render_mode="human",
+    # )
 
-    wrapper_class_list = [
-        # ActionDiscreteWrapper,
-        # ActionRepetitionWrapper,
-        # EpisodeEarlyStopWrapper,
-        # Monitor,
-        # CarRandomStartWrapper,
-        PreprocessObservationWrapper,
-        # EncodeStackWrapper,
-        # PunishRewardWrapper,
-        FrameStackWrapper,
-    ]
-    wrapper_kwargs_list = [
-        # {"action_repetition": config.action_repetition},
-        # {"max_neg_rewards": max_neg_rewards, "punishment": punishment},
-        # {'filename': monitor_dir},
-        # {"filename": os.path.join(monitor_dir, "train")},  # just single env in this case
-        # {
-        #     "warm_up_steps": hparams["learning_starts"],
-        #     "n_envs": n_envs,
-        #     "always_random_start": always_random_start,
-        #     "no_random_start": no_random_start,
-        # },
-        {
-            "vertical_cut_d": 84,
-            "shape": 84,
-            "num_output_channels": 1,
-        },
-        # {
-        #     "n_stack": n_stack,
-        #     "vae_f": vae_path,
-        #     "vae_sample": vae_sample,
-        #     "vae_inchannel": vae_inchannel,
-        #     "latent_dim": vae_latent_dim,
-        # },
-        # {'max_neg_rewards': max_neg_rewards, "punishment": punishment}
-        {"n_frame_stack": config.n_frame_stack},
-    ]
-
-    # For carracing-v0
+    # For atari, using gym wappers or third-party wappers
     # wrapper_class_list = [
-    #     ActionDiscreteWrapper,
+    #     ClipRewardEnvCustom,
+    #     EpisodicLifeEnvCustom,
+    #     GrayScaleObservation,
+    #     ResizeObservation,
+    #     FrameStackCustom,
+    # ]
+    # wrapper_kwargs_list = [
+    #     None,
+    #     None,
+    #     {"keep_dim": True},  # gym default wrapper
+    #     {"shape": 84},  # gym default wrapper
+    #     # {"num_stack": config.n_frame_stack},  # gym default wrapper
+    #     {"k": config.n_frame_stack},  # custom wrapper
+    # ]
+
+    # For atari, but using custom wrapper
+    # wrapper_class_list = [
+    #     # ActionDiscreteWrapper,
     #     # ActionRepetitionWrapper,
-    #     EpisodeEarlyStopWrapper,
+    #     # EpisodeEarlyStopWrapper,
     #     # Monitor,
     #     # CarRandomStartWrapper,
     #     PreprocessObservationWrapper,
@@ -109,8 +101,8 @@ def make_env(
     #     FrameStackWrapper,
     # ]
     # wrapper_kwargs_list = [
-    #     {"action_repetition": config.action_repetition},
-    #     {"max_neg_rewards": 100, "punishment": -20.0},
+    #     # {"action_repetition": config.action_repetition},
+    #     # {"max_neg_rewards": max_neg_rewards, "punishment": punishment},
     #     # {'filename': monitor_dir},
     #     # {"filename": os.path.join(monitor_dir, "train")},  # just single env in this case
     #     # {
@@ -134,6 +126,45 @@ def make_env(
     #     # {'max_neg_rewards': max_neg_rewards, "punishment": punishment}
     #     {"n_frame_stack": config.n_frame_stack},
     # ]
+
+    # For carracing-v0
+    wrapper_class_list = [
+        ActionDiscreteWrapper,
+        # ActionRepetitionWrapper,
+        EpisodeEarlyStopWrapper,
+        # Monitor,
+        # CarRandomStartWrapper,
+        PreprocessObservationWrapper,
+        # EncodeStackWrapper,
+        # PunishRewardWrapper,
+        FrameStackWrapper,
+    ]
+    wrapper_kwargs_list = [
+        {"action_repetition": config.action_repetition},
+        {"max_neg_rewards": 100, "punishment": -20.0},
+        # {'filename': monitor_dir},
+        # {"filename": os.path.join(monitor_dir, "train")},  # just single env in this case
+        # {
+        #     "warm_up_steps": hparams["learning_starts"],
+        #     "n_envs": n_envs,
+        #     "always_random_start": always_random_start,
+        #     "no_random_start": no_random_start,
+        # },
+        {
+            "vertical_cut_d": 84,
+            "shape": 84,
+            "num_output_channels": 1,
+        },
+        # {
+        #     "n_stack": n_stack,
+        #     "vae_f": vae_path,
+        #     "vae_sample": vae_sample,
+        #     "vae_inchannel": vae_inchannel,
+        #     "latent_dim": vae_latent_dim,
+        # },
+        # {'max_neg_rewards': max_neg_rewards, "punishment": punishment}
+        {"n_frame_stack": config.n_frame_stack},
+    ]
 
     wrapper = pack_env_wrappers(wrapper_class_list, wrapper_kwargs_list)
     env = wrapper(env)
@@ -440,8 +471,8 @@ def train_single_layer():
 
 
 def train_duolayer():
-    env_id = "ALE/Riverraid-v5"
-    # CarRacing-v0, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5
+    env_id = "CarRacing-v0"
+    # CarRacing-v0, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5, BreakoutNoFrameskip-v4, RiverraidNoFrameskip-v4
     # vae_version = "vqvae_c3_embedding16x64_3_duolayer"
 
     for _ in range(1):
@@ -450,6 +481,7 @@ def train_duolayer():
         # 🐝 initialise a wandb run
         wandb.init(
             project="vqvae+latent_rl",
+            # mode="disabled",
             tags=[
                 "duolayer",
                 # "as_vanilla_dqn",
@@ -457,13 +489,14 @@ def train_duolayer():
                 "encoder_detach",
                 # "DDQN"
                 # "polyak_abstract",
+                "vanilla dqn",
                 "learn2",
             ],  # vqvae2(32-64-128), vqvae(128-256)
             config={
                 "env_id": env_id,
                 "total_timesteps": 300_000,
-                "init_steps": 1000,
-                # "action_repetition": 3,  # 3 for carracing, 2 for boxing
+                "init_steps": 10000,
+                "action_repetition": 3,  # 3 for carracing, 2 for boxing
                 "n_frame_stack": 4,
                 # "dropout": random.uniform(0.01, 0.80),
                 "vqvae_inchannel": int(3 * 1),
@@ -474,16 +507,16 @@ def train_duolayer():
                 ),
                 # "reconstruction_path": None,
                 # "total_episodes": 1000,
-                "lr_vqvae": 5e-3,
-                "lr_ground_Q": "lin_5e-4",  # "lin_5.3e-4", 5e-4
-                "lr_abstract_V": "lin_5e-4",  # "lin_5.3e-4", 5e-4
+                "lr_vqvae": 5e-4,
+                "lr_ground_Q": 2.5e-4,  # "lin_5.3e-4", 5e-4
+                "lr_abstract_V": 2.5e-4,  # "lin_5.3e-4", 5e-4
                 "batch_size": 256,
                 "validation_size": 128,
                 "validate_every": 10,
                 "size_replay_memory": int(1e5),
                 "gamma": 0.97,
-                "omega": 2.5e-3,  # 2.5e-3, 1
-                "tau": 0.9,
+                "omega": 0,  # 2.5e-3, 1
+                "tau": "None",
                 "exploration_fraction": 0.9,
                 "exploration_initial_eps": 0.1,
                 "exploration_final_eps": 0.01,
@@ -537,6 +570,8 @@ def train_duolayer():
 
         # The main training loop
         env = make_env(env_id, config)
+        # env = make_atari(env_id)
+        # env = wrap_deepmind(env)
         agent = DuoLayerAgent(env, config)
         # print("agent.policy_mlp_net:", agent.ground_Q_net)
         # print("agent.vqvae_model:", agent.vqvae_model)
@@ -579,7 +614,7 @@ def train_duolayer():
                 # )
                 # print("agent.act")
 
-                next_state, reward, done, _ = env.step(action.item())
+                next_state, reward, done, _ = env.step(action)
                 # env.render()
                 episodic_reward += reward
                 if reward < 0:
@@ -601,6 +636,7 @@ def train_duolayer():
                 # Store the transition in memory
                 # agent.memory.push(state, action, next_state, reward, done)
                 agent.cache(state, action, next_state, reward, done)
+                # agent.cache_lazy(state, action, next_state, reward, done)
                 # print(
                 #     "memory_allocated: {:.5f} MB".format(
                 #         torch.cuda.memory_allocated() / (1024 * 1024)

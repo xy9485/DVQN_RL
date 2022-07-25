@@ -1,4 +1,5 @@
 import datetime
+from inspect import stack
 import os
 import time
 import gym
@@ -267,9 +268,9 @@ class VQVAE2(nn.Module):
             # save_image(recon[:8], save_to)
             # print("save input and recon to path: ", save_to)
             # log recon as image to wandb
-            wandb_log_image(
-                recon[:8, :1]
-            )  # take the first channel to log no matter how many frame stacked
+            stacked = torch.cat((recon[:7, :1], input[:1, :1]), dim=0)
+            wandb_log_image(stacked)
+            # take the first channel to log no matter how many frame stacked
             print("log recons as image to wandb")
 
         self.forward_call += 1

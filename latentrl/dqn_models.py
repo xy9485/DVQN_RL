@@ -33,13 +33,13 @@ class DQN_paper(nn.Module):
             n_flatten = self.cnn(temp.float()).shape[1]
 
         self.linear = nn.Sequential(
-            nn.Linear(n_flatten, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
+            nn.Linear(n_flatten, 512),
             nn.ReLU(),
             # nn.Linear(256, 256),
             # nn.ReLU(),
-            nn.Linear(256, action_space.n),
+            # nn.Linear(256, 256),
+            # nn.ReLU(),
+            nn.Linear(512, action_space.n),
             # nn.ReLU(),
         )
 
