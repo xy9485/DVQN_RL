@@ -471,7 +471,7 @@ def train_single_layer():
 
 
 def train_duolayer():
-    env_id = "CarRacing-v0"
+    env_id = "PongNoFrameskip-v4"
     # CarRacing-v0, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5, BreakoutNoFrameskip-v4, RiverraidNoFrameskip-v4
     # vae_version = "vqvae_c3_embedding16x64_3_duolayer"
 
@@ -481,41 +481,41 @@ def train_duolayer():
         # 🐝 initialise a wandb run
         wandb.init(
             project="vqvae+latent_rl",
-            # mode="disabled",
+            mode="disabled",
             tags=[
                 "duolayer",
                 # "as_vanilla_dqn",
-                "vqvae2(32-64-64)",
+                # "vqvae2(32-64-64)",
                 "encoder_detach",
                 # "DDQN"
                 # "polyak_abstract",
-                "vanilla dqn",
+                # "vanilla dqn",
                 "learn2",
             ],  # vqvae2(32-64-128), vqvae(128-256)
             config={
                 "env_id": env_id,
-                "total_timesteps": 300_000,
+                "total_timesteps": 1e6,
                 "init_steps": 10000,
-                "action_repetition": 3,  # 3 for carracing, 2 for boxing
-                "n_frame_stack": 4,
+                # "action_repetition": 3,  # 3 for carracing, 2 for boxing
+                # "n_frame_stack": 4,
                 # "dropout": random.uniform(0.01, 0.80),
                 "vqvae_inchannel": int(3 * 1),
-                "vqvae_latent_channel": 32,  # 16
+                "vqvae_latent_channel": 16,  # 16
                 "vqvae_num_embeddings": 64,  # 64
                 "reconstruction_path": os.path.join(
                     "/workspace/repos_dev/VQVAE_RL/reconstruction/duolayer", env_id, current_time
                 ),
                 # "reconstruction_path": None,
                 # "total_episodes": 1000,
-                "lr_vqvae": 5e-4,
+                "lr_vqvae": 2.5e-4,
                 "lr_ground_Q": 2.5e-4,  # "lin_5.3e-4", 5e-4
                 "lr_abstract_V": 2.5e-4,  # "lin_5.3e-4", 5e-4
                 "batch_size": 256,
                 "validation_size": 128,
                 "validate_every": 10,
                 "size_replay_memory": int(1e5),
-                "gamma": 0.97,
-                "omega": 0,  # 2.5e-3, 1
+                "gamma": 0.99,
+                "omega": 1e-2,  # 2.5e-3, 1
                 "tau": "None",
                 "exploration_fraction": 0.9,
                 "exploration_initial_eps": 0.1,
@@ -569,9 +569,9 @@ def train_duolayer():
         # config = SimpleNamespace(**config)
 
         # The main training loop
-        env = make_env(env_id, config)
-        # env = make_atari(env_id)
-        # env = wrap_deepmind(env)
+        # env = make_env(env_id, config)
+        env = make_atari(env_id)
+        env = wrap_deepmind(env)
         agent = DuoLayerAgent(env, config)
         # print("agent.policy_mlp_net:", agent.ground_Q_net)
         # print("agent.vqvae_model:", agent.vqvae_model)
@@ -585,7 +585,8 @@ def train_duolayer():
 
         comment = ""
         log_dir_tensorboard = f"/workspace/repos_dev/VQVAE_RL/log_tensorboard/end2end_duolayer/{env_id}/{current_time}_{comment}"
-        tb_writer = SummaryWriter(log_dir_tensorboard)
+        # tb_writer = SummaryWriter(log_dir_tensorboard)
+        tb_writer = None
         print("log_dir_tensorboard:", log_dir_tensorboard)
         print("reconstruction_path:", config.reconstruction_path)
 
