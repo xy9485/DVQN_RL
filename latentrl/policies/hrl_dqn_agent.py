@@ -1252,7 +1252,10 @@ class DuoLayerAgent:
         # print("run backward")
 
         # 1 clamp gradients to avoid exploding gradient
-        # for param in self.policy_mlp_net.parameters():
+        for param in self.ground_Q_net.parameters():
+            param.grad.data.clamp_(-1, 1)
+
+        # for param in self.abstract_V_net.parameters():
         #     param.grad.data.clamp_(-1, 1)
 
         # for param in self.vqvae_model.parameters():
@@ -1268,20 +1271,20 @@ class DuoLayerAgent:
 
         self.n_call_train += 1
 
-        # if tb_writer and self.n_call_train % 1000 == 0:
-        #     for name, param in self.abstract_V_net.named_parameters():
-        #         tb_writer.add_histogram(
-        #             f"gradients/abstract_V_net/{name}", param.grad, self.n_call_train
-        #         )
-        #         tb_writer.add_histogram(
-        #             f"weight_bias/abstract_V_net/{name}", param, self.n_call_train
-        #         )
-        #     for name, param in self.vqvae_model.encoder.named_parameters():
-        #         tb_writer.add_histogram(f"gradients/encoder/{name}", param.grad, self.n_call_train)
-        #         tb_writer.add_histogram(f"weight_bias/encoder/{name}", param, self.n_call_train)
-        #     for name, param in self.vqvae_model.decoder.named_parameters():
-        #         tb_writer.add_histogram(f"gradients/decoder/{name}", param.grad, self.n_call_train)
-        #         tb_writer.add_histogram(f"weight_bias/decoder/{name}", param, self.n_call_train)
+        if tb_writer and self.n_call_train % 1000 == 0:
+            for name, param in self.abstract_V_net.named_parameters():
+                tb_writer.add_histogram(
+                    f"gradients/abstract_V_net/{name}", param.grad, self.n_call_train
+                )
+                tb_writer.add_histogram(
+                    f"weight_bias/abstract_V_net/{name}", param, self.n_call_train
+                )
+            for name, param in self.vqvae_model.encoder.named_parameters():
+                tb_writer.add_histogram(f"gradients/encoder/{name}", param.grad, self.n_call_train)
+                tb_writer.add_histogram(f"weight_bias/encoder/{name}", param, self.n_call_train)
+            for name, param in self.vqvae_model.decoder.named_parameters():
+                tb_writer.add_histogram(f"gradients/decoder/{name}", param.grad, self.n_call_train)
+                tb_writer.add_histogram(f"weight_bias/decoder/{name}", param, self.n_call_train)
 
         # mean_recon_loss = ((recon_loss + recon_loss2) / 2).item()
         # mean_vq_loss = ((vqloss + vqloss2) / 2).item()
@@ -1643,30 +1646,35 @@ class DuoLayerAgent:
             self.abstract_V_optimizer = optim.Adam(self.abstract_V_net.parameters(), lr=5e-4)
 
     def _create_optimizers(self, config):
-        self.vqvae_optimizer = optim.Adam(self.vqvae_model.parameters(), lr=config.lr_vqvae)
 
         if isinstance(config.lr_ground_Q, str) and config.lr_ground_Q.startswith("lin"):
             self.lr_scheduler_ground_Q = linear_schedule(float(config.lr_ground_Q.split("_")[1]))
-            lr = self.lr_scheduler_ground_Q(self._current_progress_remaining)
+            lr_ground_Q = self.lr_scheduler_ground_Q(self._current_progress_remaining)
 
         elif isinstance(config.lr_ground_Q, float):
-            lr = config.lr_ground_Q
+            lr_ground_Q = config.lr_ground_Q
 
         if isinstance(config.lr_abstract_V, str) and config.lr_abstract_V.startswith("lin"):
             self.lr_scheduler_abstract_V = linear_schedule(
                 float(config.lr_abstract_V.split("_")[1])
             )
-            lr = self.lr_scheduler_abstract_V(self._current_progress_remaining)
+            lr_abstract_V = self.lr_scheduler_abstract_V(self._current_progress_remaining)
 
         elif isinstance(config.lr_abstract_V, float):
-            lr = config.lr_abstract_V
+            lr_abstract_V = config.lr_abstract_V
 
         # self.ground_Q_optimizer = optim.RMSprop(
-        #     self.ground_Q_net.parameters(), lr=lr, alpha=0.95, momentum=0.95, eps=0.01
+        #     self.ground_Q_net.parameters(), lr=lr_ground_Q, alpha=0.95, momentum=0, eps=0.01
         # )
         # self.abstract_V_optimizer = optim.RMSprop(
-        #     self.ground_Q_net.parameters(), lr=lr, alpha=0.95, momentum=0.95, eps=0.01
+        #     self.ground_Q_net.parameters(), lr=lr_abstract_V, alpha=0.95, momentum=0.95, eps=0.01
         # )
 
-        self.ground_Q_optimizer = optim.Adam(self.ground_Q_net.parameters(), lr=lr)
-        self.abstract_V_optimizer = optim.Adam(self.abstract_V_net.parameters(), lr=lr)
+        if hasattr(self, "ground_Q_net"):
+            self.ground_Q_optimizer = optim.Adam(self.ground_Q_net.parameters(), lr=lr_ground_Q)
+        if hasattr(self, "abstract_V_net"):
+            self.abstract_V_optimizer = optim.Adam(
+                self.abstract_V_net.parameters(), lr=lr_abstract_V
+            )
+        if hasattr(self, "vqvae_model"):
+            self.vqvae_optimizer = optim.Adam(self.vqvae_model.parameters(), lr=config.lr_vqvae)

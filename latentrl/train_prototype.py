@@ -585,7 +585,8 @@ def train_duolayer():
 
         comment = ""
         log_dir_tensorboard = f"/workspace/repos_dev/VQVAE_RL/log_tensorboard/end2end_duolayer/{env_id}/{current_time}_{comment}"
-        tb_writer = SummaryWriter(log_dir_tensorboard)
+        # tb_writer = SummaryWriter(log_dir_tensorboard)
+        tb_writer = None
         print("log_dir_tensorboard:", log_dir_tensorboard)
         print("reconstruction_path:", config.reconstruction_path)
 
