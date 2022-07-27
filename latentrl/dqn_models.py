@@ -22,15 +22,16 @@ class DQN_paper(nn.Module):
             nn.ReLU(),
             nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
             nn.ReLU(),
-            nn.Flatten(),
         )
+        self.flatten_layer = nn.Flatten()
 
         # Compute shape by doing one forward pass
         with torch.no_grad():
-            temp = observation_space.sample()
-            temp = T.ToTensor()(temp)
-            temp = temp.unsqueeze(0)
-            n_flatten = self.cnn(temp.float()).shape[1]
+            x = observation_space.sample()
+            x = T.ToTensor()(x).unsqueeze(0)
+            x = self.cnn(x.float())
+            x = self.flatten_layer(x)
+            n_flatten = x.shape[1]
 
         self.linear = nn.Sequential(
             nn.Linear(n_flatten, 512),
@@ -43,8 +44,10 @@ class DQN_paper(nn.Module):
             # nn.ReLU(),
         )
 
-    def forward(self, observations: torch.Tensor) -> torch.Tensor:
-        return self.linear(self.cnn(observations))
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.cnn(x)
+        x = self.flatten_layer(x)
+        return self.linear(x)
 
 
 class DVN_paper(nn.Module):
@@ -59,19 +62,23 @@ class DVN_paper(nn.Module):
             nn.ReLU(),
             nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
             nn.ReLU(),
-            nn.Flatten(),
         )
+        self.flatten_layer = nn.Flatten()
 
         # Compute shape by doing one forward pass
         with torch.no_grad():
-            n_flatten = self.cnn(
-                T.ToTensor()(observation_space.sample()).unsqueeze(0).float()
-            ).shape[1]
+            x = self.cnn(T.ToTensor()(observation_space.sample()).unsqueeze(0).float())
+            x = self.flatten_layer(x)
+            n_flatten = x.shape[1]
 
-        self.linear = nn.Linear(n_flatten, 1)
+        self.linear = nn.Sequential(
+            nn.Linear(n_flatten, 512),
+            nn.ReLU(),
+            nn.Linear(512, 1),
+        )
 
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
-        return self.linear(self.cnn(observations))
+        return self.linear(self.flatten_layer(self.cnn(observations)))
 
 
 class DQN(nn.Module):
@@ -136,18 +143,18 @@ class DVN(nn.Module):
     def __init__(self, input_dim):
         super(DVN, self).__init__()
         self.flatten_layer = nn.Flatten()
-        self.fc1 = nn.Linear(np.prod(input_dim), 256)
-        self.fc2 = nn.Linear(256, 256)
-        self.fc3 = nn.Linear(256, 256)
+        self.fc1 = nn.Linear(np.prod(input_dim), 512)
+        # self.fc2 = nn.Linear(256, 256)
+        # self.fc3 = nn.Linear(256, 256)
         # self.fc4 = nn.Linear(256, 256)
-        self.head = nn.Linear(256, 1)
+        self.head = nn.Linear(512, 1)
 
     def forward(self, x):
         # x = x.to(device)
         x = self.flatten_layer(x)
         x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = F.relu(self.fc3(x))
+        # x = F.relu(self.fc2(x))
+        # x = F.relu(self.fc3(x))
         # x = F.relu(self.fc4(x))
         return self.head(x)
 
@@ -157,38 +164,16 @@ class DQN_MLP(nn.Module):
         super().__init__()
         self.flatten_layer = nn.Flatten()
         self.linears = nn.Sequential(
-            nn.Linear(np.prod(input_dim), 256),
+            nn.Linear(np.prod(input_dim), 512),
             nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, action_space.n),
+            # nn.Linear(256, 256),
+            # nn.ReLU(),
+            # nn.Linear(256, 256),
+            # nn.ReLU(),
+            nn.Linear(512, action_space.n),
             # nn.ReLU(),
         )
 
     def forward(self, x) -> torch.Tensor:
         x = self.flatten_layer(x)
         return self.linears(x)
-
-
-class DQN_MLP_SingleOutput(nn.Module):
-    def __init__(self, input_dim, action_dim):
-        super().__init__()
-        self.flatten_layer = nn.Flatten()
-        self.linears = nn.Sequential(
-            nn.Linear(np.prod(input_dim) + action_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1),
-            # nn.ReLU(),
-        )
-
-    def forward(self, obs, action) -> torch.Tensor:
-        assert obs.size(0) == action.size(0)
-        obs = self.flatten_layer(obs)
-        obs_action = torch.cat([obs, action], dim=1)
-        return self.linears(obs_action)

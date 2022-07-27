@@ -15,7 +15,7 @@ from latentrl.policies.utils import ReplayMemory
 from latentrl.utils.learning import EarlyStopping, ReduceLROnPlateau
 from latentrl.utils.misc import get_linear_fn, linear_schedule, polyak_sync, update_learning_rate
 from latentrl.vqvae_end2end import VQVAE
-from latentrl.vqvae_prototype import VQVAE2
+from latentrl.vqvae_prototype import VQVAE2, VectorQuantizer
 
 
 class SingelLayerAgent:
@@ -727,11 +727,15 @@ class DuoLayerAgent:
                 config.reconstruction_path,
                 exist_ok=True,
             )
-        self.vqvae_model = VQVAE(
-            in_channels=env.observation_space.shape[-1],
-            embedding_dim=config.vqvae_latent_channel,
-            num_embeddings=config.vqvae_num_embeddings,
-            reconstruction_path=config.reconstruction_path,
+        # self.vqvae_model = VQVAE2(
+        #     in_channels=env.observation_space.shape[-1],
+        #     embedding_dim=config.vqvae_latent_channel,
+        #     num_embeddings=config.vqvae_num_embeddings,
+        #     reconstruction_path=config.reconstruction_path,
+        # ).to(self.device)
+
+        self.vq_layer = VectorQuantizer(
+            config.vqvae_num_embeddings, config.vqvae_latent_channel, beta=0.25
         ).to(self.device)
 
         # <<<<<<<<<<<VQVAE<<<<<<<<<<<<
@@ -750,22 +754,23 @@ class DuoLayerAgent:
         self.ground_target_Q_net = DQN_paper(env.observation_space, env.action_space).to(
             self.device
         )
-        # self.ground_target_Q_net.load_state_dict(self.ground_Q_net.state_dict())
-        # self.ground_target_Q_net.eval()
+        self.ground_target_Q_net.load_state_dict(self.ground_Q_net.state_dict())
+        self.ground_target_Q_net.eval()
 
         # self.ground_Q_optimizer = optim.Adam(self.ground_Q_net.parameters(), lr=5e-4)
 
         # define latent level value network
         with torch.no_grad():
             sample = T.ToTensor()(env.observation_space.sample()).unsqueeze(0).to(self.device)
-            encoder_output_size = self.vqvae_model.encoder(sample).shape
+            # encoder_output_size = self.vqvae_model.encoder(sample).shape
+            encoder_output_size = self.ground_Q_net.cnn(sample).shape
 
         # self.ground_Q_net = DQN_MLP(encoder_output_size[1:], env.action_space).to(self.device)
         # self.ground_target_Q_net = DQN_MLP(encoder_output_size[1:], env.action_space).to(
         #     self.device
         # )
-        self.ground_target_Q_net.load_state_dict(self.ground_Q_net.state_dict())
-        self.ground_target_Q_net.eval()
+        # self.ground_target_Q_net.load_state_dict(self.ground_Q_net.state_dict())
+        # self.ground_target_Q_net.eval()
 
         self.abstract_V_net = DVN(encoder_output_size[1:]).to(self.device)
         self.abstract_target_V_net = DVN(encoder_output_size[1:]).to(self.device)
@@ -777,8 +782,8 @@ class DuoLayerAgent:
         self._create_optimizers(config)
 
         # scheduler = ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=5)
-        self.vqvae_scheduler = ReduceLROnPlateau(self.vqvae_optimizer, "min")
-        self.vqvae_earlystopping = EarlyStopping("min", patience=5)
+        # self.vqvae_scheduler = ReduceLROnPlateau(self.vqvae_optimizer, "min")
+        # self.vqvae_earlystopping = EarlyStopping("min", patience=5)
 
         # define latent level policy network
         # self.abstract_Q_net = DQN_MLP(16 * 21 * 21, self.n_actions).to(self.device)
@@ -1174,46 +1179,51 @@ class DuoLayerAgent:
         # recon_loss = F.mse_loss(recon_batch, state_batch)
         # recon_loss2 = F.mse_loss(recon_batch2, next_state_batch)
 
+        encoded = self.ground_Q_net.cnn(state_batch)
+        quantized, _ = self.vq_layer(encoded)
+        next_encoded = self.ground_Q_net.cnn(next_state_batch)
+        next_quantized, _ = self.vq_layer(next_encoded)
+
         # make sure loss of vqvae wont't update weights of the encoder
         # quantized = quantized.detach()
         # next_quantized = next_quantized.detach()
 
         # Compute abstract TD error
-        # abstract_current_V = self.abstract_V_net(quantized)
-        # with torch.no_grad():
-        #     abstract_next_V = self.abstract_target_V_net(next_quantized)
-        #     abstract_target_V = (
-        #         reward_batch + (1 - done_batch.float()) * self.gamma * abstract_next_V
-        #     ).float()
+        abstract_current_V = self.abstract_V_net(quantized)
+        with torch.no_grad():
+            abstract_next_V = self.abstract_target_V_net(next_quantized)
+            abstract_target_V = (
+                reward_batch + (1 - done_batch.float()) * self.gamma * abstract_next_V
+            ).float()
 
-        # mask_ = ~torch.tensor(
-        #     [
-        #         [torch.equal(a_state, next_a_state)]
-        #         for a_state, next_a_state in zip(quantized, next_quantized)
-        #     ]
-        # ).to(self.device)
-        # abstract_current_V *= mask_
-        # abstract_target_V *= mask_
+        mask_ = ~torch.tensor(
+            [
+                [torch.equal(a_state, next_a_state)]
+                for a_state, next_a_state in zip(quantized, next_quantized)
+            ]
+        ).to(self.device)
+        abstract_current_V *= mask_
+        abstract_target_V *= mask_
 
-        # criterion = nn.SmoothL1Loss()
-        # abstract_td_error = criterion(abstract_current_V, abstract_target_V)
+        criterion = nn.SmoothL1Loss()
+        abstract_td_error = criterion(abstract_current_V, abstract_target_V)
 
         # Compute ground TD error
 
         # VQVAE and ground_Q_net not sharing the same encoder
-        ground_current_Q = self.ground_Q_net(state_batch).gather(1, action_batch)
+        # ground_current_Q = self.ground_Q_net(state_batch).gather(1, action_batch)
 
         # VQVAE and ground_Q_net sharing the same encoder
-        # ground_current_Q = self.ground_Q_net(encoded).gather(1, action_batch)
+        ground_current_Q = self.ground_Q_net(state_batch).gather(1, action_batch)
 
         with torch.no_grad():
             # Vanilla DQN
 
             # VQVAE and ground_Q_net not sharing the same encoder
-            ground_next_max_Q = self.ground_target_Q_net(next_state_batch).max(1)[0].unsqueeze(1)
+            # ground_next_max_Q = self.ground_target_Q_net(next_state_batch).max(1)[0].unsqueeze(1)
 
             # VQVAE and ground_Q_net sharing the same encoder
-            # ground_next_max_Q = self.ground_target_Q_net(encoded2).max(1)[0].unsqueeze(1)
+            ground_next_max_Q = self.ground_target_Q_net(next_state_batch).max(1)[0].unsqueeze(1)
 
             # Double DQN
             # VQVAE and ground_Q_net not sharing the same encoder
@@ -1226,10 +1236,9 @@ class DuoLayerAgent:
             # ground_next_max_Q = self.ground_Q_net(encoded2).gather(1, action_argmax_target)
 
             # Compute ground target Q value
-            # abstract_current_V = self.abstract_target_V_net(quantized)
-            # abstract_next_V = self.abstract_target_V_net(next_quantized)
-            # shaping = self.gamma * abstract_next_V - abstract_current_V
-            shaping = 0
+            abstract_current_V = self.abstract_target_V_net(quantized)
+            abstract_next_V = self.abstract_target_V_net(next_quantized)
+            shaping = self.gamma * abstract_next_V - abstract_current_V
             ground_target_Q = (
                 reward_batch
                 + self.omega * shaping
@@ -1241,19 +1250,22 @@ class DuoLayerAgent:
         # sum losses
         # loss_vqvae = (vqloss + vqloss2 + recon_loss + recon_loss2) / 2
         # total_loss = abstract_td_error + ground_td_error + loss_vqvae
-        total_loss = ground_td_error
+        total_loss = abstract_td_error + ground_td_error
 
         # Optimize the model
         self.ground_Q_optimizer.zero_grad(set_to_none=True)
-        # self.abstract_V_optimizer.zero_grad(set_to_none=True)
+        self.abstract_V_optimizer.zero_grad(set_to_none=True)
         # self.vqvae_optimizer.zero_grad(set_to_none=True)
         total_loss.backward()
         # print("memory_allocated: {:.5f} MB".format(torch.cuda.memory_allocated() / (1024 * 1024)))
         # print("run backward")
 
         # 1 clamp gradients to avoid exploding gradient
-        # for param in self.policy_mlp_net.parameters():
-        #     param.grad.data.clamp_(-1, 1)
+        for param in self.ground_Q_net.parameters():
+            param.grad.data.clamp_(-1, 1)
+
+        for param in self.abstract_V_net.parameters():
+            param.grad.data.clamp_(-1, 1)
 
         # for param in self.vqvae_model.parameters():
         #     param.grad.data.clamp_(-1, 1)
@@ -1263,32 +1275,32 @@ class DuoLayerAgent:
         # torch.nn.utils.clip_grad_norm_(self.policy_mlp_net.parameters(), max_grad_norm)
         # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
         self.ground_Q_optimizer.step()
-        # self.abstract_V_optimizer.step()
+        self.abstract_V_optimizer.step()
         # self.vqvae_optimizer.step()
 
         self.n_call_train += 1
 
-        # if tb_writer and self.n_call_train % 1000 == 0:
-        #     for name, param in self.abstract_V_net.named_parameters():
-        #         tb_writer.add_histogram(
-        #             f"gradients/abstract_V_net/{name}", param.grad, self.n_call_train
-        #         )
-        #         tb_writer.add_histogram(
-        #             f"weight_bias/abstract_V_net/{name}", param, self.n_call_train
-        #         )
-        #     for name, param in self.vqvae_model.encoder.named_parameters():
-        #         tb_writer.add_histogram(f"gradients/encoder/{name}", param.grad, self.n_call_train)
-        #         tb_writer.add_histogram(f"weight_bias/encoder/{name}", param, self.n_call_train)
-        #     for name, param in self.vqvae_model.decoder.named_parameters():
-        #         tb_writer.add_histogram(f"gradients/decoder/{name}", param.grad, self.n_call_train)
-        #         tb_writer.add_histogram(f"weight_bias/decoder/{name}", param, self.n_call_train)
+        if tb_writer and self.n_call_train % 1000 == 0:
+            for name, param in self.abstract_V_net.named_parameters():
+                tb_writer.add_histogram(
+                    f"gradients/abstract_V_net/{name}", param.grad, self.n_call_train
+                )
+                tb_writer.add_histogram(
+                    f"weight_bias/abstract_V_net/{name}", param, self.n_call_train
+                )
+            for name, param in self.vqvae_model.encoder.named_parameters():
+                tb_writer.add_histogram(f"gradients/encoder/{name}", param.grad, self.n_call_train)
+                tb_writer.add_histogram(f"weight_bias/encoder/{name}", param, self.n_call_train)
+            for name, param in self.vqvae_model.decoder.named_parameters():
+                tb_writer.add_histogram(f"gradients/decoder/{name}", param.grad, self.n_call_train)
+                tb_writer.add_histogram(f"weight_bias/decoder/{name}", param, self.n_call_train)
 
         # mean_recon_loss = ((recon_loss + recon_loss2) / 2).item()
         # mean_vq_loss = ((vqloss + vqloss2) / 2).item()
 
         mean_recon_loss = 0
         mean_vq_loss = 0
-        abstract_td_error = torch.tensor(0)
+        # abstract_td_error = torch.tensor(0)
 
         return mean_recon_loss, mean_vq_loss, abstract_td_error.item(), ground_td_error.item()
 
@@ -1643,30 +1655,35 @@ class DuoLayerAgent:
             self.abstract_V_optimizer = optim.Adam(self.abstract_V_net.parameters(), lr=5e-4)
 
     def _create_optimizers(self, config):
-        self.vqvae_optimizer = optim.Adam(self.vqvae_model.parameters(), lr=config.lr_vqvae)
 
         if isinstance(config.lr_ground_Q, str) and config.lr_ground_Q.startswith("lin"):
             self.lr_scheduler_ground_Q = linear_schedule(float(config.lr_ground_Q.split("_")[1]))
-            lr = self.lr_scheduler_ground_Q(self._current_progress_remaining)
+            lr_ground_Q = self.lr_scheduler_ground_Q(self._current_progress_remaining)
 
         elif isinstance(config.lr_ground_Q, float):
-            lr = config.lr_ground_Q
+            lr_ground_Q = config.lr_ground_Q
 
         if isinstance(config.lr_abstract_V, str) and config.lr_abstract_V.startswith("lin"):
             self.lr_scheduler_abstract_V = linear_schedule(
                 float(config.lr_abstract_V.split("_")[1])
             )
-            lr = self.lr_scheduler_abstract_V(self._current_progress_remaining)
+            lr_abstract_V = self.lr_scheduler_abstract_V(self._current_progress_remaining)
 
         elif isinstance(config.lr_abstract_V, float):
-            lr = config.lr_abstract_V
+            lr_abstract_V = config.lr_abstract_V
 
         # self.ground_Q_optimizer = optim.RMSprop(
-        #     self.ground_Q_net.parameters(), lr=lr, alpha=0.95, momentum=0.95, eps=0.01
+        #     self.ground_Q_net.parameters(), lr=lr_ground_Q, alpha=0.95, momentum=0, eps=0.01
         # )
         # self.abstract_V_optimizer = optim.RMSprop(
-        #     self.ground_Q_net.parameters(), lr=lr, alpha=0.95, momentum=0.95, eps=0.01
+        #     self.ground_Q_net.parameters(), lr=lr_abstract_V, alpha=0.95, momentum=0.95, eps=0.01
         # )
 
-        self.ground_Q_optimizer = optim.Adam(self.ground_Q_net.parameters(), lr=lr)
-        self.abstract_V_optimizer = optim.Adam(self.abstract_V_net.parameters(), lr=lr)
+        if hasattr(self, "ground_Q_net"):
+            self.ground_Q_optimizer = optim.Adam(self.ground_Q_net.parameters(), lr=lr_ground_Q)
+        if hasattr(self, "abstract_V_net"):
+            self.abstract_V_optimizer = optim.Adam(
+                self.abstract_V_net.parameters(), lr=lr_abstract_V
+            )
+        if hasattr(self, "vqvae_model"):
+            self.vqvae_optimizer = optim.Adam(self.vqvae_model.parameters(), lr=config.lr_vqvae)

@@ -1,5 +1,4 @@
 import datetime
-from inspect import stack
 import os
 import time
 import gym
@@ -209,18 +208,18 @@ class VQVAE2(nn.Module):
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
+            nn.Conv2d(64, embedding_dim, kernel_size=3, stride=1, padding=0),
             nn.ReLU(),
-            nn.Conv2d(64, embedding_dim, kernel_size=1, stride=1, padding=0),
-            nn.ReLU(),
+            # nn.Conv2d(64, embedding_dim, kernel_size=1, stride=1, padding=0),
+            # nn.ReLU(),
         )
 
         self.vq_layer = VectorQuantizer(num_embeddings, embedding_dim, self.beta)
 
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(embedding_dim, 64, kernel_size=1, stride=1, padding=0),
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, 64, kernel_size=3, stride=1, padding=0),
+            # nn.ConvTranspose2d(embedding_dim, 64, kernel_size=1, stride=1, padding=0),
+            # nn.ReLU(),
+            nn.ConvTranspose2d(embedding_dim, 64, kernel_size=3, stride=1, padding=0),
             nn.ReLU(),
             nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=0),
             nn.ReLU(),
