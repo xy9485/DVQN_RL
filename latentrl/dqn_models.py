@@ -8,7 +8,7 @@ import torchvision.transforms as T
 
 
 class DQN_paper(nn.Module):
-    def __init__(self, observation_space: gym.spaces.Box, action_space) -> None:
+    def __init__(self, observation_space: gym.spaces.Box, action_space, n_latent_channel) -> None:
         super().__init__()
         n_input_channels = observation_space.shape[-1]
 
@@ -20,7 +20,7 @@ class DQN_paper(nn.Module):
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
+            nn.Conv2d(64, n_latent_channel, kernel_size=3, stride=1, padding=0),
             nn.ReLU(),
         )
         self.flatten_layer = nn.Flatten()
@@ -143,17 +143,17 @@ class DVN(nn.Module):
     def __init__(self, input_dim):
         super(DVN, self).__init__()
         self.flatten_layer = nn.Flatten()
-        self.fc1 = nn.Linear(np.prod(input_dim), 512)
-        # self.fc2 = nn.Linear(256, 256)
+        self.fc1 = nn.Linear(np.prod(input_dim), 256)
+        self.fc2 = nn.Linear(256, 256)
         # self.fc3 = nn.Linear(256, 256)
         # self.fc4 = nn.Linear(256, 256)
-        self.head = nn.Linear(512, 1)
+        self.head = nn.Linear(256, 1)
 
     def forward(self, x):
         # x = x.to(device)
         x = self.flatten_layer(x)
         x = F.relu(self.fc1(x))
-        # x = F.relu(self.fc2(x))
+        x = F.relu(self.fc2(x))
         # x = F.relu(self.fc3(x))
         # x = F.relu(self.fc4(x))
         return self.head(x)

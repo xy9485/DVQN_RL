@@ -35,9 +35,19 @@ class VectorQuantizer(nn.Module):
         # try detach
         self.embedding.weight.data.uniform_(-1 / self.K, 1 / self.K)
 
+        self.before_vq = nn.Sequential(
+            nn.Conv2d(embedding_dim, embedding_dim, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(),
+            # nn.Conv2d(embedding_dim, embedding_dim, kernel_size=1, stride=1, padding=0),
+            # nn.ReLU(),
+        )
+
     def forward(self, latents: Tensor) -> Tensor:
+        latents = self.before_vq(latents)
+
         latents = latents.permute(0, 2, 3, 1).contiguous()  # [B x D x H x W] -> [B x H x W x D]
         latents_shape = latents.shape
+        assert latents_shape[-1] == self.D, "n_latent_dim doesn't match"
         flat_latents = latents.view(-1, self.D)  # [BHW x D]
 
         # Compute L2 distance between latents and embedding weights

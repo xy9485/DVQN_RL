@@ -475,22 +475,25 @@ def train_duolayer():
     # CarRacing-v0, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5, BreakoutNoFrameskip-v4, RiverraidNoFrameskip-v4
     # vae_version = "vqvae_c3_embedding16x64_3_duolayer"
 
-    for _ in range(1):
+    for _ in range(10):
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
         current_time = current_time.strftime("%b%d_%H-%M-%S")
         # 🐝 initialise a wandb run
         wandb.init(
             project="vqvae+latent_rl",
             # mode="disabled",
+            group="Vanilla Duo Encoded Detached",
+            # group="Vanilla DQN",
             tags=[
-                "duolayer",
+                # "duolayer",
                 # "as_vanilla_dqn",
                 # "vqvae2(32-64-64)",
-                "encoder_detach",
+                # "encoder_attach",
+                # "before_vq"
                 # "DDQN"
                 # "polyak_abstract",
                 # "vanilla dqn",
-                "learn2",
+                # "see if just like vanilla dqn",
             ],  # vqvae2(32-64-128), vqvae(128-256)
             config={
                 "env_id": env_id,
@@ -500,7 +503,7 @@ def train_duolayer():
                 # "n_frame_stack": 4,
                 # "dropout": random.uniform(0.01, 0.80),
                 "vqvae_inchannel": int(3 * 1),
-                "vqvae_latent_channel": 16,  # 16
+                "vqvae_latent_channel": 64,  # 16
                 "vqvae_num_embeddings": 64,  # 64
                 "reconstruction_path": os.path.join(
                     "/workspace/repos_dev/VQVAE_RL/reconstruction/duolayer", env_id, current_time
@@ -522,10 +525,10 @@ def train_duolayer():
                 "exploration_final_eps": 0.01,
                 "save_model_every": 5e5,
                 "ground_learn_every": 4,
-                "ground_sync_every": 8,
+                "ground_sync_every": 1000,
                 "ground_gradient_steps": 1,
                 "abstract_learn_every": 4,
-                "abstract_sync_every": 8,
+                "abstract_sync_every": 1000,
                 "abstract_gradient_steps": 1,
                 "seed": int(time.time()),
                 "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
@@ -705,16 +708,16 @@ def train_duolayer():
                     print("Episode finished after {} timesteps".format(t + 1))
                     print("Episode {} reward: {}".format(agent.episodes_done, episodic_reward))
 
-                    print(
-                        "memory_allocated: {:.1f} MB".format(
-                            torch.cuda.memory_allocated() / (1024 * 1024)
-                        )
-                    )
-                    print(
-                        "memory_reserved: {:.1f} MB".format(
-                            torch.cuda.memory_reserved() / (1024 * 1024)
-                        )
-                    )
+                    # print(
+                    #     "memory_allocated: {:.1f} MB".format(
+                    #         torch.cuda.memory_allocated() / (1024 * 1024)
+                    #     )
+                    # )
+                    # print(
+                    #     "memory_reserved: {:.1f} MB".format(
+                    #         torch.cuda.memory_reserved() / (1024 * 1024)
+                    #     )
+                    # )
                     # print("agent.vqvae_earlystopping.stop", agent.vqvae_earlystopping.stop)
 
                     print(
@@ -723,14 +726,16 @@ def train_duolayer():
                     )
                     print("_current_progress_remaining:", agent._current_progress_remaining)
                     print("train/exploration_rate:", agent.exploration_rate)
+                    print("time of abstract_sync:", agent.n_abstract_sync)
+                    print("time of ground_sync:", agent.n_ground_sync)
 
                     # print("number of vqvae model forward passes:", agent.vqvae_model.forward_call)
 
-                    print(
-                        "size of agent.memory: {} entries and {} mb".format(
-                            len(agent.memory), sys.getsizeof(agent.memory) / (1024 * 1024)
-                        )
-                    )
+                    # print(
+                    #     "size of agent.memory: {} entries and {} mb".format(
+                    #         len(agent.memory), sys.getsizeof(agent.memory) / (1024 * 1024)
+                    #     )
+                    # )
 
                     break
 

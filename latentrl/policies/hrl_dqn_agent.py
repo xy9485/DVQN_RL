@@ -738,6 +738,11 @@ class DuoLayerAgent:
             config.vqvae_num_embeddings, config.vqvae_latent_channel, beta=0.25
         ).to(self.device)
 
+        self.target_vq_layer = VectorQuantizer(
+            config.vqvae_num_embeddings, config.vqvae_latent_channel, beta=0.25
+        ).to(self.device)
+        self.target_vq_layer.load_state_dict(self.vq_layer.state_dict())
+
         # <<<<<<<<<<<VQVAE<<<<<<<<<<<<
 
         # DQN_MLP
@@ -750,10 +755,12 @@ class DuoLayerAgent:
         # define ground leve policy
         # self.ground_Q_net = DQN(84, 84, self.n_actions).to(self.device)
         # self.ground_target_Q_net = DQN(84, 84, self.n_actions).to(self.device)
-        self.ground_Q_net = DQN_paper(env.observation_space, env.action_space).to(self.device)
-        self.ground_target_Q_net = DQN_paper(env.observation_space, env.action_space).to(
-            self.device
-        )
+        self.ground_Q_net = DQN_paper(
+            env.observation_space, env.action_space, config.vqvae_latent_channel
+        ).to(self.device)
+        self.ground_target_Q_net = DQN_paper(
+            env.observation_space, env.action_space, config.vqvae_latent_channel
+        ).to(self.device)
         self.ground_target_Q_net.load_state_dict(self.ground_Q_net.state_dict())
         self.ground_target_Q_net.eval()
 
@@ -838,6 +845,10 @@ class DuoLayerAgent:
         self.abstract_learn_every = config.abstract_learn_every
         self.abstract_sync_every = config.abstract_sync_every
         self.abstract_gradient_steps = config.abstract_gradient_steps
+        self.vq_sync_every = self.abstract_sync_every
+        self.n_ground_sync = 0
+        self.n_abstract_sync = 0
+        self.n_vq_sync = 0
 
         self.validate_every = config.validate_every
 
@@ -923,6 +934,9 @@ class DuoLayerAgent:
     def sync_abstract_V_target(self):
         self.abstract_target_V_net.load_state_dict(self.abstract_V_net.state_dict())
 
+    def sync_vq_target(self):
+        self.target_vq_layer.load_state_dict(self.vq_layer.state_dict())
+
     def validate_vqvae(self):
         batch = self.memory.sample(validation_size=self.validation_size)
 
@@ -977,22 +991,6 @@ class DuoLayerAgent:
         #     pass
 
     def learn2(self, tb_writer):
-        if self.timesteps_done % self.ground_sync_every == 0:
-            self.sync_ground_Q_target()
-            # polyak_sync(
-            #     self.ground_Q_net.parameters(), self.ground_target_Q_net.parameters(), self.tau
-            # )
-
-        if self.timesteps_done % self.abstract_sync_every == 0:
-            self.sync_abstract_V_target()
-            # polyak_sync(
-            #     self.abstract_V_net.parameters(), self.abstract_target_V_net.parameters(), self.tau
-            # )
-
-        if self.timesteps_done % self.save_model_every == 0:
-            pass
-            # self.save()
-
         if self.timesteps_done < self.init_steps:
             return None, None, None, None
 
@@ -1004,15 +1002,37 @@ class DuoLayerAgent:
             loss_list = np.nanmean(loss_list, axis=0)
             return [item for item in loss_list]
 
-        if self.timesteps_done % self.ground_learn_every != 0:
-            return None, None, None, None
+        if self.timesteps_done % self.ground_sync_every == 0:
+            self.sync_ground_Q_target()
+            self.n_ground_sync += 1
+            # polyak_sync(
+            #     self.ground_Q_net.parameters(), self.ground_target_Q_net.parameters(), self.tau
+            # )
 
-        loss_list = []
-        for _ in range(self.ground_gradient_steps):
-            loss_list.append(self.train2(tb_writer))
-        loss_list = np.array(loss_list, dtype=float)
-        loss_list = np.nanmean(loss_list, axis=0)
-        return [item for item in loss_list]
+        if self.timesteps_done % self.abstract_sync_every == 0:
+            self.sync_abstract_V_target()
+            self.n_abstract_sync += 1
+            # polyak_sync(
+            #     self.abstract_V_net.parameters(), self.abstract_target_V_net.parameters(), self.tau
+            # )
+
+        if self.timesteps_done % self.vq_sync_every == 0:
+            self.sync_vq_target()
+            self.n_vq_sync += 1
+
+        if self.timesteps_done % self.save_model_every == 0:
+            pass
+            # self.save()
+
+        if self.timesteps_done % self.ground_learn_every == 0:
+            loss_list = []
+            for _ in range(self.ground_gradient_steps):
+                loss_list.append(self.train2(tb_writer))
+            loss_list = np.array(loss_list, dtype=float)
+            loss_list = np.nanmean(loss_list, axis=0)
+            return [item for item in loss_list]
+
+        return None, None, None, None
 
     def learn3(self, tb_writer):
         if self.timesteps_done % self.ground_sync_every == 0:
@@ -1179,19 +1199,71 @@ class DuoLayerAgent:
         # recon_loss = F.mse_loss(recon_batch, state_batch)
         # recon_loss2 = F.mse_loss(recon_batch2, next_state_batch)
 
-        encoded = self.ground_Q_net.cnn(state_batch)
-        quantized, _ = self.vq_layer(encoded)
-        next_encoded = self.ground_Q_net.cnn(next_state_batch)
-        next_quantized, _ = self.vq_layer(next_encoded)
-
         # make sure loss of vqvae wont't update weights of the encoder
         # quantized = quantized.detach()
         # next_quantized = next_quantized.detach()
 
+        # Compute ground TD error
+
+        # VQVAE and ground_Q_net not sharing the same encoder
+        # ground_current_Q = self.ground_Q_net(state_batch).gather(1, action_batch)
+
+        # VQVAE and ground_Q_net sharing the same encoder
+        # ground_current_Q = self.ground_Q_net(state_batch).gather(1, action_batch)
+
+        encoded = self.ground_Q_net.cnn(state_batch)
+        flattened = self.ground_Q_net.flatten_layer(encoded)
+        ground_current_Q = self.ground_Q_net.linear(flattened).gather(1, action_batch)
+        quantized, vq_loss = self.vq_layer(encoded.detach())
+        # quantized, vq_loss = self.vq_layer(encoded)
+
+        with torch.no_grad():
+            # Vanilla DQN
+
+            # VQVAE and ground_Q_net not sharing the same encoder
+            # ground_next_max_Q = self.ground_target_Q_net(next_state_batch).max(1)[0].unsqueeze(1)
+
+            # VQVAE and ground_Q_net sharing the same encoder
+            # ground_next_max_Q = self.ground_target_Q_net(next_state_batch).max(1)[0].unsqueeze(1)
+
+            next_encoded = self.ground_target_Q_net.cnn(next_state_batch)
+            next_flattened = self.ground_target_Q_net.flatten_layer(next_encoded)
+            ground_next_max_Q = (
+                self.ground_target_Q_net.linear(next_flattened).max(1)[0].unsqueeze(1)
+            )
+            next_quantized, next_vq_loss = self.target_vq_layer(next_encoded.detach())
+            # next_quantized, next_vq_loss = self.target_vq_layer(next_encoded)
+
+            # Double DQN
+            # VQVAE and ground_Q_net not sharing the same encoder
+            # action_argmax_target = self.ground_target_Q_net(next_state_batch).argmax(
+            #     dim=1, keepdim=True
+            # )
+            # ground_next_max_Q = self.ground_Q_net(next_state_batch).gather(1, action_argmax_target)
+            # VQVAE and ground_Q_net sharing the same encoder
+            # action_argmax_target = self.ground_target_Q_net(encoded2).argmax(dim=1, keepdim=True)
+            # ground_next_max_Q = self.ground_Q_net(encoded2).gather(1, action_argmax_target)
+
+            # Compute ground target Q value
+            abstract_current_V = self.abstract_target_V_net(quantized)
+            abstract_next_V = self.abstract_target_V_net(next_quantized)
+            if self.n_abstract_sync > 30:
+                shaping = self.gamma * abstract_next_V - abstract_current_V
+            else:
+                shaping = 0
+            ground_target_Q = (
+                reward_batch
+                + self.omega * shaping
+                + (1 - done_batch.float()) * self.gamma * ground_next_max_Q
+            ).float()
+
+        criterion = nn.SmoothL1Loss()
+        ground_td_error = criterion(ground_current_Q, ground_target_Q)
+
         # Compute abstract TD error
         abstract_current_V = self.abstract_V_net(quantized)
         with torch.no_grad():
-            abstract_next_V = self.abstract_target_V_net(next_quantized)
+            # abstract_next_V = self.abstract_target_V_net(next_quantized)
             abstract_target_V = (
                 reward_batch + (1 - done_batch.float()) * self.gamma * abstract_next_V
             ).float()
@@ -1208,53 +1280,15 @@ class DuoLayerAgent:
         criterion = nn.SmoothL1Loss()
         abstract_td_error = criterion(abstract_current_V, abstract_target_V)
 
-        # Compute ground TD error
-
-        # VQVAE and ground_Q_net not sharing the same encoder
-        # ground_current_Q = self.ground_Q_net(state_batch).gather(1, action_batch)
-
-        # VQVAE and ground_Q_net sharing the same encoder
-        ground_current_Q = self.ground_Q_net(state_batch).gather(1, action_batch)
-
-        with torch.no_grad():
-            # Vanilla DQN
-
-            # VQVAE and ground_Q_net not sharing the same encoder
-            # ground_next_max_Q = self.ground_target_Q_net(next_state_batch).max(1)[0].unsqueeze(1)
-
-            # VQVAE and ground_Q_net sharing the same encoder
-            ground_next_max_Q = self.ground_target_Q_net(next_state_batch).max(1)[0].unsqueeze(1)
-
-            # Double DQN
-            # VQVAE and ground_Q_net not sharing the same encoder
-            # action_argmax_target = self.ground_target_Q_net(next_state_batch).argmax(
-            #     dim=1, keepdim=True
-            # )
-            # ground_next_max_Q = self.ground_Q_net(next_state_batch).gather(1, action_argmax_target)
-            # VQVAE and ground_Q_net sharing the same encoder
-            # action_argmax_target = self.ground_target_Q_net(encoded2).argmax(dim=1, keepdim=True)
-            # ground_next_max_Q = self.ground_Q_net(encoded2).gather(1, action_argmax_target)
-
-            # Compute ground target Q value
-            abstract_current_V = self.abstract_target_V_net(quantized)
-            abstract_next_V = self.abstract_target_V_net(next_quantized)
-            shaping = self.gamma * abstract_next_V - abstract_current_V
-            ground_target_Q = (
-                reward_batch
-                + self.omega * shaping
-                + (1 - done_batch.float()) * self.gamma * ground_next_max_Q
-            ).float()
-
-        criterion = nn.SmoothL1Loss()
-        ground_td_error = criterion(ground_current_Q, ground_target_Q)
         # sum losses
         # loss_vqvae = (vqloss + vqloss2 + recon_loss + recon_loss2) / 2
         # total_loss = abstract_td_error + ground_td_error + loss_vqvae
-        total_loss = abstract_td_error + ground_td_error
+        total_loss = abstract_td_error + ground_td_error + vq_loss
 
         # Optimize the model
         self.ground_Q_optimizer.zero_grad(set_to_none=True)
         self.abstract_V_optimizer.zero_grad(set_to_none=True)
+        self.vq_optimizer.zero_grad(set_to_none=True)
         # self.vqvae_optimizer.zero_grad(set_to_none=True)
         total_loss.backward()
         # print("memory_allocated: {:.5f} MB".format(torch.cuda.memory_allocated() / (1024 * 1024)))
@@ -1267,6 +1301,9 @@ class DuoLayerAgent:
         for param in self.abstract_V_net.parameters():
             param.grad.data.clamp_(-1, 1)
 
+        for param in self.vq_layer.parameters():
+            param.grad.data.clamp_(-1, 1)
+
         # for param in self.vqvae_model.parameters():
         #     param.grad.data.clamp_(-1, 1)
 
@@ -1276,6 +1313,7 @@ class DuoLayerAgent:
         # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
         self.ground_Q_optimizer.step()
         self.abstract_V_optimizer.step()
+        self.vq_optimizer.step()
         # self.vqvae_optimizer.step()
 
         self.n_call_train += 1
@@ -1687,3 +1725,6 @@ class DuoLayerAgent:
             )
         if hasattr(self, "vqvae_model"):
             self.vqvae_optimizer = optim.Adam(self.vqvae_model.parameters(), lr=config.lr_vqvae)
+
+        if hasattr(self, "vq_layer"):
+            self.vq_optimizer = optim.Adam(self.vq_layer.parameters(), lr=config.lr_vqvae)
