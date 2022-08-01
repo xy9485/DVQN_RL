@@ -113,7 +113,7 @@ class VQVAE(nn.Module):
 
         modules = []
         if hidden_dims is None:
-            hidden_dims = [64, 128]
+            hidden_dims = [32, 64]
 
         # Build Encoder
         for h_dim in hidden_dims:
@@ -138,7 +138,7 @@ class VQVAE(nn.Module):
             )
         )
 
-        for _ in range(2):
+        for _ in range(1):
             modules.append(ResidualLayer(in_channels, in_channels))
         modules.append(nn.LeakyReLU())
 
@@ -162,7 +162,7 @@ class VQVAE(nn.Module):
             )
         )
 
-        for _ in range(2):
+        for _ in range(1):
             modules.append(ResidualLayer(hidden_dims[-1], hidden_dims[-1]))
 
         modules.append(nn.LeakyReLU())

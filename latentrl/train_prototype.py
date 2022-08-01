@@ -471,26 +471,28 @@ def train_single_layer():
 
 
 def train_duolayer():
-    env_id = "PongNoFrameskip-v4"
+    env_id = "BoxingNoFrameskip-v4"
     # CarRacing-v0, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5, BreakoutNoFrameskip-v4, RiverraidNoFrameskip-v4
     # vae_version = "vqvae_c3_embedding16x64_3_duolayer"
 
-    for _ in range(1):
+    for rep in range(5):
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
         current_time = current_time.strftime("%b%d_%H-%M-%S")
         # 🐝 initialise a wandb run
         wandb.init(
             project="vqvae+latent_rl",
-            mode="disabled",
+            # mode="disabled",
+            group="VQVAE_Duo4",
+            # group="Vanilla DQN",
             tags=[
-                "duolayer",
+                # "duolayer",
                 # "as_vanilla_dqn",
                 # "vqvae2(32-64-64)",
-                "encoder_detach",
+                # "encoder_detach",
                 # "DDQN"
                 # "polyak_abstract",
                 # "vanilla dqn",
-                "learn2",
+                # "learn2",
             ],  # vqvae2(32-64-128), vqvae(128-256)
             config={
                 "env_id": env_id,
@@ -500,7 +502,7 @@ def train_duolayer():
                 # "n_frame_stack": 4,
                 # "dropout": random.uniform(0.01, 0.80),
                 "vqvae_inchannel": int(3 * 1),
-                "vqvae_latent_channel": 16,  # 16
+                "vqvae_latent_channel": 32,  # 16
                 "vqvae_num_embeddings": 64,  # 64
                 "reconstruction_path": os.path.join(
                     "/workspace/repos_dev/VQVAE_RL/reconstruction/duolayer", env_id, current_time
@@ -508,24 +510,24 @@ def train_duolayer():
                 # "reconstruction_path": None,
                 # "total_episodes": 1000,
                 "lr_vqvae": 2.5e-4,
-                "lr_ground_Q": 2.5e-4,  # "lin_5.3e-4", 5e-4
-                "lr_abstract_V": 2.5e-4,  # "lin_5.3e-4", 5e-4
-                "batch_size": 256,
+                "lr_ground_Q": "lin_5.3e-4",  # "lin_5.3e-4", 5e-4
+                "lr_abstract_V": "lin_5.3e-4",  # "lin_5.3e-4", 5e-4
+                "batch_size": 64,
                 "validation_size": 128,
                 "validate_every": 10,
                 "size_replay_memory": int(1e5),
                 "gamma": 0.99,
-                "omega": 1e-2,  # 2.5e-3, 1
+                "omega": 1e-1,  # 2.5e-3, 1
                 "tau": "None",
                 "exploration_fraction": 0.9,
                 "exploration_initial_eps": 0.1,
                 "exploration_final_eps": 0.01,
                 "save_model_every": 5e5,
                 "ground_learn_every": 4,
-                "ground_sync_every": 8,
+                "ground_sync_every": 100,
                 "ground_gradient_steps": 1,
                 "abstract_learn_every": 4,
-                "abstract_sync_every": 8,
+                "abstract_sync_every": 100,
                 "abstract_gradient_steps": 1,
                 "seed": int(time.time()),
                 "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
@@ -650,7 +652,7 @@ def train_duolayer():
 
                 # Perform one step of the optimization (on the policy network)
                 # optimize_model()
-                loss_list.append(agent.learn2(tb_writer))
+                loss_list.append(agent.learn2_improved(tb_writer))
                 # print(
                 #     "memory_allocated: {:.5f} MB".format(
                 #         torch.cuda.memory_allocated() / (1024 * 1024)
@@ -693,7 +695,7 @@ def train_duolayer():
                     }
                     wandb.log({**metrics})
 
-                    print(">>>>>>>>>>>>>>>>Episode Done>>>>>>>>>>>>>>>>>")
+                    print(f">>>>>>>>>>>>>>>>Episode Done| Repetition {rep}>>>>>>>>>>>>>>>>>")
                     print(
                         "time cost so far: {:.3f} h".format(
                             (time.time() - time_start_training) / 3600

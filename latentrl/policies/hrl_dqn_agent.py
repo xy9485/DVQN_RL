@@ -727,7 +727,7 @@ class DuoLayerAgent:
                 config.reconstruction_path,
                 exist_ok=True,
             )
-        self.vqvae_model = VQVAE2(
+        self.vqvae_model = VQVAE(
             in_channels=env.observation_space.shape[-1],
             embedding_dim=config.vqvae_latent_channel,
             num_embeddings=config.vqvae_num_embeddings,
@@ -1009,6 +1009,48 @@ class DuoLayerAgent:
         loss_list = np.nanmean(loss_list, axis=0)
         return [item for item in loss_list]
 
+    def learn2_improved(self, tb_writer):
+        if self.timesteps_done < self.init_steps:
+            return None, None, None, None
+
+        if self.timesteps_done == self.init_steps:
+            loss_list = []
+            for _ in range(int(self.init_steps / 100)):
+                loss_list.append(self.train2(tb_writer))
+            loss_list = np.array(loss_list, dtype=float)
+            loss_list = np.nanmean(loss_list, axis=0)
+            self.sync_target_networks()
+            return [item for item in loss_list]
+
+        self.sync_target_networks()
+
+        if self.timesteps_done % self.save_model_every == 0:
+            pass
+            # self.save()
+
+        if self.timesteps_done % self.ground_learn_every == 0:
+            loss_list = []
+            for _ in range(self.ground_gradient_steps):
+                loss_list.append(self.train2(tb_writer))
+            loss_list = np.array(loss_list, dtype=float)
+            loss_list = np.nanmean(loss_list, axis=0)
+            return [item for item in loss_list]
+
+        return None, None, None, None
+
+    def sync_target_networks(self):
+        if self.timesteps_done % self.ground_sync_every == 0:
+            self.sync_ground_Q_target()
+            # polyak_sync(
+            #     self.ground_Q_net.parameters(), self.ground_target_Q_net.parameters(), self.tau
+            # )
+
+        if self.timesteps_done % self.abstract_sync_every == 0:
+            self.sync_abstract_V_target()
+            # polyak_sync(
+            #     self.abstract_V_net.parameters(), self.abstract_target_V_net.parameters(), self.tau
+            # )
+
     def learn3(self, tb_writer):
         if self.timesteps_done % self.ground_sync_every == 0:
             self.sync_ground_Q_target()
@@ -1227,7 +1269,7 @@ class DuoLayerAgent:
 
             # Compute ground target Q value
             abstract_current_V = self.abstract_target_V_net(quantized)
-            abstract_next_V = self.abstract_target_V_net(next_quantized)
+            # abstract_next_V = self.abstract_target_V_net(next_quantized)
             shaping = self.gamma * abstract_next_V - abstract_current_V
             ground_target_Q = (
                 reward_batch
