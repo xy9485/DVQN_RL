@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torchvision.transforms as T
-from latentrl.dqn_models import DQN, DQN_MLP, DVN, DQN_paper
+from latentrl.dqn_models import DQN, DQN_MLP, DVN, DQN_Big, DQN_paper
 from latentrl.policies.utils import ReplayMemory
 from latentrl.utils.learning import EarlyStopping, ReduceLROnPlateau
 from latentrl.utils.misc import get_linear_fn, linear_schedule, polyak_sync, update_learning_rate
@@ -755,10 +755,10 @@ class DuoLayerAgent:
         # define ground leve policy
         # self.ground_Q_net = DQN(84, 84, self.n_actions).to(self.device)
         # self.ground_target_Q_net = DQN(84, 84, self.n_actions).to(self.device)
-        self.ground_Q_net = DQN_paper(
+        self.ground_Q_net = DQN_Big(
             env.observation_space, env.action_space, config.vqvae_latent_channel
         ).to(self.device)
-        self.ground_target_Q_net = DQN_paper(
+        self.ground_target_Q_net = DQN_Big(
             env.observation_space, env.action_space, config.vqvae_latent_channel
         ).to(self.device)
         self.ground_target_Q_net.load_state_dict(self.ground_Q_net.state_dict())
@@ -1247,7 +1247,7 @@ class DuoLayerAgent:
             # Compute ground target Q value
             abstract_current_V = self.abstract_target_V_net(quantized)
             abstract_next_V = self.abstract_target_V_net(next_quantized)
-            if self.n_abstract_sync > 30:
+            if self.n_abstract_sync > -1:
                 shaping = self.gamma * abstract_next_V - abstract_current_V
             else:
                 shaping = 0

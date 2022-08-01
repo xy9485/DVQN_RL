@@ -475,15 +475,16 @@ def train_duolayer():
     # CarRacing-v0, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5, BreakoutNoFrameskip-v4, RiverraidNoFrameskip-v4
     # vae_version = "vqvae_c3_embedding16x64_3_duolayer"
 
-    for _ in range(10):
+    for _ in range(5):
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
         current_time = current_time.strftime("%b%d_%H-%M-%S")
         # 🐝 initialise a wandb run
         wandb.init(
             project="vqvae+latent_rl",
             # mode="disabled",
-            group="Vanilla Duo Encoded Detached",
-            # group="Vanilla DQN",
+            group="VaniDuo2",
+            # group="VaniDQN",
+            notes="using DQN_Big, omega=10",
             tags=[
                 # "duolayer",
                 # "as_vanilla_dqn",
@@ -503,7 +504,7 @@ def train_duolayer():
                 # "n_frame_stack": 4,
                 # "dropout": random.uniform(0.01, 0.80),
                 "vqvae_inchannel": int(3 * 1),
-                "vqvae_latent_channel": 64,  # 16
+                "vqvae_latent_channel": 32,  # 16
                 "vqvae_num_embeddings": 64,  # 64
                 "reconstruction_path": os.path.join(
                     "/workspace/repos_dev/VQVAE_RL/reconstruction/duolayer", env_id, current_time
@@ -518,7 +519,7 @@ def train_duolayer():
                 "validate_every": 10,
                 "size_replay_memory": int(1e5),
                 "gamma": 0.99,
-                "omega": 1e-2,  # 2.5e-3, 1
+                "omega": 10,  # 2.5e-3, 1
                 "tau": "None",
                 "exploration_fraction": 0.9,
                 "exploration_initial_eps": 0.1,

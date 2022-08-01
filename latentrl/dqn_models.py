@@ -50,6 +50,90 @@ class DQN_paper(nn.Module):
         return self.linear(x)
 
 
+class ResidualLayer(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int):
+        super(ResidualLayer, self).__init__()
+        self.resblock = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+        )
+
+    def forward(self, input):
+        return input + self.resblock(input)
+
+
+class DQN_Big(nn.Module):
+    def __init__(self, observation_space: gym.spaces.Box, action_space, n_latent_channel) -> None:
+        super().__init__()
+
+        modules = []
+        hidden_dims = [32, 64]
+        in_channels = observation_space.shape[-1]
+        # Build Encoder
+        for h_dim in hidden_dims:
+            modules.append(
+                nn.Sequential(
+                    nn.Conv2d(
+                        in_channels,
+                        out_channels=h_dim,
+                        kernel_size=4,
+                        stride=2,
+                        padding=1,
+                    ),
+                    nn.LeakyReLU(),
+                )
+            )
+            in_channels = h_dim
+
+        modules.append(
+            nn.Sequential(
+                nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1),
+                nn.LeakyReLU(),
+            )
+        )
+
+        for _ in range(1):
+            modules.append(ResidualLayer(in_channels, in_channels))
+        modules.append(nn.LeakyReLU())
+
+        modules.append(
+            nn.Sequential(
+                nn.Conv2d(in_channels, n_latent_channel, kernel_size=1, stride=1),
+                nn.LeakyReLU(),
+            )
+        )
+        self.cnn = nn.Sequential(*modules)
+
+        self.flatten_layer = nn.Flatten()
+
+        # Compute shape by doing one forward pass
+        with torch.no_grad():
+            x = observation_space.sample()
+            x = T.ToTensor()(x).unsqueeze(0)
+            x = self.cnn(x.float())
+            x = self.flatten_layer(x)
+            n_flatten = x.shape[1]
+
+        self.linear = nn.Sequential(
+            nn.Linear(n_flatten, 512),
+            nn.ReLU(),
+            # nn.Linear(256, 256),
+            # nn.ReLU(),
+            # nn.Linear(256, 256),
+            # nn.ReLU(),
+            nn.Linear(512, action_space.n),
+            # nn.ReLU(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.cnn(x)
+        x = self.flatten_layer(x)
+        return self.linear(x)
+
+
 class DVN_paper(nn.Module):
     def __init__(self, observation_space: gym.spaces.Box) -> None:
         super().__init__()
