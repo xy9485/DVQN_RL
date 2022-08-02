@@ -37,9 +37,9 @@ class VectorQuantizer(nn.Module):
 
         self.before_vq = nn.Sequential(
             nn.Conv2d(embedding_dim, embedding_dim, kernel_size=1, stride=1, padding=0),
-            nn.ReLU(),
-            # nn.Conv2d(embedding_dim, embedding_dim, kernel_size=1, stride=1, padding=0),
-            # nn.ReLU(),
+            nn.LeakyReLU(),
+            nn.Conv2d(embedding_dim, embedding_dim, kernel_size=1, stride=1, padding=0),
+            nn.LeakyReLU(),
         )
 
     def forward(self, latents: Tensor) -> Tensor:

@@ -471,20 +471,20 @@ def train_single_layer():
 
 
 def train_duolayer():
-    env_id = "PongNoFrameskip-v4"
-    # CarRacing-v0, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5, BreakoutNoFrameskip-v4, RiverraidNoFrameskip-v4
+    env_id = "BoxingNoFrameskip-v4"
+    # CarRacing-v0, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5, BreakoutNoFrameskip-v4, MontezumaRevengeNoFrameskip-v4, RiverraidNoFrameskip-v4
     # vae_version = "vqvae_c3_embedding16x64_3_duolayer"
 
-    for _ in range(5):
+    for rep in range(3):
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
         current_time = current_time.strftime("%b%d_%H-%M-%S")
         # 🐝 initialise a wandb run
         wandb.init(
             project="vqvae+latent_rl",
             # mode="disabled",
-            group="VaniDuo2",
+            group="VaniDuo3",
             # group="VaniDQN",
-            notes="using DQN_Big, omega=10",
+            notes="DQN_Big, leaky_relu",
             tags=[
                 # "duolayer",
                 # "as_vanilla_dqn",
@@ -514,12 +514,12 @@ def train_duolayer():
                 "lr_vqvae": 2.5e-4,
                 "lr_ground_Q": 2.5e-4,  # "lin_5.3e-4", 5e-4
                 "lr_abstract_V": 2.5e-4,  # "lin_5.3e-4", 5e-4
-                "batch_size": 256,
+                "batch_size": 64,
                 "validation_size": 128,
                 "validate_every": 10,
                 "size_replay_memory": int(1e5),
                 "gamma": 0.99,
-                "omega": 10,  # 2.5e-3, 1
+                "omega": 0.1,  # 2.5e-3, 1
                 "tau": "None",
                 "exploration_fraction": 0.9,
                 "exploration_initial_eps": 0.1,
@@ -697,7 +697,7 @@ def train_duolayer():
                     }
                     wandb.log({**metrics})
 
-                    print(">>>>>>>>>>>>>>>>Episode Done>>>>>>>>>>>>>>>>>")
+                    print(f">>>>>>>>>>>>>>>>Episode Done| Repetition {rep}>>>>>>>>>>>>>>>>>")
                     print(
                         "time cost so far: {:.3f} h".format(
                             (time.time() - time_start_training) / 3600
