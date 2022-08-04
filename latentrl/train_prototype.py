@@ -482,7 +482,7 @@ def train_duolayer():
         wandb.init(
             project="vqvae+latent_rl",
             # mode="disabled",
-            group="VQVAE_Duo4",
+            group="VQVAE_Duo_EMA_sync1k",
             # group="Vanilla DQN",
             tags=[
                 # "duolayer",
@@ -510,8 +510,8 @@ def train_duolayer():
                 # "reconstruction_path": None,
                 # "total_episodes": 1000,
                 "lr_vqvae": 2.5e-4,
-                "lr_ground_Q": "lin_5.3e-4",  # "lin_5.3e-4", 5e-4
-                "lr_abstract_V": "lin_5.3e-4",  # "lin_5.3e-4", 5e-4
+                "lr_ground_Q": "lin_2.5e-4",  # "lin_5.3e-4", 5e-4
+                "lr_abstract_V": "lin_2.5e-4",  # "lin_5.3e-4", 5e-4
                 "batch_size": 64,
                 "validation_size": 128,
                 "validate_every": 10,
@@ -524,10 +524,10 @@ def train_duolayer():
                 "exploration_final_eps": 0.01,
                 "save_model_every": 5e5,
                 "ground_learn_every": 4,
-                "ground_sync_every": 100,
+                "ground_sync_every": 1000,
                 "ground_gradient_steps": 1,
                 "abstract_learn_every": 4,
-                "abstract_sync_every": 100,
+                "abstract_sync_every": 1000,
                 "abstract_gradient_steps": 1,
                 "seed": int(time.time()),
                 "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),

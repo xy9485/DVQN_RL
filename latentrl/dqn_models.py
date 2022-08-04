@@ -118,25 +118,25 @@ class DQN(nn.Module):
         return self.head(x)
 
 
-class DQN_MLP(nn.Module):
-    def __init__(self, input_dim, output_dim):
-        super(DQN_MLP, self).__init__()
-        # print("input_dim", input_dim)
-        self.flatten_layer = nn.Flatten()
-        self.fc1 = nn.Linear(np.prod(input_dim), 256)
-        self.fc2 = nn.Linear(256, 256)
-        self.fc3 = nn.Linear(256, 256)
-        # self.fc4 = nn.Linear(256, 256)
-        self.head = nn.Linear(256, output_dim)
+# class DQN_MLP(nn.Module):
+#     def __init__(self, input_dim, output_dim):
+#         super(DQN_MLP, self).__init__()
+#         # print("input_dim", input_dim)
+#         self.flatten_layer = nn.Flatten()
+#         self.fc1 = nn.Linear(np.prod(input_dim), 256)
+#         self.fc2 = nn.Linear(256, 256)
+#         self.fc3 = nn.Linear(256, 256)
+#         # self.fc4 = nn.Linear(256, 256)
+#         self.head = nn.Linear(256, output_dim)
 
-    def forward(self, x):
-        # x = x.to(device)
-        x = self.flatten_layer(x)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = F.relu(self.fc3(x))
-        # x = F.relu(self.fc4(x))
-        return self.head(x)
+#     def forward(self, x):
+#         # x = x.to(device)
+#         x = self.flatten_layer(x)
+#         x = F.relu(self.fc1(x))
+#         x = F.relu(self.fc2(x))
+#         x = F.relu(self.fc3(x))
+#         # x = F.relu(self.fc4(x))
+#         return self.head(x)
 
 
 class DVN(nn.Module):

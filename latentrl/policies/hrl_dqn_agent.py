@@ -733,6 +733,7 @@ class DuoLayerAgent:
             num_embeddings=config.vqvae_num_embeddings,
             reconstruction_path=config.reconstruction_path,
         ).to(self.device)
+        self.vqvae_model.train()
 
         # <<<<<<<<<<<VQVAE<<<<<<<<<<<<
 
@@ -1299,7 +1300,8 @@ class DuoLayerAgent:
             param.grad.data.clamp_(-1, 1)
 
         for param in self.vqvae_model.parameters():
-            param.grad.data.clamp_(-1, 1)
+            if param.grad is not None:
+                param.grad.data.clamp_(-1, 1)
 
         # 2 Clip gradient norm
         # max_grad_norm = 10
