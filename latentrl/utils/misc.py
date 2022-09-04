@@ -274,6 +274,19 @@ def polyak_sync(
             # torch.add(target_param.data, param.data, alpha=(1 - tau), out=target_param.data)
 
 
+def soft_sync_params(
+    params: Iterable[torch.nn.Parameter],
+    target_params: Iterable[torch.nn.Parameter],
+    tau: float,
+) -> None:
+    with torch.no_grad():
+        # zip does not raise an exception if length of parameters does not match.
+        for param, target_param in zip(params, target_params):
+            target_param.data.mul_(1 - tau)
+            target_param.data.add_(tau * param.data)
+            # torch.add(target_param.data, param.data, alpha=(1 - tau), out=target_param.data)
+
+
 def zip_strict(*iterables: Iterable) -> Iterable:
     r"""
     ``zip()`` function but enforces that iterables are of equal length.

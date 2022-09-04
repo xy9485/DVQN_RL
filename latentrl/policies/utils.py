@@ -12,7 +12,7 @@ class ReplayMemory(object):
     ):
         self.memory = deque([], maxlen=capacity)
         self.Transition = namedtuple(
-            "Transition", ("state", "action", "next_state", "reward", "done")
+            "Transition", ("state", "action", "next_state", "reward", "terminated")
         )
 
     def push(self, *args):
@@ -32,6 +32,9 @@ class ReplayMemory(object):
         # to Transition of batch-arrays.
         return self.Transition(*zip(*transitions))
         # return random.sample(self.memory, self.batch_size)
+
+    def __len__(self):
+        return len(self.memory)
 
     def lazy_to_tensor(self, batch):
         states = list(batch.state)

@@ -3,6 +3,7 @@ import torch.nn as nn
 from torchvision.utils import save_image
 import time
 import os
+from torchsummary import summary
 
 
 class VAE(nn.Module):
@@ -14,7 +15,7 @@ class VAE(nn.Module):
         os.makedirs(f"../reconstruction/{self.vae_version}/", exist_ok=True)
         self.forward_call = 0
         if hidden_dims is None:
-            hidden_dims = [32, 64, 128, 256, 512]   # last layer of encoder hidden_dims[-1] * 4
+            hidden_dims = [32, 64, 128, 256, 512]  # last layer of encoder hidden_dims[-1] * 4
             # hidden_dims = [32, 64, 128, 256]    # last layer of encoder hidden_dims[-1] * 16
         self.encoder = Encoder(img_channels, latent_dims, hidden_dims)
         self.decoder = Decoder(img_channels, latent_dims, hidden_dims)
@@ -45,20 +46,20 @@ class VAE(nn.Module):
         self.forward_call += 1
         return y, mu, logvar
 
-    def loss_function(self,recon_x, x, mu, logvar):
+    def loss_function(self, recon_x, x, mu, logvar):
         recon_loss = nn.MSELoss(size_average=False)
         BCE = recon_loss(recon_x, x)
         KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
         return BCE + KLD, BCE, KLD
 
     def sample_and_decode(self, current_device, num_samples=1):
-        z = torch.randn(num_samples,
-                        self.latent_dims)
+        z = torch.randn(num_samples, self.latent_dims)
 
         z = z.to(current_device)
 
         samples = self.decoder(z)
         return samples
+
 
 class Encoder(nn.Module):
     def __init__(self, in_channels, latent_dims, hidden_dims):
@@ -68,10 +69,10 @@ class Encoder(nn.Module):
         for h_dim in hidden_dims:
             modules.append(
                 nn.Sequential(
-                    nn.Conv2d(in_channels, out_channels=h_dim,
-                              kernel_size=3, stride=2, padding=1),
+                    nn.Conv2d(in_channels, out_channels=h_dim, kernel_size=3, stride=2, padding=1),
                     nn.BatchNorm2d(h_dim),
-                    nn.LeakyReLU())
+                    nn.LeakyReLU(),
+                )
             )
             in_channels = h_dim
 
@@ -90,6 +91,7 @@ class Encoder(nn.Module):
 
         return mu, log_var
 
+
 class Decoder(nn.Module):
     def __init__(self, in_channels, latent_dims, hidden_dims):
         super().__init__()
@@ -101,30 +103,35 @@ class Decoder(nn.Module):
         for i in range(len(hidden_dims) - 1):
             modules.append(
                 nn.Sequential(
-                    nn.ConvTranspose2d(hidden_dims[i],
-                                       hidden_dims[i + 1],
-                                       kernel_size=3,
-                                       stride=2,
-                                       padding=1,
-                                       output_padding=1),
+                    nn.ConvTranspose2d(
+                        hidden_dims[i],
+                        hidden_dims[i + 1],
+                        kernel_size=3,
+                        stride=2,
+                        padding=1,
+                        output_padding=1,
+                    ),
                     nn.BatchNorm2d(hidden_dims[i + 1]),
-                    nn.LeakyReLU())
+                    nn.LeakyReLU(),
+                )
             )
 
         self.decoder = nn.Sequential(*modules)
 
         self.final_layer = nn.Sequential(
-            nn.ConvTranspose2d(hidden_dims[-1],
-                               hidden_dims[-1],
-                               kernel_size=3,
-                               stride=2,
-                               padding=1,
-                               output_padding=1),
+            nn.ConvTranspose2d(
+                hidden_dims[-1],
+                hidden_dims[-1],
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                output_padding=1,
+            ),
             nn.BatchNorm2d(hidden_dims[-1]),
             nn.LeakyReLU(),
-            nn.Conv2d(hidden_dims[-1], out_channels=3,
-                      kernel_size=3, padding=1),
-            nn.Tanh())
+            nn.Conv2d(hidden_dims[-1], out_channels=3, kernel_size=3, padding=1),
+            nn.Tanh(),
+        )
 
     def forward(self, z):
         result = self.decoder_input(z)
@@ -133,3 +140,9 @@ class Decoder(nn.Module):
         result = self.final_layer(result)
         return result
 
+
+if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = VAE(3, latent_dims=32, hidden_dims=[32, 64, 128, 256, 512]).to(device)
+    summary(model.encoder.encoder, (3, 64, 64))
+    # summary(model.encoder, (3, 84, 84))

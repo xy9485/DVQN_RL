@@ -471,7 +471,7 @@ def train_single_layer():
 
 
 def train_duolayer():
-    env_id = "BoxingNoFrameskip-v4"
+    env_id = "CarRacing-v0"
     # CarRacing-v0, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5, BreakoutNoFrameskip-v4, RiverraidNoFrameskip-v4
     # vae_version = "vqvae_c3_embedding16x64_3_duolayer"
 
@@ -482,7 +482,7 @@ def train_duolayer():
         wandb.init(
             project="vqvae+latent_rl",
             # mode="disabled",
-            group="VQVAE_Duo_EMA_sync1k",
+            group="VQVAE_Duo_EMA_sync8",
             # group="Vanilla DQN",
             tags=[
                 # "duolayer",
@@ -496,38 +496,38 @@ def train_duolayer():
             ],  # vqvae2(32-64-128), vqvae(128-256)
             config={
                 "env_id": env_id,
-                "total_timesteps": 1e6,
-                "init_steps": 10000,
-                # "action_repetition": 3,  # 3 for carracing, 2 for boxing
-                # "n_frame_stack": 4,
+                "total_timesteps": 3e5,
+                "init_steps": 1000,
+                "action_repetition": 3,  # 3 for carracing, 2 for boxing
+                "n_frame_stack": 4,
                 # "dropout": random.uniform(0.01, 0.80),
                 "vqvae_inchannel": int(3 * 1),
-                "vqvae_latent_channel": 32,  # 16
+                "vqvae_latent_channel": 16,  # 16
                 "vqvae_num_embeddings": 64,  # 64
                 "reconstruction_path": os.path.join(
                     "/workspace/repos_dev/VQVAE_RL/reconstruction/duolayer", env_id, current_time
                 ),
                 # "reconstruction_path": None,
                 # "total_episodes": 1000,
-                "lr_vqvae": 2.5e-4,
-                "lr_ground_Q": "lin_2.5e-4",  # "lin_5.3e-4", 5e-4
-                "lr_abstract_V": "lin_2.5e-4",  # "lin_5.3e-4", 5e-4
-                "batch_size": 64,
+                "lr_vqvae": 5e-4,
+                "lr_ground_Q": 2.5e-4,  # "lin_5.3e-4", 5e-4
+                "lr_abstract_V": 2.5e-4,  # "lin_5.3e-4", 5e-4
+                "batch_size": 256,
                 "validation_size": 128,
                 "validate_every": 10,
                 "size_replay_memory": int(1e5),
-                "gamma": 0.99,
-                "omega": 1e-1,  # 2.5e-3, 1
+                "gamma": 0.97,
+                "omega": 0,  # 2.5e-3, 1
                 "tau": "None",
                 "exploration_fraction": 0.9,
                 "exploration_initial_eps": 0.1,
                 "exploration_final_eps": 0.01,
                 "save_model_every": 5e5,
                 "ground_learn_every": 4,
-                "ground_sync_every": 1000,
+                "ground_sync_every": 8,
                 "ground_gradient_steps": 1,
                 "abstract_learn_every": 4,
-                "abstract_sync_every": 1000,
+                "abstract_sync_every": 8,
                 "abstract_gradient_steps": 1,
                 "seed": int(time.time()),
                 "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
@@ -571,9 +571,9 @@ def train_duolayer():
         # config = SimpleNamespace(**config)
 
         # The main training loop
-        # env = make_env(env_id, config)
-        env = make_atari(env_id)
-        env = wrap_deepmind(env)
+        env = make_env(env_id, config)
+        # env = make_atari(env_id)
+        # env = wrap_deepmind(env)
         agent = DuoLayerAgent(env, config)
         # print("agent.policy_mlp_net:", agent.ground_Q_net)
         # print("agent.vqvae_model:", agent.vqvae_model)

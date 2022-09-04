@@ -1,0 +1,112 @@
+CarRacing-v2:
+  env_type: CarRacing
+  total_timesteps: 300000
+  init_steps: 1000
+  hidden_dims:
+    - 32
+    - 64
+  embedding_dim: 32
+  n_clusters: 128
+  lr_ground_Q: 0.00015
+  lr_abstract_V: 0.00015
+  lr_encoder: 0.00025
+  lr_decoder: 0.00025
+  batch_size: 100
+  size_replay_memory: 100000
+  gamma: 0.97
+  omega: 0
+  ground_tau: 0.02
+  abstract_tau: 0.02
+  encoder_tau: 0.1
+  exploration_fraction: 0.9
+  exploration_initial_eps: 0.1
+  exploration_final_eps: 0.01
+  save_model_every: 500000.0
+  ground_learn_every: 4
+  ground_sync_every: 8
+  ground_gradient_steps: 1
+  abstract_learn_every: 4
+  abstract_sync_every: 8
+  abstract_gradient_steps: 1
+  clip_grad: false
+  validate_every: 1000
+  reset_training_info_every: 2000
+  save_recon_every: 1000
+  buffer_recent_states_every: 1000
+
+MiniGrid-Empty-16x16-v0:
+  env_type: GymMiniGrid
+  total_timesteps: 3000
+  init_steps: 1000
+  hidden_dims:
+    - 16
+    - 32
+  embedding_dim: 32
+  n_clusters: 6
+  lr_ground_Q: 0.00015
+  lr_abstract_V: 0.00015
+  lr_encoder: 0.00025
+  lr_decoder: 0.00025
+  batch_size: 100
+  size_replay_memory: 100000
+  gamma: 0.99
+  omega: 0
+  ground_tau: 0.1
+  abstract_tau: 0.1
+  encoder_tau: 0.5
+  exploration_fraction: 0.9
+  exploration_initial_eps: 0.1
+  exploration_final_eps: 0.01
+  save_model_every: 500000.0
+  ground_learn_every: 4
+  ground_sync_every: 8
+  ground_gradient_steps: 1
+  abstract_learn_every: 4
+  abstract_sync_every: 8
+  abstract_gradient_steps: 1
+  clip_grad: false
+  validate_every: 1000
+  reset_training_info_every: 2000
+  save_recon_every: 1000
+  buffer_recent_states_every: 1000
+
+MiniGrid-Empty-Random-6x6-v0:
+  env_type: GymMiniGrid
+  total_timesteps: 40000
+  init_steps: 5000
+  hidden_dims:
+    - 16
+    - 32
+  embedding_dim: 3
+  n_clusters: 4
+  lr_ground_Q: 0.00015
+  lr_abstract_V: 0.00015
+  lr_encoder: 0.004
+  lr_decoder: 0.004
+  batch_size: 128
+  size_replay_memory: 10000
+  gamma: 0.99
+  omega: 1
+  ground_tau: 0.2
+  abstract_tau: 0.2
+  encoder_tau: 0.2
+  exploration_fraction: 0.9
+  exploration_initial_eps: 0.3
+  exploration_final_eps: 0.01
+  save_model_every: 500000.0
+  ground_learn_every: 4
+  ground_sync_every: 8
+  ground_gradient_steps: 1
+  abstract_learn_every: 4
+  abstract_sync_every: 8
+  abstract_gradient_steps: 1
+  learn_with_ae: True
+  learn_with_kmeans: True
+  wandb_group: AE_KMeans_DQN
+  # wandb_group: AE_DQN
+  # wandb_group: DQN
+  clip_grad: True
+  validate_every: 1000
+  reset_training_info_every: 2000
+  save_recon_every: 1000
+  buffer_recent_states_every: 1000

@@ -1,3 +1,4 @@
+from os import truncate
 import time
 from collections import deque
 from statistics import mean
@@ -313,7 +314,7 @@ class FrameStackWrapper(gym.Wrapper):
         self.shift_size_obs = self.env.observation_space.low.shape[self.stack_dimension]
 
     def step(self, action):
-        obs, reward, done, info = self.env.step(action)
+        obs, reward, terminated, truncated, info = self.env.step(action)
         # start_time = time.time()
 
         self.stackedobs = np.roll(
@@ -322,11 +323,11 @@ class FrameStackWrapper(gym.Wrapper):
         self.stackedobs[..., -self.shift_size_obs :] = obs
 
         # self.time_step_wait = time.time() - start_time
-        return self.stackedobs, reward, done, info
+        return self.stackedobs, reward, terminated, truncated, info
 
-    def reset(self):
+    def reset(self, **kwargs):
         self.stackedobs = np.zeros(self.observation_space.low.shape, dtype=np.uint8)
-        obs = self.env.reset()
+        obs = self.env.reset(**kwargs)
         self.stackedobs[..., -self.shift_size_obs :] = obs
 
         return self.stackedobs
@@ -1040,23 +1041,16 @@ def pack_wrappers2(
     return env
 
 
-class ActionDiscreteWrapper(gym.Wrapper):  # action space is discrete, designed for CarRacing-v0
-    def __init__(self, env, action_repetition=3):
+class ActionDiscreteWrapper(gym.ActionWrapper):
+    # action space is discrete, designed for CarRacing-v0
+    def __init__(self, env):
         super().__init__(env)
-        self.action_repetition = action_repetition
         self.action_list = [k for k in it.product([-1, -0.5, 0, 0.5, 1], [1, 0], [0.2, 0])]
         # self.action_list = [k for k in it.product([-1, -0.5, 0, 0.5, 1], [1, 0.5], [0.8, 0])]
         self.action_space = Discrete(20)
 
-    def step(self, action: int):
-        action = self.action_list[action]
-        accumulated_reward = 0
-        for _ in range(self.action_repetition):
-            obs, reward, done, info = self.env.step(action)
-            accumulated_reward += reward
-            if done:
-                break
-        return obs, accumulated_reward, done, info
+    def action(self, action):
+        return self.action_list[action]
 
 
 class ActionRepetitionWrapper(gym.Wrapper):
@@ -1066,21 +1060,12 @@ class ActionRepetitionWrapper(gym.Wrapper):
 
     def step(self, action: int):
         accumulated_reward = 0
-        positive_accumulated_reward = 0
         for _ in range(self.action_repetition):
-            # self.env.render(mode="human")
-            # time.sleep(0.1)
-            obs, reward, done, info = self.env.step(action)
+            obs, reward, terminated, truncated, info = self.env.step(action)
             accumulated_reward += reward
-            if reward >= 0:
-                positive_accumulated_reward += reward
-            if done:
+            if terminated or truncated:
                 break
-        return obs, accumulated_reward, done, info
-
-    # def reset(self):
-    #     obs = self.env.reset()
-    #     return obs
+        return obs, accumulated_reward, terminated, truncated, info
 
 
 class EpisodeEarlyStopWrapper(gym.Wrapper):
@@ -1093,21 +1078,21 @@ class EpisodeEarlyStopWrapper(gym.Wrapper):
 
     def step(self, action: int):
         # modify rew
-        obs, reward, done, info = self.env.step(action)
+        obs, reward, terminated, truncated, info = self.env.step(action)
         early_done, punishment = self.check_early_stop2(reward)
         if early_done:
             reward += punishment
-            done = True
+            truncated = True
         self.episode_reward += reward
 
         # if done or early_done:
         #     self.episode_reward = 0
         #     done = True
 
-        return obs, reward, done, info
+        return obs, reward, terminated, truncated, info
 
-    def reset(self):
-        obs = self.env.reset()
+    def reset(self, **kwargs):
+        obs = self.env.reset(**kwargs)
         self.episode_reward = 0
         return obs
 
