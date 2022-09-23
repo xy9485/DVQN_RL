@@ -1,18 +1,16 @@
 from collections import deque, namedtuple
 import random
-
+import torch
 import numpy as np
 import torchvision.transforms as T
 
 
 class ReplayMemory(object):
-    def __init__(
-        self,
-        capacity,
-    ):
+    def __init__(self, capacity, device):
         self.memory = deque([], maxlen=capacity)
+        self.device = device
         self.Transition = namedtuple(
-            "Transition", ("state", "action", "next_state", "reward", "terminated")
+            "Transition", ("state", "action", "next_state", "reward", "terminated", "info")
         )
 
     def push(self, *args):
@@ -30,8 +28,31 @@ class ReplayMemory(object):
             transitions = random.sample(self.memory, batch_size)
         # This converts batch-array of Transitions
         # to Transition of batch-arrays.
-        return self.Transition(*zip(*transitions))
-        # return random.sample(self.memory, self.batch_size)
+        batch = self.Transition(*zip(*transitions))
+        state_batch = np.stack(batch.state, axis=0).transpose(0, 3, 1, 2)
+        next_state_batch = np.stack(batch.next_state, axis=0).transpose(0, 3, 1, 2)
+        state_batch = torch.from_numpy(state_batch).contiguous().float().to(self.device)
+        next_state_batch = torch.from_numpy(next_state_batch).contiguous().float().to(self.device)
+        # batch = self.memory.lazy_sample(batch_size=self.batch_size)
+        # state_batch = torch.cat(batch.state).to(self.device)
+        # next_state_batch = torch.cat(batch.next_state).to(self.device)
+        # action_batch = torch.cat(batch.action).to(self.device)
+        # reward_batch = torch.cat(batch.reward).to(self.device)
+        # terminated_batch = torch.cat(batch.terminated).to(self.device)
+
+        action_batch = torch.tensor(batch.action).unsqueeze(1).to(self.device)
+        reward_batch = torch.tensor(batch.reward).unsqueeze(1).to(self.device)
+        terminated_batch = torch.tensor(batch.terminated).unsqueeze(1).to(self.device)
+        info_batch = batch.info
+
+        return (
+            state_batch / 255.0,
+            action_batch,
+            next_state_batch / 255.0,
+            reward_batch,
+            terminated_batch,
+            info_batch,
+        )
 
     def __len__(self):
         return len(self.memory)
@@ -69,3 +90,19 @@ class ReplayMemory(object):
 
     def __len__(self):
         return len(self.memory)
+
+
+class eval_mode(object):
+    def __init__(self, *models):
+        self.models = models
+
+    def __enter__(self):
+        self.prev_states = []
+        for model in self.models:
+            self.prev_states.append(model.training)
+            model.train(False)
+
+    def __exit__(self, *args):
+        for model, state in zip(self.models, self.prev_states):
+            model.train(state)
+        return False

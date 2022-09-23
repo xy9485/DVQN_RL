@@ -1,7 +1,7 @@
 CarRacing-v2:
   env_type: CarRacing
   total_timesteps: 300000
-  init_steps: 1000
+  init_steps: 300
   hidden_dims:
     - 32
     - 64
@@ -33,56 +33,81 @@ CarRacing-v2:
   reset_training_info_every: 2000
   save_recon_every: 1000
   buffer_recent_states_every: 1000
+  learn_with_ae: False
+  init_clustering: False
+  # wandb_group: AE_KMeans_DQN
+  # wandb_group: AE_DQN
+  wandb_group: DQN
 
-MiniGrid-Empty-16x16-v0:
+MiniGrid-Empty-v0-table:
   env_type: GymMiniGrid
-  total_timesteps: 3000
+  env_size: 32
+  abs_ticks:
+    # - [5, 10, 30]
+    - [10, 20, 30]
+  # - [20, 25, 30]
+  # env_size: 16
+  # abs_ticks:
+  # - [3, 6, 14]
+  # - [5, 10, 14]
+  # - [6, 12, 14]
+  agent_start_pos: [1, 1]
+  total_timesteps: 20000
   init_steps: 1000
   hidden_dims:
     - 16
     - 32
   embedding_dim: 32
-  n_clusters: 6
-  lr_ground_Q: 0.00015
-  lr_abstract_V: 0.00015
-  lr_encoder: 0.00025
-  lr_decoder: 0.00025
-  batch_size: 100
+  n_clusters: 9
+  lr_ground_Q: 0.1
+  lr_abstract_V: 0.1
+  # lr_encoder: 0.0005
+  # lr_decoder: 0.0005
+  batch_size: 256
   size_replay_memory: 100000
   gamma: 0.99
-  omega: 0
-  ground_tau: 0.1
-  abstract_tau: 0.1
-  encoder_tau: 0.5
-  exploration_fraction: 0.9
-  exploration_initial_eps: 0.1
-  exploration_final_eps: 0.01
+  omega: 1
+  ground_tau: 1
+  # abstract_tau: 0.2
+  # encoder_tau: 0.2
+  exploration_fraction: 1
+  exploration_initial_eps: 1
+  exploration_final_eps: 0.1
   save_model_every: 500000.0
   ground_learn_every: 4
   ground_sync_every: 8
   ground_gradient_steps: 1
-  abstract_learn_every: 4
-  abstract_sync_every: 8
-  abstract_gradient_steps: 1
-  clip_grad: false
-  validate_every: 1000
-  reset_training_info_every: 2000
+  # abstract_learn_every: 4
+  # abstract_sync_every: 8
+  # abstract_gradient_steps: 1
+  # learn_with_ae: True
+  # init_clustering: True
+  use_shaping: True
+  # wandb_group: AE_KMeans_DQN
+  # wandb_group: AE_DQN
+  # wandb_group: DQN
+  wandb_group: shp_32x32_omg1_eps0.1_test3
+  wandb_notes: shaping not using just updated abs-values and shaping gamma is 1
+  # wandb_tags: ["shp", "omg1", "tbl", "16x16", "(1,1)"]
+  clip_grad: True
+  # validate_every: 1000
+  reset_training_info_every: 500
   save_recon_every: 1000
-  buffer_recent_states_every: 1000
+  # buffer_recent_states_every: 1000
 
 MiniGrid-Empty-Random-6x6-v0:
   env_type: GymMiniGrid
   total_timesteps: 40000
-  init_steps: 5000
+  init_steps: 4000
   hidden_dims:
     - 16
     - 32
-  embedding_dim: 3
+  embedding_dim: 32
   n_clusters: 4
   lr_ground_Q: 0.00015
   lr_abstract_V: 0.00015
-  lr_encoder: 0.004
-  lr_decoder: 0.004
+  lr_encoder: 0.0005
+  lr_decoder: 0.0005
   batch_size: 128
   size_replay_memory: 10000
   gamma: 0.99
@@ -101,7 +126,48 @@ MiniGrid-Empty-Random-6x6-v0:
   abstract_sync_every: 8
   abstract_gradient_steps: 1
   learn_with_ae: True
-  learn_with_kmeans: True
+  init_clustering: True
+  wandb_group: AE_KMeans_DQN
+  # wandb_group: AE_DQN
+  # wandb_group: DQN
+  clip_grad: True
+  validate_every: 1000
+  reset_training_info_every: 2000
+  save_recon_every: 1000
+  buffer_recent_states_every: 1000
+
+MiniGrid-Empty-RGB:
+  env_type: GymMiniGrid
+  total_timesteps: 40000
+  init_steps: 4000
+  hidden_dims:
+    - 16
+    - 32
+  embedding_dim: 32
+  n_clusters: 4
+  lr_ground_Q: 0.00015
+  lr_abstract_V: 0.00015
+  lr_encoder: 0.0005
+  lr_decoder: 0.0005
+  batch_size: 128
+  size_replay_memory: 10000
+  gamma: 0.99
+  omega: 1
+  ground_tau: 0.2
+  abstract_tau: 0.2
+  encoder_tau: 0.2
+  exploration_fraction: 0.9
+  exploration_initial_eps: 0.3
+  exploration_final_eps: 0.01
+  save_model_every: 500000.0
+  ground_learn_every: 4
+  ground_sync_every: 8
+  ground_gradient_steps: 1
+  abstract_learn_every: 4
+  abstract_sync_every: 8
+  abstract_gradient_steps: 1
+  learn_with_ae: True
+  init_clustering: True
   wandb_group: AE_KMeans_DQN
   # wandb_group: AE_DQN
   # wandb_group: DQN

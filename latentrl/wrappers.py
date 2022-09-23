@@ -1,3 +1,4 @@
+import math
 from os import truncate
 import time
 from collections import deque
@@ -13,7 +14,7 @@ from gym.spaces import Discrete
 from gym.envs.box2d.car_racing import CarRacing
 from gym.envs.box2d.car_dynamics import Car
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 from gym import spaces
 from stable_baselines3 import SAC, DQN
 from stable_baselines3.common.vec_env import VecEnvWrapper, VecEnv
@@ -25,6 +26,9 @@ from models.vae import VAE
 from models.vqvae import VQVAE
 import importlib
 from typing import List, Set, Dict, Tuple, Optional, Union, Any, Callable
+import cv2
+
+cv2.ocl.setUseOpenCL(False)
 
 
 class GeneralWrapper(gym.Wrapper):
@@ -231,7 +235,7 @@ class PreprocessObservationWrapper(
         horizontal_cut_r=None,
         shape=64,
         num_output_channels=3,
-        preprocess_mode="transforms",
+        preprocess_mode="torchvision",  # "torchvision" or "PIL" or "cv2"
     ):
         super().__init__(env)
         self.shape = (shape, shape)
@@ -251,61 +255,103 @@ class PreprocessObservationWrapper(
             dtype=np.uint8,  # this is important to have
         )
 
-    def observation_(self, obs):
+    def observation(self, obs):
         obs = obs[
             self.vertical_cut_u : self.vertical_cut_d,
             self.horizontal_cut_l : self.horizontal_cut_r,
             :,
         ]
-        obs = Image.fromarray(obs, mode="RGB")
-        obs = obs.resize(self.shape, Image.BILINEAR)
-        return np.array(obs)
-
-    def observation(self, obs):
-        if self.env.spec.id == "Boxing-v0" or self.env.spec.id == "ALE/Skiing-v5":
+        if self.preprocess_mode == "PIL":
+            obs = Image.fromarray(obs, mode="RGB")
+            obs = obs.resize(self.shape, Image.BILINEAR)
+            if self.num_output_channels == 1:
+                obs = ImageOps.grayscale(obs)
+            return np.array(obs)
+        elif self.preprocess_mode == "cv2":
+            obs = cv2.resize(obs, self.shape, interpolation=cv2.INTER_AREA)
+            if self.num_output_channels == 1:
+                obs = cv2.cvtColor(obs, cv2.COLOR_RGB2GRAY)
+                obs = np.array(obs)[..., np.newaxis]
+            return np.array(obs)
+        elif self.preprocess_mode == "torchvision":
             obs = T.ToPILImage()(obs)
             # interpolation=InterpolationMode.BILINEAR
             obs = T.Resize(self.shape)(obs)
             if self.num_output_channels == 1:
                 obs = T.Grayscale(num_output_channels=self.num_output_channels)(obs)
                 return np.array(obs)[..., np.newaxis]
-            # obs = T.Grayscale(num_output_channels=self.num_output_channels)(obs)
-            # obs = obs.float()
-            return np.array(obs)
-        if self.preprocess_mode == "PIL":
-            obs = obs[
-                self.vertical_cut_u : self.vertical_cut_d,
-                self.horizontal_cut_l : self.horizontal_cut_r,
-                :,
-            ]
-            obs = Image.fromarray(obs, mode="RGB")
-            obs = obs.resize(self.shape, Image.BILINEAR)
-            return np.array(obs)
-        elif self.preprocess_mode == "transforms":
-            obs = obs[
-                self.vertical_cut_u : self.vertical_cut_d,
-                self.horizontal_cut_l : self.horizontal_cut_r,
-                :,
-            ]
-            obs = T.ToPILImage()(obs)
-            # interpolation=InterpolationMode.BILINEAR
-            obs = T.Resize(self.shape)(obs)
-            obs = T.Grayscale(num_output_channels=self.num_output_channels)(obs)
-            # obs = obs.float()
-            if self.num_output_channels == 1:
-                return np.array(obs)[..., np.newaxis]
                 # or return np.expand_dims(np.array(obs), -1)
             return np.array(obs)
 
 
-class FrameStackWrapper(gym.Wrapper):
-    def __init__(self, env, n_frame_stack):
+class WarpFrameRGB(gym.ObservationWrapper):
+    """Warp frames to 84x84 as done in the Nature paper and later work.
+
+    :param gym.Env env: the environment to wrap.
+    """
+
+    def __init__(self, env):
         super().__init__(env)
-        self.n_frame_stack = n_frame_stack
+        self.size = 84
+        self.observation_space = gym.spaces.Box(
+            low=np.min(env.observation_space.low),
+            high=np.max(env.observation_space.high),
+            shape=(self.size, self.size) + (3,),
+            dtype=env.observation_space.dtype,
+        )
+
+    def observation(self, frame):
+        """returns the current observation from a frame"""
+        # frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        frame = cv2.resize(frame, (self.size, self.size), interpolation=cv2.INTER_AREA)
+        # cv2.INTER_LINEAR, cv2.INTER_AREA, cv2.INTER_CUBIC, cv2.INTER_NEAREST
+        return frame
+
+
+class FrameStack(gym.Wrapper):
+    """Stack n_frames last frames.
+
+    :param gym.Env env: the environment to wrap.
+    :param int n_frames: the number of frames to stack.
+    """
+
+    def __init__(self, env, n_frames):
+        super().__init__(env)
+        self.n_frames = n_frames
+        self.frames = deque([], maxlen=n_frames)
+        shp = env.observation_space.shape
+        self.observation_space = spaces.Box(
+            low=0,
+            high=255,
+            shape=(shp[:-1] + (shp[-1] * n_frames,)),
+            dtype=env.observation_space.dtype,
+        )
+
+    def reset(self):
+        obs, info = self.env.reset()
+        for _ in range(self.n_frames):
+            self.frames.append(obs)
+        return self._get_ob(), info
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        self.frames.append(obs)
+        return self._get_ob(), reward, terminated, truncated, info
+
+    def _get_ob(self):
+        # the original wrapper use `LazyFrames` but since we use np buffer,
+        # it has no effect
+        return np.concatenate(self.frames, axis=2)
+
+
+class FrameStackWrapper(gym.Wrapper):
+    def __init__(self, env, n_frames):
+        super().__init__(env)
+        self.n_frames = n_frames
         self.repeat_axis = -1
         self.stack_dimension = -1
-        low = np.repeat(self.env.observation_space.low, self.n_frame_stack, axis=self.repeat_axis)
-        high = np.repeat(self.env.observation_space.high, self.n_frame_stack, axis=self.repeat_axis)
+        low = np.repeat(self.env.observation_space.low, self.n_frames, axis=self.repeat_axis)
+        high = np.repeat(self.env.observation_space.high, self.n_frames, axis=self.repeat_axis)
         self.observation_space = spaces.Box(
             low=low, high=high, dtype=self.env.observation_space.dtype
         )
@@ -327,10 +373,10 @@ class FrameStackWrapper(gym.Wrapper):
 
     def reset(self, **kwargs):
         self.stackedobs = np.zeros(self.observation_space.low.shape, dtype=np.uint8)
-        obs = self.env.reset(**kwargs)
+        obs, info = self.env.reset(**kwargs)
         self.stackedobs[..., -self.shift_size_obs :] = obs
 
-        return self.stackedobs
+        return self.stackedobs, info
 
 
 class EncodeWrapper(gym.Wrapper):
@@ -1338,7 +1384,7 @@ class LazyFramesCustom(object):
 
 
 class FrameStackCustom(gym.Wrapper):
-    def __init__(self, env, k):
+    def __init__(self, env, n_frames):
         """Stack k last frames.
         Returns lazy array, which is much more memory efficient.
         See Also
@@ -1346,27 +1392,114 @@ class FrameStackCustom(gym.Wrapper):
         baselines.common.atari_wrappers.LazyFrames
         """
         gym.Wrapper.__init__(self, env)
-        self.k = k
-        self.frames = deque([], maxlen=k)
+        self.n_frames = n_frames
+        self.frames = deque([], maxlen=n_frames)
         shp = env.observation_space.shape
         self.observation_space = gym.spaces.Box(
-            low=0, high=255, shape=(shp[0], shp[1], shp[2] * k), dtype=env.observation_space.dtype
+            low=0,
+            high=255,
+            shape=(shp[0], shp[1], shp[2] * n_frames),
+            dtype=env.observation_space.dtype,
         )
 
     def reset(self):
-        ob = self.env.reset()
-        for _ in range(self.k):
-            self.frames.append(ob)
+        obs = self.env.reset()
+        for _ in range(self.n_frames):
+            self.frames.append(obs)
         return self._get_ob()
 
     def step(self, action):
-        ob, reward, done, info = self.env.step(action)
-        self.frames.append(ob)
+        obs, reward, done, info = self.env.step(action)
+        self.frames.append(obs)
         return self._get_ob(), reward, done, info
 
     def _get_ob(self):
-        assert len(self.frames) == self.k
+        assert len(self.frames) == self.n_frames
         return LazyFramesCustom(list(self.frames))
+
+
+class MinigridInfoWrapper(gym.Wrapper):
+    def __init__(self, env):
+        super().__init__(env)
+
+    def step(self, action):
+        agent_pos1 = self.env.agent_pos
+        agent_dir1 = self.env.agent_dir
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        info["agent_pos2"] = self.env.agent_pos
+        info["agent_dir2"] = self.env.agent_dir
+        info["agent_pos1"] = agent_pos1
+        info["agent_dir1"] = agent_dir1
+        return obs, reward, terminated, truncated, info
+
+    def step_(self, action):
+        info["agent_pos1"] = info["agent_pos2"]
+        info["agent_dir1"] = info["agent_dir2"]
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        info["agent_pos2"] = self.env.agent_pos
+        info["agent_dir2"] = self.env.agent_dir
+
+        return obs, reward, terminated, truncated, info
+
+    def reset(self):
+        env, info = self.env.reset()
+        info["agent_pos2"] = self.env.agent_pos
+        info["agent_dir2"] = self.env.agent_dir
+        # info["agent_pos1"] = None
+        # info["agent_dir1"] = None
+        return env, info
+
+
+class MinigridEmptyRewardWrapper(gym.Wrapper):
+    def __init__(self, env):
+        super().__init__(env)
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        if terminated:
+            reward = 1
+        else:
+            reward = -0.01
+        return obs, reward, terminated, truncated, info
+
+
+class StateBonusCustom(gym.Wrapper):
+    """
+    Adds an exploration bonus based on which positions
+    are visited on the grid.
+    """
+
+    def __init__(self, env):
+        super().__init__(env)
+        self.counts = {}
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        info["original_reward"] = reward
+
+        # Tuple based on which we index the counts
+        # We use the position after an update
+        env = self.unwrapped
+        tup = tuple(env.agent_pos)
+
+        # Get the count for this key
+        pre_count = 0
+        if tup in self.counts:
+            pre_count = self.counts[tup]
+
+        # Update the count for this key
+        new_count = pre_count + 1
+        self.counts[tup] = new_count
+
+        bonus = 1 / math.sqrt(new_count)
+        reward += bonus
+
+        info["bonus"] = bonus
+
+        return obs, reward, terminated, truncated, info
+
+    def reset(self, **kwargs):
+        return self.env.reset(**kwargs)
 
 
 if __name__ == "__main__":

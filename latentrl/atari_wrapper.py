@@ -51,8 +51,8 @@ class NoopResetEnv(gym.Wrapper):
         else:
             noops = self.unwrapped.np_random.randint(1, self.noop_max + 1)
         for _ in range(noops):
-            obs, _, done, _ = self.env.step(self.noop_action)
-            if done:
+            obs, _, terminated, truncated, _ = self.env.step(self.noop_action)
+            if terminated or truncated:
                 obs = self.env.reset()
         return obs
 
@@ -151,15 +151,15 @@ class MaxAndSkipEnv(gym.Wrapper):
         """Step the environment with the given action. Repeat action, sum
         reward, and max over last observations.
         """
-        obs_list, total_reward, done = [], 0.0, False
+        obs_list, total_reward = [], 0.0
         for _ in range(self._skip):
-            obs, reward, done, info = self.env.step(action)
+            obs, reward, terminated, truncated, info = self.env.step(action)
             obs_list.append(obs)
             total_reward += reward
-            if done:
+            if terminated or truncated:
                 break
         max_frame = np.max(obs_list[-2:], axis=0)
-        return max_frame, total_reward, done, info
+        return max_frame, total_reward, terminated, truncated, info
 
 
 class ClipRewardEnv(gym.RewardWrapper):
@@ -189,14 +189,17 @@ class WarpFrame(gym.ObservationWrapper):
         self.observation_space = gym.spaces.Box(
             low=np.min(env.observation_space.low),
             high=np.max(env.observation_space.high),
-            shape=(self.size, self.size),
+            shape=(self.size, self.size) + (1,),
             dtype=env.observation_space.dtype,
         )
 
     def observation(self, frame):
         """returns the current observation from a frame"""
         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        return cv2.resize(frame, (self.size, self.size), interpolation=cv2.INTER_AREA)
+        frame = cv2.resize(frame, (self.size, self.size), interpolation=cv2.INTER_AREA)
+        frame = np.array(frame)[..., np.newaxis]
+        return frame
+        # return np.expand_dims(np.array(frame), -1)
 
 
 class WarpFrame2(gym.ObservationWrapper):
@@ -309,15 +312,15 @@ class FrameStack(gym.Wrapper):
         pass
 
     def reset(self):
-        obs = self.env.reset()
+        obs, info = self.env.reset()
         for _ in range(self.n_frames):
             self.frames.append(obs)
-        return self._get_ob()
+        return self._get_ob(), info
 
     def step(self, action):
-        obs, reward, done, info = self.env.step(action)
+        obs, reward, terminated, truncated, info = self.env.step(action)
         self.frames.append(obs)
-        return self._get_ob(), reward, done, info
+        return self._get_ob(), reward, terminated, truncated, info
 
     def _get_ob(self):
         # the original wrapper use `LazyFrames` but since we use np buffer,
@@ -388,6 +391,7 @@ def make_env_atari(env_id, episode_life=True, clip_rewards=True, frame_stack=4, 
     assert "NoFrameskip" in env.spec.id
     env = NoopResetEnv(env, noop_max=30)
     env = MaxAndSkipEnv(env, skip=4)
+    # Below: Configure environment for DeepMind-style Atari.
     if episode_life:
         env = EpisodicLifeEnv(env)
     # if "FIRE" in env.unwrapped.get_action_meanings():

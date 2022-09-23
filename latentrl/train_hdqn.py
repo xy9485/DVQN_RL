@@ -34,7 +34,8 @@ from torch.utils.tensorboard import SummaryWriter
 from torchsummary import summary
 
 from latentrl.hdqn import HDQN
-from latentrl.hdqn_vae import HDQN_KMeans
+from latentrl.hdqn_vae import HDQN_KMeans_VAE, HDQN_ManualAbs
+from latentrl.policies import utils
 
 print("sys.path:", sys.path)
 import wandb
@@ -52,20 +53,40 @@ from wrappers import (
     EncodeStackWrapper,
     EpisodeEarlyStopWrapper,
     EpisodicLifeEnvCustom,
+    FrameStack,
     FrameStackCustom,
     FrameStackWrapper,
+    MinigridEmptyRewardWrapper,
+    MinigridInfoWrapper,
+    StateBonusCustom,
+    WarpFrameRGB,
     PreprocessObservationWrapper,
     pack_env_wrappers,
 )
 
-from atari_wrapper import *
+# from atari_wrapper import (
+#     # NoopResetEnv,
+#     # MaxAndSkipEnv,
+#     # FireResetEnv,
+#     # EpisodicLifeEnv,
+#     # WarpFrame,
+#     # ClipRewardEnv,
+#     # FrameStack,
+#     # ScaledFloatFrame,
+#     make_env_atari,
+# )
 from gym_minigrid.wrappers import RGBImgObsWrapper, FullyObsWrapper, ImgObsWrapper, StateBonus
 from gym_minigrid.envs.empty import EmptyEnv
+from gym_minigrid.minigrid import MiniGridEnv
 
 
 def make_env_carracing(env_id):
     # env = gym.make(env_id).unwrapped
-    env = gym.make(env_id, new_step_api=True, continuous=True)
+    env = gym.make(
+        env_id,
+        continuous=True,
+        # render_mode="human",
+    )
     # env = gym.make(
     #     env_id,
     #     # frameskip=(3, 7),
@@ -140,34 +161,15 @@ def make_env_carracing(env_id):
         PreprocessObservationWrapper,
         # EncodeStackWrapper,
         # PunishRewardWrapper,
-        FrameStackWrapper,
+        # FrameStackWrapper,
+        FrameStack,
     ]
     wrapper_kwargs_list = [
         None,
-        {"action_repetition": 3},
+        {"action_repetition": 2},
         {"max_neg_rewards": 100, "punishment": -20.0},
-        # {'filename': monitor_dir},
-        # {"filename": os.path.join(monitor_dir, "train")},  # just single env in this case
-        # {
-        #     "warm_up_steps": hparams["learning_starts"],
-        #     "n_envs": n_envs,
-        #     "always_random_start": always_random_start,
-        #     "no_random_start": no_random_start,
-        # },
-        {
-            "vertical_cut_d": 84,
-            "shape": 84,
-            "num_output_channels": 1,
-        },
-        # {
-        #     "n_stack": n_stack,
-        #     "vae_f": vae_path,
-        #     "vae_sample": vae_sample,
-        #     "vae_inchannel": vae_inchannel,
-        #     "latent_dim": vae_latent_dim,
-        # },
-        # {'max_neg_rewards': max_neg_rewards, "punishment": punishment}
-        {"n_frame_stack": 4},
+        {"vertical_cut_d": 84, "shape": 84, "num_output_channels": 1, "preprocess_mode": "cv2"},
+        {"n_frames": 4},
     ]
 
     wrapper = pack_env_wrappers(wrapper_class_list, wrapper_kwargs_list)
@@ -177,34 +179,40 @@ def make_env_carracing(env_id):
     return env
 
 
-def make_env_minigrid(env_id):
-    env = gym.make(
-        env_id,
-        new_step_api=True,
-        # render_mode="human",
-    )
-    # env = EmptyEnv(
-    #     size=6,
-    #     agent_start_pos=None,
+def make_env_minigrid(config):
+    # env = gym.make(
+    #     env_id,
+    #     # new_step_api=True,
+    #     # render_mode="human",
     # )
-    env = TimeLimit(env, max_episode_steps=3000, new_step_api=True)
+    env = EmptyEnv(
+        size=config.env_size,
+        # agent_start_pos=tuple(config.agent_start_pos),
+    )
+    # env = TimeLimit(env, max_episode_steps=3000, new_step_api=True)
+    # env = StateBonus(env)
     env = FullyObsWrapper(env)
     # env = RGBImgObsWrapper(env)
     env = ImgObsWrapper(env)
-    # env = StateBonus(env)
+    # env = PreprocessObservationWrapper(env, shape=84, num_output_channels=1)
+    # env = WarpFrameRGB(env)
+    # env = StateBonusCustom(env)
+    # env = MinigridEmptyRewardWrapper(env)
+    env = MinigridInfoWrapper(env)
+    # env = FrameStack(env, n_frames=1)
     # env.new_step_api = True
     return env
 
 
 MAKE_ENV_FUNCS = {
-    "Atari": make_env_atari,
+    # "Atari": make_env_atari,
     "CarRacing": make_env_carracing,
     "GymMiniGrid": make_env_minigrid,
 }
 
 
 def train_hdqn():
-    env_id = "CarRacing-v0"
+    env_id = "CarRacing-v2"
     # CarRacing-v0, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5, BreakoutNoFrameskip-v4, RiverraidNoFrameskip-v4
     # vae_version = "vqvae_c3_embedding16x64_3_duolayer"
 
@@ -385,19 +393,23 @@ def train_hdqn():
 
 
 def train_dqn_kmeans():
-    env_id = "MiniGrid-Empty-Random-6x6-v0"
-    # CarRacing-v0, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5, BreakoutNoFrameskip-v4, RiverraidNoFrameskip-v4
+    # env_id = "MiniGrid-Empty-Random-6x6-v0"
+    env_id = "MiniGrid-Empty-16x16-v0"
+    # env_id = "CarRacing-v2"
+    # CarRacing-v05, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5, BreakoutNoFrameskip-v4, RiverraidNoFrameskip-v4
     # vae_version = "vqvae_c3_embedding16x64_3_duolayer"
 
-    for rep in range(5):
+    # cfg_key = "MiniGrid-Empty-RGB"
+    cfg_key = "MiniGrid-Empty-16x16-v0"
+    for rep in range(8):
         # load hyperparameters from yaml config file
         with open("/workspace/repos_dev/VQVAE_RL/hyperparams/dqn_ae.yaml") as f:
-            config = yaml.load(f, Loader=yaml.FullLoader)[env_id]
+            config = yaml.load(f, Loader=yaml.FullLoader)[cfg_key]
             pprint(config)
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
         current_time = current_time.strftime("%b%d_%H-%M-%S")
         # 🐝 initialise a wandb run
-        wandb.init(
+        run = wandb.init(
             project="HDQN_Neo",
             mode="disabled",
             group=config["wandb_group"],
@@ -410,7 +422,9 @@ def train_dqn_kmeans():
         make_env = MAKE_ENV_FUNCS[config.env_type]
         env = make_env(env_id)
 
-        agent = HDQN_KMeans(config, env)
+        # agent = HDQN_KMeans_VAE(config, env)
+        agent = HDQN_ManualAbs(config, env)
+        # agent.vis_abstraction(prefix=f"rep{rep}")
 
         # comment = ""
         # log_dir_tensorboard = f"/workspace/repos_dev/VQVAE_RL/log_tensorboard/end2end_duolayer/{env_id}/{current_time}_{comment}"
@@ -419,44 +433,57 @@ def train_dqn_kmeans():
         # print("log_dir_tensorboard:", log_dir_tensorboard)
         # print("reconstruction_path:", config.reconstruction_path)
 
+        goal_found = False
         time_start_training = time.time()
-        env.reset(seed=int(time.time()))
-        while agent.timesteps_done < int(config.total_timesteps + config.init_steps):
+        # env.reset()
+        total_steps = int(config.total_timesteps + config.init_steps)
+        while agent.timesteps_done < total_steps:
             time_start_episode = time.time()
             # Initialize the environment and state
             # env.seed(seed=int(time.time()))
-            state = env.reset()
+            state, info = env.reset()
             episodic_reward = 0
             episodic_negative_reward = 0
             episodic_non_negative_reward = 0
             for t in count():
                 # Select and perform an action
-                action = agent.act(state)
+                with utils.eval_mode(agent):
+                    action = agent.act(state)
 
                 next_state, reward, terminated, truncated, info = env.step(action)
-                # if reward != 0:
-                #     print(reward)
-                # env.render()
-                # time.sleep(1)
+                # if isinstance(env.unwrapped, MiniGridEnv):
+                #     info["agent_pos"] = env.agent_pos
+                #     info["agent_dir"] = env.agent_dir
+                # print(env.agent_pos, env.agent_dir)
+                # time.sleep(10)
+
+                # Store the transition in memory
+                agent.cache(state, action, next_state, reward, terminated, info)
+                # agent.cache_lazy(state, action, next_state, reward, terminated)
+
+                # reward = info["original_reward"]
                 episodic_reward += reward
                 if reward < 0:
                     episodic_negative_reward += reward
                 else:
                     episodic_non_negative_reward += reward
 
-                if agent.timesteps_done >= int(config.total_timesteps + config.init_steps):
-                    break
-
-                # Store the transition in memory
-                agent.cache(state, action, next_state, reward, terminated, state_type="non_img")
-                # agent.cache_lazy(state, action, next_state, reward, terminated)
+                if agent.timesteps_done >= total_steps:
+                    truncated = True
 
                 state = next_state
+                if agent.timesteps_done >= config.init_steps:
+                    agent.update()
 
-                agent.update()
+                for i in range(5):
+                    if agent.timesteps_done == (i + 1) * total_steps / 5:
+                        # agent.vis_abstraction(prefix=f"rep{rep}")
+                        break
                 # agent.maybe_buffer_recent_states(state)
 
                 if terminated or truncated:
+                    if terminated:
+                        goal_found = True
                     # print("sys.getsizeof(agent.memory)", sys.getsizeof(agent.memory))
                     # print(torch.cuda.memory_reserved()/(1024*1024), "MB")
                     # print(torch.cuda.memory_allocated()/(1024*1024), "MB")
@@ -477,6 +504,7 @@ def train_dqn_kmeans():
                     print(
                         f">>>>>>>>>>>>>>>>Episode{agent.episodes_done} Done| Repetition {rep}>>>>>>>>>>>>>>>>>"
                     )
+                    print("terminal, trauncated:", terminated, truncated)
                     print(
                         "time cost so far: {:.3f} h".format(
                             (time.time() - time_start_training) / 3600
@@ -486,7 +514,9 @@ def train_dqn_kmeans():
                     print("Total_steps_done:", agent.timesteps_done)
                     print("Episodic_fps:", int((t + 1) / (time.time() - time_start_episode)))
                     print("Episode finished after {} timesteps".format(t + 1))
-                    print("Episode {} reward: {}".format(agent.episodes_done, episodic_reward))
+                    print(
+                        "### Episode {} reward: {} ###".format(agent.episodes_done, episodic_reward)
+                    )
 
                     print(
                         "memory_allocated: {:.1f} MB".format(
@@ -505,7 +535,7 @@ def train_dqn_kmeans():
                     # )
                     print("_current_progress_remaining:", agent._current_progress_remaining)
                     print("train/exploration_rate:", agent.exploration_rate)
-                    print("number of vqvae model forward passes:", agent.decoder.n_forward_call)
+                    # print("number of vqvae model forward passes:", agent.decoder.n_forward_call)
                     print(
                         "size of agent.memory: {} entries and {} mb".format(
                             len(agent.memory), sys.getsizeof(agent.memory) / (1024 * 1024)
@@ -515,6 +545,208 @@ def train_dqn_kmeans():
                     break
 
         wandb.finish()
+
+        if goal_found:
+            print("====Goal Found====")
+        else:
+            print("====Goal Not Found in this repetition, deleting this run from wandb====")
+            if run.mode != "disabled":
+                api = wandb.Api()
+                run = api.run(f"team-yuan/HDQN_Neo/{run.id}")
+                run.delete()
+
+    print("Complete")
+    env.close()
+
+
+def train_hq_table():
+    # env_id = "MiniGrid-Empty-Random-6x6-v0"
+    # env_id = "MiniGrid-Empty-16x16-v0"
+    # env_id = "CarRacing-v2"
+    # CarRacing-v05, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5, BreakoutNoFrameskip-v4, RiverraidNoFrameskip-v4
+    # vae_version = "vqvae_c3_embedding16x64_3_duolayer"
+
+    # cfg_key = "MiniGrid-Empty-RGB"
+    cfg_key = "MiniGrid-Empty-v0-table"
+    # load hyperparameters from yaml config file
+    with open("/workspace/repos_dev/VQVAE_RL/hyperparams/dqn_ae.yaml") as f:
+        cfg = yaml.load(f, Loader=yaml.FullLoader)[cfg_key]
+        pprint(cfg)
+    for rep in range(40):
+        print(f"====Starting Repetition {rep}====")
+        current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
+        current_time = current_time.strftime("%b%d_%H-%M-%S")
+        # 🐝 initialise a wandb run
+        run = wandb.init(
+            project="HDQN_TABLE",
+            # mode="disabled",
+            group=cfg["wandb_group"],
+            tags=[
+                "tbl",
+                "shp" if cfg["use_shaping"] else "no_shp",
+                f"omg{cfg['omega']}",
+                f"env{cfg['env_size']}x{cfg['env_size']}",
+                f"start({cfg['agent_start_pos']}, {cfg['agent_start_pos']})",
+            ],
+            notes=cfg["wandb_notes"],
+            config=cfg,
+        )
+        config = wandb.config
+        make_env = MAKE_ENV_FUNCS[config.env_type]
+        env = make_env(config)
+
+        # agent = HDQN_KMeans_VAE(config, env)
+        agent = HDQN_ManualAbs(config, env, use_table4grd=True)
+        agent.set_abs_ticks(config, 0)
+        # agent.vis_abstraction(prefix=f"rep{rep}")
+
+        # comment = ""
+        # log_dir_tensorboard = f"/workspace/repos_dev/VQVAE_RL/log_tensorboard/end2end_duolayer/{env_id}/{current_time}_{comment}"
+        # tb_writer = SummaryWriter(log_dir_tensorboard)
+        # tb_writer = None
+        # print("log_dir_tensorboard:", log_dir_tensorboard)
+        # print("reconstruction_path:", config.reconstruction_path)
+        agent.vis_abstraction()
+        goal_found = False
+        steps_after_goal_found = 0
+        episodes_since_goal_found = 0
+        time_start_training = time.time()
+        # gym.reset(seed=int(time.time()))
+        total_steps = int(config.total_timesteps + config.init_steps)
+        while agent.timesteps_done < total_steps:
+            time_start_episode = time.time()
+            # Initialize the environment and state
+            state, info = env.reset()
+            episodic_reward = 0
+            episodic_negative_reward = 0
+            episodic_non_negative_reward = 0
+            for t in count():
+                # Select and perform an action
+                action = agent.act_table(info)
+                if goal_found:
+                    steps_after_goal_found += 1
+
+                next_state, reward, terminated, truncated, info = env.step(action)
+
+                agent.update_grd_visits(info)
+
+                for i in range(len(config.abs_ticks) - 1):
+                    if agent.timesteps_done == (i + 1) * total_steps / len(config.abs_ticks):
+                        agent.set_abs_ticks(config, i + 1)
+                # if isinstance(env.unwrapped, MiniGridEnv):
+                #     info["agent_pos"] = env.agent_pos
+                #     info["agent_dir"] = env.agent_dir
+                # print(env.agent_pos, env.agent_dir)
+                # time.sleep(10)
+
+                # Store the transition in memory
+                agent.cache(state, action, next_state, reward, terminated, info)
+                # agent.cache_lazy(state, action, next_state, reward, terminated)
+
+                # reward = info["original_reward"]
+                episodic_reward += reward
+                if reward < 0:
+                    episodic_negative_reward += reward
+                else:
+                    episodic_non_negative_reward += reward
+
+                if agent.timesteps_done >= config.init_steps:
+                    # here we use table to do update
+                    agent.update_table(use_shaping=config.use_shaping)
+
+                for i in range(10):
+                    if agent.timesteps_done == (i + 1) * total_steps / 10:
+                        agent.vis_abstract_values()
+                        agent.vis_grd_visits()
+                        break
+                # agent.maybe_buffer_recent_states(state)
+                if agent.timesteps_done >= total_steps:
+                    truncated = True
+
+                state = next_state
+
+                if terminated or truncated:
+                    if terminated:
+                        goal_found = True
+                        print("!!Goal Found!!")
+                    # print("sys.getsizeof(agent.memory)", sys.getsizeof(agent.memory))
+                    # print(torch.cuda.memory_reserved()/(1024*1024), "MB")
+                    # print(torch.cuda.memory_allocated()/(1024*1024), "MB")
+                    agent.episodes_done += 1
+
+                    metrics = {
+                        "reward/episodic_reward": episodic_reward,
+                        "reward/episodic_negative_reward": episodic_negative_reward,
+                        "reward/episodic_non_negative_reward": episodic_non_negative_reward,
+                        "train/timesteps_done": agent.timesteps_done,
+                        "train/time_elapsed": (time.time() - time_start_training) / 3600,
+                        "train/episode_length": t + 1,
+                        "train/episodes_done": agent.episodes_done,
+                        "train/fps_per_episode": int((t + 1) / (time.time() - time_start_episode)),
+                    }
+                    if goal_found:
+                        episodes_since_goal_found += 1
+                        metrics.update(
+                            {
+                                "after_goal_found/episode_length_after_first_found": t + 1,
+                                "after_goal_found/episodic_reward": episodic_reward,
+                                "after_goal_found/episodes_done_after_first_found": episodes_since_goal_found,
+                                "after_goal_found/steps_done_after_first_found": steps_after_goal_found,
+                            }
+                        )
+                    wandb.log(metrics)
+
+                    print(
+                        f">>>>>>>>>>>>>>>>Episode{agent.episodes_done} Done| Repetition {rep}>>>>>>>>>>>>>>>>>"
+                    )
+                    print("terminal, trauncated:", terminated, truncated)
+                    print(
+                        "time cost so far: {:.3f} h".format(
+                            (time.time() - time_start_training) / 3600
+                        )
+                    )
+                    print("episodic time cost: {:.1f} s".format(time.time() - time_start_episode))
+                    print("Total_steps_done:", agent.timesteps_done)
+                    print("Episodic_fps:", int((t + 1) / (time.time() - time_start_episode)))
+                    print("Episode finished after {} timesteps".format(t + 1))
+                    print(f"++++++Episode: {agent.episodes_done} reward: {episodic_reward}++++++")
+
+                    print(
+                        "memory_allocated: {:.1f} MB".format(
+                            torch.cuda.memory_allocated() / (1024 * 1024)
+                        )
+                    )
+                    print(
+                        "memory_reserved: {:.1f} MB".format(
+                            torch.cuda.memory_reserved() / (1024 * 1024)
+                        )
+                    )
+
+                    # print(
+                    #     "mean losses(recon, vq, abstract_td_error, ground_td_error):",
+                    #     np.around(mean_losses, decimals=6),
+                    # )
+                    print("_current_progress_remaining:", agent._current_progress_remaining)
+                    print("train/exploration_rate:", agent.exploration_rate)
+                    # print("number of vqvae model forward passes:", agent.decoder.n_forward_call)
+                    print(
+                        "size of agent.memory: {} entries and {} mb".format(
+                            len(agent.memory), sys.getsizeof(agent.memory) / (1024 * 1024)
+                        )
+                    )
+                    # End this episode
+                    break
+
+        wandb.finish()
+
+        # if goal_found:
+        #     print("====Goal Found====")
+        # else:
+        #     print("====Goal Not Found in this repetition, deleting this run from wandb====")
+        # if not isinstance(run.mode, wandb.sdk.lib.disabled.RunDisabled):
+        #     api = wandb.Api()
+        #     run = api.run(f"team-yuan/HDQN_Neo/{run.id}")
+        #     run.delete()
 
     print("Complete")
     env.close()
@@ -551,7 +783,8 @@ if __name__ == "__main__":
     # set number of threads to 1, when using T.ToTensor() it will cause very high cpu usage and using milti-threads
 
     # train_hdqn()
-    train_dqn_kmeans()
+    # train_dqn_kmeans()
+    train_hq_table()
 
-    # env = make_env_minigrid()
+    # env = make_env_minigrid(env_id="MiniGrid-Empty-6x6-v0")
     # print(env.observation_space.shape)
