@@ -52,46 +52,48 @@ MiniGrid-Empty-v0-table:
   # - [5, 10, 14]
   # - [6, 12, 14]
   agent_start_pos: [1, 1]
-  total_timesteps: 20000
+  total_timesteps: 100000
   init_steps: 1000
   hidden_dims:
     - 16
     - 32
   embedding_dim: 32
   n_clusters: 9
+  # lr_ground_Q: "lin_0.1"
+  # lr_abstract_V: "lin_0.1"
   lr_ground_Q: 0.1
   lr_abstract_V: 0.1
   # lr_encoder: 0.0005
   # lr_decoder: 0.0005
-  batch_size: 256
-  size_replay_memory: 100000
+  batch_size: 80
+  size_replay_memory: 50000
   gamma: 0.99
   omega: 1
   ground_tau: 1
   # abstract_tau: 0.2
   # encoder_tau: 0.2
   exploration_fraction: 1
-  exploration_initial_eps: 1
-  exploration_final_eps: 0.1
+  exploration_initial_eps: 0.3
+  exploration_final_eps: 0.01
   save_model_every: 500000.0
   ground_learn_every: 4
   ground_sync_every: 8
   ground_gradient_steps: 1
-  # abstract_learn_every: 4
-  # abstract_sync_every: 8
-  # abstract_gradient_steps: 1
+  abstract_learn_every: 10
+  abstract_sync_every: 8
+  abstract_gradient_steps: 1
   # learn_with_ae: True
   # init_clustering: True
-  use_shaping: True
+  use_shaping: False
   # wandb_group: AE_KMeans_DQN
   # wandb_group: AE_DQN
   # wandb_group: DQN
-  wandb_group: shp_32x32_omg1_eps0.1_test3
-  wandb_notes: shaping not using just updated abs-values and shaping gamma is 1
+  wandb_group: noshp_32x32_omg1_test21
+  wandb_notes: shaping not using just updated abs-values
   # wandb_tags: ["shp", "omg1", "tbl", "16x16", "(1,1)"]
   clip_grad: True
   # validate_every: 1000
-  reset_training_info_every: 500
+  reset_training_info_every: 1000
   save_recon_every: 1000
   # buffer_recent_states_every: 1000
 

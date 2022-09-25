@@ -56,6 +56,7 @@ from wrappers import (
     FrameStack,
     FrameStackCustom,
     FrameStackWrapper,
+    LimitNumberActionsWrapper,
     MinigridEmptyRewardWrapper,
     MinigridInfoWrapper,
     StateBonusCustom,
@@ -189,6 +190,7 @@ def make_env_minigrid(config):
         size=config.env_size,
         # agent_start_pos=tuple(config.agent_start_pos),
     )
+    # env = LimitNumberActionsWrapper(env, limit=3)
     # env = TimeLimit(env, max_episode_steps=3000, new_step_api=True)
     # env = StateBonus(env)
     env = FullyObsWrapper(env)
@@ -572,7 +574,7 @@ def train_hq_table():
     with open("/workspace/repos_dev/VQVAE_RL/hyperparams/dqn_ae.yaml") as f:
         cfg = yaml.load(f, Loader=yaml.FullLoader)[cfg_key]
         pprint(cfg)
-    for rep in range(40):
+    for rep in range(20):
         print(f"====Starting Repetition {rep}====")
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
         current_time = current_time.strftime("%b%d_%H-%M-%S")
@@ -610,6 +612,7 @@ def train_hq_table():
         goal_found = False
         steps_after_goal_found = 0
         episodes_since_goal_found = 0
+        interval4SemiMDP = 0
         time_start_training = time.time()
         # gym.reset(seed=int(time.time()))
         total_steps = int(config.total_timesteps + config.init_steps)
@@ -620,13 +623,26 @@ def train_hq_table():
             episodic_reward = 0
             episodic_negative_reward = 0
             episodic_non_negative_reward = 0
+            episodic_shaped_reward = 0
+            action = agent.act_table(info)
             for t in count():
                 # Select and perform an action
-                action = agent.act_table(info)
+                # action = agent.act_table(info)
                 if goal_found:
                     steps_after_goal_found += 1
-
+                # [Step]
                 next_state, reward, terminated, truncated, info = env.step(action)
+                agent.timesteps_done += 1
+
+                abs_state1, abs_value1 = agent.get_abstract_value(info["agent_pos1"])
+                abs_state2, abs_value2 = agent.get_abstract_value(info["agent_pos2"])
+                interval4SemiMDP += 1
+                info["interval4SemiMDP"] = interval4SemiMDP
+                if not (abs_state1 == abs_state2 and reward == 0):
+                    # this conditino should match the one in update_absV
+                    interval4SemiMDP = 0
+                if abs_state1 != abs_state2:
+                    episodic_shaped_reward += config.gamma * abs_value2 - abs_value1
 
                 agent.update_grd_visits(info)
 
@@ -639,7 +655,7 @@ def train_hq_table():
                 # print(env.agent_pos, env.agent_dir)
                 # time.sleep(10)
 
-                # Store the transition in memory
+                # [Store the transition in memory]
                 agent.cache(state, action, next_state, reward, terminated, info)
                 # agent.cache_lazy(state, action, next_state, reward, terminated)
 
@@ -649,26 +665,37 @@ def train_hq_table():
                     episodic_negative_reward += reward
                 else:
                     episodic_non_negative_reward += reward
-
+                # [update]
+                action_prime = agent.act_table(info)
                 if agent.timesteps_done >= config.init_steps:
                     # here we use table to do update
-                    agent.update_table(use_shaping=config.use_shaping)
-
+                    # agent.update_table(use_shaping=config.use_shaping)
+                    agent.update_table_no_memory(
+                        use_shaping=config.use_shaping, action_prime=action_prime
+                    )
+                    # agent.update_table_abs_update_non_parallel2(use_shaping=config.use_shaping)
+                # [visualization]
                 for i in range(10):
                     if agent.timesteps_done == (i + 1) * total_steps / 10:
+                        # agent.vis_grd_visits(norm_log=50)
+                        # agent.vis_grd_visits(norm_log=0)
+                        # agent.grd_visits = np.zeros_like(agent.grd_visits)
+                        agent.vis_grd_q_values(norm_log=100)
+                        agent.vis_grd_q_values(norm_log=1e8)
                         agent.vis_abstract_values()
-                        agent.vis_grd_visits()
                         break
                 # agent.maybe_buffer_recent_states(state)
                 if agent.timesteps_done >= total_steps:
                     truncated = True
 
                 state = next_state
+                action = action_prime
 
                 if terminated or truncated:
                     if terminated:
                         goal_found = True
                         print("!!Goal Found!!")
+                        agent.goal_found = True
                     # print("sys.getsizeof(agent.memory)", sys.getsizeof(agent.memory))
                     # print(torch.cuda.memory_reserved()/(1024*1024), "MB")
                     # print(torch.cuda.memory_allocated()/(1024*1024), "MB")
@@ -678,6 +705,7 @@ def train_hq_table():
                         "reward/episodic_reward": episodic_reward,
                         "reward/episodic_negative_reward": episodic_negative_reward,
                         "reward/episodic_non_negative_reward": episodic_non_negative_reward,
+                        "reward/episodic_shaped_reward": episodic_shaped_reward,
                         "train/timesteps_done": agent.timesteps_done,
                         "train/time_elapsed": (time.time() - time_start_training) / 3600,
                         "train/episode_length": t + 1,
@@ -690,6 +718,7 @@ def train_hq_table():
                             {
                                 "after_goal_found/episode_length_after_first_found": t + 1,
                                 "after_goal_found/episodic_reward": episodic_reward,
+                                "after_goal_found/episodic_shaped_reward": episodic_shaped_reward,
                                 "after_goal_found/episodes_done_after_first_found": episodes_since_goal_found,
                                 "after_goal_found/steps_done_after_first_found": steps_after_goal_found,
                             }
@@ -710,6 +739,7 @@ def train_hq_table():
                     print("Episodic_fps:", int((t + 1) / (time.time() - time_start_episode)))
                     print("Episode finished after {} timesteps".format(t + 1))
                     print(f"++++++Episode: {agent.episodes_done} reward: {episodic_reward}++++++")
+                    print(f"agent.goal_found: {agent.goal_found}")
 
                     print(
                         "memory_allocated: {:.1f} MB".format(
@@ -736,7 +766,10 @@ def train_hq_table():
                     )
                     # End this episode
                     break
-
+            if agent.episodes_done > 0 and agent.episodes_done % 2 == 0:
+                print("Evaluate the agent by visualizing grd visits")
+                evaluate_agent(env, agent, exploit_only=True)
+                evaluate_agent(env, agent, exploit_only=False)
         wandb.finish()
 
         # if goal_found:
@@ -750,6 +783,24 @@ def train_hq_table():
 
     print("Complete")
     env.close()
+
+
+def evaluate_agent(env, agent: HDQN_ManualAbs, exploit_only=True):
+    agent.grd_visits = np.zeros_like(agent.grd_visits)
+    episodic_reward = 0
+    timesteps_done = 0
+    state, info = env.reset()
+    for t in count():
+        action = agent.act_table(info, exploit_only=exploit_only)
+        next_state, reward, terminated, truncated, info = env.step(action)
+        timesteps_done += 1
+        agent.update_grd_visits(info)
+        episodic_reward += reward
+        if terminated or truncated:
+            break
+    agent.vis_grd_visits(norm_log=50, suffix=f"eval_exploitOnly{exploit_only}")
+    agent.vis_grd_visits(norm_log=0, suffix=f"eval_exploitOnly{exploit_only}")
+    agent.grd_visits = np.zeros_like(agent.grd_visits)
 
 
 def find_gpu():

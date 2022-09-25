@@ -16,16 +16,24 @@ class ReplayMemory(object):
     def push(self, *args):
         """Save a transition"""
         self.memory.append(self.Transition(*args))
+        self.latest_transition = self.Transition(*args)
 
-    def sample(
-        self,
-        batch_size=None,
-        validation_size=None,
-    ):
+    def sample(self, batch_size=None, validation_size=None, mode="pure"):
         if validation_size:
             transitions = random.sample(self.memory, validation_size)
         else:
             transitions = random.sample(self.memory, batch_size)
+
+        if mode == "pure":
+            batch = self.Transition(*zip(*transitions))
+            return (
+                batch.state,
+                batch.action,
+                batch.next_state,
+                batch.reward,
+                batch.terminated,
+                batch.info,
+            )
         # This converts batch-array of Transitions
         # to Transition of batch-arrays.
         batch = self.Transition(*zip(*transitions))

@@ -1418,6 +1418,16 @@ class FrameStackCustom(gym.Wrapper):
         return LazyFramesCustom(list(self.frames))
 
 
+class LimitNumberActionsWrapper(gym.ActionWrapper):
+    def __init__(self, env, limit):
+        super().__init__(env)
+        self.limit = limit
+        self.action_space = gym.spaces.Discrete(limit)
+
+    def action(self, action):
+        return action
+
+
 class MinigridInfoWrapper(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
