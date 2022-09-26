@@ -41,19 +41,24 @@ CarRacing-v2:
 
 MiniGrid-Empty-v0-table:
   env_type: GymMiniGrid
-  env_size: 32
+  env_size: 62
   abs_ticks:
-    # - [5, 10, 30]
-    - [10, 20, 30]
-  # - [20, 25, 30]
+    # - [15, 30, 60]
+    - [20, 40, 60]
+    # - [30, 45, 60]
+  # env_size: 32
+  # abs_ticks:
+  #   - [5, 10, 30]
+  #   - [10, 20, 30]
+  #   - [20, 25, 30]
   # env_size: 16
   # abs_ticks:
   # - [3, 6, 14]
   # - [5, 10, 14]
   # - [6, 12, 14]
   agent_start_pos: [1, 1]
-  total_timesteps: 100000
-  init_steps: 1000
+  total_timesteps: 300000
+  init_steps: 3000
   hidden_dims:
     - 16
     - 32
@@ -61,12 +66,12 @@ MiniGrid-Empty-v0-table:
   n_clusters: 9
   # lr_ground_Q: "lin_0.1"
   # lr_abstract_V: "lin_0.1"
-  lr_ground_Q: 0.1
-  lr_abstract_V: 0.1
+  lr_ground_Q: 0.01
+  lr_abstract_V: 0.01
   # lr_encoder: 0.0005
   # lr_decoder: 0.0005
-  batch_size: 80
-  size_replay_memory: 50000
+  batch_size: 128
+  size_replay_memory: 70000
   gamma: 0.99
   omega: 1
   ground_tau: 1
@@ -79,8 +84,8 @@ MiniGrid-Empty-v0-table:
   ground_learn_every: 4
   ground_sync_every: 8
   ground_gradient_steps: 1
-  abstract_learn_every: 10
-  abstract_sync_every: 8
+  abstract_learn_every: 32
+  abstract_sync_every: 1
   abstract_gradient_steps: 1
   # learn_with_ae: True
   # init_clustering: True
@@ -88,7 +93,7 @@ MiniGrid-Empty-v0-table:
   # wandb_group: AE_KMeans_DQN
   # wandb_group: AE_DQN
   # wandb_group: DQN
-  wandb_group: noshp_32x32_omg1_test21
+  wandb_group: noshp_62x62_memory_semimdp_test
   wandb_notes: shaping not using just updated abs-values
   # wandb_tags: ["shp", "omg1", "tbl", "16x16", "(1,1)"]
   clip_grad: True

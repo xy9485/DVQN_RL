@@ -15,7 +15,7 @@ import io
 
 # from this import d
 import time
-from collections import namedtuple
+from collections import deque, namedtuple
 from statistics import mean
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
@@ -1741,27 +1741,50 @@ class HDQN_ManualAbs(HDQN):
     def log_training_info(self, wandb_log=True):
         if wandb_log:
             metrics = {
-                "training_info/ground_Q_error": mean(self.training_info["ground_Q_error"]),
-                "training_info/abstract_V_error": mean(self.training_info["abstract_V_error"])
+                "Info/ground_Q_error": mean(self.training_info["ground_Q_error"]),
+                "Info/abstract_V_error": mean(self.training_info["abstract_V_error"])
                 if len(self.training_info["abstract_V_error"])
                 else 0,
                 # "training_info/n_cross_upper_bound": mean(
                 #     self.training_info.get("n_cross_upper_bound", [0])
                 # ),
-                "training_info/avg_shaping": mean(self.training_info["avg_shaping"]),
-                "training_info/timesteps_done": self.timesteps_done,
-                "training_info/episodes_done": self.episodes_done,
-                "training_info/exploration_rate": self.exploration_rate,
-                "training_info/current_progress_remaining": self._current_progress_remaining,
+                "Info/avg_shaping": mean(self.training_info["avg_shaping"]),
+                # "info/timesteps_done": self.timesteps_done,
+                # "info/episodes_done": self.episodes_done,
+                "Info/exploration_rate": self.exploration_rate,
+                "Info/current_progress_remaining": self._current_progress_remaining,
                 # "lr/lr_ground_Q_optimizer": self.ground_Q_optimizer.param_groups[0]["lr"],
                 # "lr/lr_abstract_V_optimizer": self.abstract_V_optimizer.param_groups[0]["lr"],
-                "lr/lr_ground_Q": self.lr_grd_Q,
-                "lr/lr_abstract_V": self.lr_abs_V,
+                "Info/lr_ground_Q": self.lr_grd_Q,
+                "Info/lr_abstract_V": self.lr_abs_V,
             }
             wandb.log(metrics)
 
             # print("logging training info:")
             # pp(metrics)
+
+    def cache_goal_transition(self):
+        temp = np.zeros((self.env.width, self.env.height, 3))
+        goal_pos = (self.env.width - 2, self.env.height - 2)
+        info1 = {
+            "agent_pos1": (goal_pos[0] - 1, goal_pos[1]),
+            "agent_dir1": 0,
+            "agent_pos2": goal_pos,
+            "agent_dir2": 0,
+            "interval4SemiMDP": 1,
+        }
+        info2 = {
+            "agent_pos1": (goal_pos[0], goal_pos[1] - 1),
+            "agent_dir1": 1,
+            "agent_pos2": goal_pos,
+            "agent_dir2": 1,
+            "interval4SemiMDP": 1,
+        }
+        # sample a reward from uniform distribution in range [0, 0.5)
+        reward1 = np.random.uniform(0, 0.5)
+        reward2 = np.random.uniform(0, 0.5)
+        self.cache(temp, 2, temp, reward1, True, info1)
+        self.cache(temp, 2, temp, reward2, True, info2)
 
     def vis_abstraction_and_values(self, prefix: str):
         width = self.env.width
@@ -2756,8 +2779,8 @@ class HDQN_ManualAbs(HDQN):
                 )
 
                 (
-                    _,
-                    _,
+                    abs_indices,
+                    abs_indices_next,
                     abs_value_l,
                     abs_value_next_l,
                 ) = self.get_abs_indices_values(info)
@@ -2767,10 +2790,80 @@ class HDQN_ManualAbs(HDQN):
                     reward,
                     terminated,
                     info,
+                    abs_indices,
+                    abs_indices_next,
                     abs_value_l,
                     abs_value_next_l,
                     use_shaping=use_shaping,
-                    q_learning=True,
+                    action_prime=None,
+                )
+                # grd_update_step -= 1
+
+        if self.timesteps_done % self.save_model_every == 0:
+            pass
+
+        if self.timesteps_done % self.reset_training_info_every == 0:
+            self.log_training_info(wandb_log=True)
+            self.reset_training_info()
+
+    def update_table2(self, use_shaping: bool):
+        if self.timesteps_done == self.init_steps:
+            print("Init steps done")
+
+        if self.timesteps_done % self.abstract_learn_every == 0:
+            for _ in range(self.abstract_gradient_steps):
+                state, action, next_state, reward, terminated, info = self.memory.sample(
+                    self.batch_size, mode="pure"
+                )
+                # [data augmentation]
+                # state = self.aug(state)
+                # next_state = self.aug(next_state)
+
+                # [extract abstract information]
+                (
+                    abs_indices,
+                    abs_indices_next,
+                    abs_value_l,
+                    abs_value_next_l,
+                ) = self.get_abs_indices_values(info)
+
+                # [update abstract_V]
+                self.update_absV(
+                    abs_indices,
+                    abs_indices_next,
+                    abs_value_l,
+                    abs_value_next_l,
+                    reward,
+                    terminated,
+                    info,
+                )
+
+                # if self.timesteps_done % self.ground_learn_every == 0:
+                #     for _ in range(self.ground_gradient_steps):
+                # [update ground_Q with reward shaping, purely update ground Q with use_shaping=False]
+                # if grd_update_step > 0:
+                # state, action, next_state, reward, terminated, info = self.memory.sample(
+                #     self.batch_size, mode="pure"
+                # )
+
+                (
+                    abs_indices,
+                    abs_indices_next,
+                    abs_value_l,
+                    abs_value_next_l,
+                ) = self.get_abs_indices_values(info)
+
+                self.update_grdQ_table_shaping(
+                    action,
+                    reward,
+                    terminated,
+                    info,
+                    abs_indices,
+                    abs_indices_next,
+                    abs_value_l,
+                    abs_value_next_l,
+                    use_shaping=use_shaping,
+                    action_prime=None,
                 )
                 # grd_update_step -= 1
 

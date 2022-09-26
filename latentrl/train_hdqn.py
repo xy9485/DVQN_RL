@@ -574,7 +574,7 @@ def train_hq_table():
     with open("/workspace/repos_dev/VQVAE_RL/hyperparams/dqn_ae.yaml") as f:
         cfg = yaml.load(f, Loader=yaml.FullLoader)[cfg_key]
         pprint(cfg)
-    for rep in range(20):
+    for rep in range(30):
         print(f"====Starting Repetition {rep}====")
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
         current_time = current_time.strftime("%b%d_%H-%M-%S")
@@ -616,6 +616,7 @@ def train_hq_table():
         time_start_training = time.time()
         # gym.reset(seed=int(time.time()))
         total_steps = int(config.total_timesteps + config.init_steps)
+        agent.cache_goal_transition()
         while agent.timesteps_done < total_steps:
             time_start_episode = time.time()
             # Initialize the environment and state
@@ -624,10 +625,10 @@ def train_hq_table():
             episodic_negative_reward = 0
             episodic_non_negative_reward = 0
             episodic_shaped_reward = 0
-            action = agent.act_table(info)
+            # action = agent.act_table(info)
             for t in count():
                 # Select and perform an action
-                # action = agent.act_table(info)
+                action = agent.act_table(info)
                 if goal_found:
                     steps_after_goal_found += 1
                 # [Step]
@@ -669,10 +670,10 @@ def train_hq_table():
                 action_prime = agent.act_table(info)
                 if agent.timesteps_done >= config.init_steps:
                     # here we use table to do update
-                    # agent.update_table(use_shaping=config.use_shaping)
-                    agent.update_table_no_memory(
-                        use_shaping=config.use_shaping, action_prime=action_prime
-                    )
+                    agent.update_table(use_shaping=config.use_shaping)
+                    # agent.update_table_no_memory(
+                    #     use_shaping=config.use_shaping, action_prime=action_prime
+                    # )
                     # agent.update_table_abs_update_non_parallel2(use_shaping=config.use_shaping)
                 # [visualization]
                 for i in range(10):
@@ -689,7 +690,7 @@ def train_hq_table():
                     truncated = True
 
                 state = next_state
-                action = action_prime
+                # action = action_prime
 
                 if terminated or truncated:
                     if terminated:
@@ -706,21 +707,21 @@ def train_hq_table():
                         "reward/episodic_negative_reward": episodic_negative_reward,
                         "reward/episodic_non_negative_reward": episodic_non_negative_reward,
                         "reward/episodic_shaped_reward": episodic_shaped_reward,
-                        "train/timesteps_done": agent.timesteps_done,
-                        "train/time_elapsed": (time.time() - time_start_training) / 3600,
-                        "train/episode_length": t + 1,
-                        "train/episodes_done": agent.episodes_done,
-                        "train/fps_per_episode": int((t + 1) / (time.time() - time_start_episode)),
+                        "time/timesteps_done": agent.timesteps_done,
+                        "time/time_elapsed": (time.time() - time_start_training) / 3600,
+                        "time/episode_length": t + 1,
+                        "time/episodes_done": agent.episodes_done,
+                        "time/fps_per_episode": int((t + 1) / (time.time() - time_start_episode)),
                     }
                     if goal_found:
                         episodes_since_goal_found += 1
                         metrics.update(
                             {
-                                "after_goal_found/episode_length_after_first_found": t + 1,
-                                "after_goal_found/episodic_reward": episodic_reward,
-                                "after_goal_found/episodic_shaped_reward": episodic_shaped_reward,
-                                "after_goal_found/episodes_done_after_first_found": episodes_since_goal_found,
-                                "after_goal_found/steps_done_after_first_found": steps_after_goal_found,
+                                "After_goal_found/episode_length_after_first_found": t + 1,
+                                "After_goal_found/episodic_reward": episodic_reward,
+                                "After_goal_found/episodic_shaped_reward": episodic_shaped_reward,
+                                "After_goal_found/episodes_done_after_first_found": episodes_since_goal_found,
+                                "After_goal_found/steps_done_after_first_found": steps_after_goal_found,
                             }
                         )
                     wandb.log(metrics)

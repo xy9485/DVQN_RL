@@ -8,15 +8,38 @@ import torchvision.transforms as T
 class ReplayMemory(object):
     def __init__(self, capacity, device):
         self.memory = deque([], maxlen=capacity)
+        self.recent_goal_transitions = []
         self.device = device
         self.Transition = namedtuple(
             "Transition", ("state", "action", "next_state", "reward", "terminated", "info")
         )
 
-    def push(self, *args):
+    def push(self, state, action, next_state, reward, terminated, info):
         """Save a transition"""
-        self.memory.append(self.Transition(*args))
-        self.latest_transition = self.Transition(*args)
+        self.memory.append(self.Transition(state, action, next_state, reward, terminated, info))
+        self.latest_transition = self.Transition(
+            state, action, next_state, reward, terminated, info
+        )
+        if terminated:
+            self.recent_goal_transitions.append(
+                self.Transition(state, action, next_state, reward, terminated, info)
+            )
+
+    # @property
+    # def recent_goal_transitions(self):
+    #     batch = self.Transition(*zip(*self._recent_goal_transitions))
+    #     return (
+    #         batch.state,
+    #         batch.action,
+    #         batch.next_state,
+    #         batch.reward,
+    #         batch.terminated,
+    #         batch.info,
+    #     )
+
+    # @recent_goal_transitions.setter
+    # def recent_goal_transitions(self, value):
+    #     self._recent_goal_transitions = value
 
     def sample(self, batch_size=None, validation_size=None, mode="pure"):
         if validation_size:
@@ -25,6 +48,9 @@ class ReplayMemory(object):
             transitions = random.sample(self.memory, batch_size)
 
         if mode == "pure":
+            if len(self.recent_goal_transitions) > 0:
+                transitions += self.recent_goal_transitions
+                self.recent_goal_transitions = []
             batch = self.Transition(*zip(*transitions))
             return (
                 batch.state,
