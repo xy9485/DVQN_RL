@@ -41,7 +41,7 @@ class ReplayMemory(object):
     # def recent_goal_transitions(self, value):
     #     self._recent_goal_transitions = value
 
-    def sample(self, batch_size=None, validation_size=None, mode="pure"):
+    def sample(self, batch_size=None, validation_size=None, mode=None):
         if validation_size:
             transitions = random.sample(self.memory, validation_size)
         else:
@@ -80,9 +80,9 @@ class ReplayMemory(object):
         info_batch = batch.info
 
         return (
-            state_batch / 255.0,
+            state_batch,
             action_batch,
-            next_state_batch / 255.0,
+            next_state_batch,
             reward_batch,
             terminated_batch,
             info_batch,

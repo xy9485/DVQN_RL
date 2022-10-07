@@ -1469,7 +1469,7 @@ class MinigridEmptyRewardWrapper(gym.Wrapper):
         if terminated:
             reward = 1
         else:
-            reward = -0.01
+            reward = -1e-5
         return obs, reward, terminated, truncated, info
 
 

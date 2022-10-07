@@ -1,23 +1,24 @@
 CarRacing-v2:
+  env_name: CarRacing-v2
   env_type: CarRacing
   total_timesteps: 300000
-  init_steps: 300
+  init_steps: 10000
   hidden_dims:
     - 32
     - 64
-  embedding_dim: 32
-  n_clusters: 128
-  lr_ground_Q: 0.00015
-  lr_abstract_V: 0.00015
-  lr_encoder: 0.00025
-  lr_decoder: 0.00025
-  batch_size: 100
+  embedding_dim: 64
+  n_clusters: 16
+  lr_ground_Q: lin_5.3e-4
+  lr_abstract_V: 0.001
+  # lr_encoder: 0.00025
+  # lr_decoder: 0.00025
+  batch_size: 256
   size_replay_memory: 100000
   gamma: 0.97
-  omega: 0
-  ground_tau: 0.02
-  abstract_tau: 0.02
-  encoder_tau: 0.1
+  omega: 1
+  ground_tau: 0.01
+  # abstract_tau: 0.02
+  encoder_tau: 0.01
   exploration_fraction: 0.9
   exploration_initial_eps: 0.1
   exploration_final_eps: 0.01
@@ -28,28 +29,33 @@ CarRacing-v2:
   abstract_learn_every: 4
   abstract_sync_every: 8
   abstract_gradient_steps: 1
-  clip_grad: false
-  validate_every: 1000
-  reset_training_info_every: 2000
-  save_recon_every: 1000
-  buffer_recent_states_every: 1000
-  learn_with_ae: False
-  init_clustering: False
+  clip_grad: False
+  use_shaping: True
+  # validate_every: 1000
+  reset_training_info_every: 1000
+  # save_recon_every: 1000
+  # buffer_recent_states_every: 1000
+  # learn_with_ae: False
+  # init_clustering: False
   # wandb_group: AE_KMeans_DQN
   # wandb_group: AE_DQN
-  wandb_group: DQN
+  wandb_group: TableAbstract_aug_shp
+  wandb_notes: void
 
 MiniGrid-Empty-v0-table:
   env_type: GymMiniGrid
-  env_size: 62
+  # env_size: 62
+  # abs_ticks:
+  # - [15, 30, 60]
+  # - [20, 40, 60]
+  # - [30, 45, 60]
+  env_size: 86
   abs_ticks:
-    # - [15, 30, 60]
-    - [20, 40, 60]
-    # - [30, 45, 60]
+    - [28, 56, 84]
   # env_size: 32
   # abs_ticks:
   #   - [5, 10, 30]
-  #   - [10, 20, 30]
+  # - [10, 20, 30]
   #   - [20, 25, 30]
   # env_size: 16
   # abs_ticks:
@@ -57,43 +63,44 @@ MiniGrid-Empty-v0-table:
   # - [5, 10, 14]
   # - [6, 12, 14]
   agent_start_pos: [1, 1]
-  total_timesteps: 300000
-  init_steps: 3000
+  total_timesteps: 50000
+  init_steps: 1000
   hidden_dims:
     - 16
     - 32
-  embedding_dim: 32
+  embedding_dim: 64
   n_clusters: 9
-  # lr_ground_Q: "lin_0.1"
-  # lr_abstract_V: "lin_0.1"
-  lr_ground_Q: 0.01
-  lr_abstract_V: 0.01
+  # lr_ground_Q: 0.0002
+  # lr_abstract_V: 0.1
+  lr_ground_Q: lin_0.0002
+  lr_abstract_V: lin_0.01
   # lr_encoder: 0.0005
   # lr_decoder: 0.0005
-  batch_size: 128
-  size_replay_memory: 70000
+  batch_size: 256
+  size_replay_memory: 10000
   gamma: 0.99
-  omega: 1
-  ground_tau: 1
+  abstract_gamma: 0.99
+  omega: 10
+  ground_tau: 0.01
   # abstract_tau: 0.2
   # encoder_tau: 0.2
   exploration_fraction: 1
-  exploration_initial_eps: 0.3
+  exploration_initial_eps: 0.4
   exploration_final_eps: 0.01
   save_model_every: 500000.0
   ground_learn_every: 4
-  ground_sync_every: 8
+  ground_sync_every: 1000
   ground_gradient_steps: 1
-  abstract_learn_every: 32
-  abstract_sync_every: 1
+  abstract_learn_every: 4
+  abstract_sync_every: 8
   abstract_gradient_steps: 1
   # learn_with_ae: True
   # init_clustering: True
-  use_shaping: False
+  use_shaping: True
   # wandb_group: AE_KMeans_DQN
   # wandb_group: AE_DQN
-  # wandb_group: DQN
-  wandb_group: noshp_62x62_memory_semimdp_test
+  wandb_group: shp_env86_50k_buf10k
+  # wandb_group: shp_100k_lrabs0.1_tau0.1_aevery4_rrward_mod
   wandb_notes: shaping not using just updated abs-values
   # wandb_tags: ["shp", "omg1", "tbl", "16x16", "(1,1)"]
   clip_grad: True
