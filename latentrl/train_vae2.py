@@ -33,16 +33,16 @@ from torch.nn import functional as F
 from torchvision import transforms
 from torchvision.utils import save_image
 from torchsummary import summary
-from models.vae import VAE
+from nn_models.vae import VAE
 
 # from models.vae2 import VAE
 # from models.vae3 import VAE
-from transforms import transform_dict
+from latentrl.common.transforms import transform_dict
 
-from utils.misc import save_checkpoint
+from latentrl.common.utils import save_checkpoint
 
 ## WARNING : THIS SHOULD BE REPLACE WITH PYTORCH 0.5
-from utils.learning import EarlyStopping
+from latentrl.common.learning_scheduler import EarlyStopping
 
 # from utils.learning import ReduceLROnPlateau
 from torch.optim.lr_scheduler import ReduceLROnPlateau

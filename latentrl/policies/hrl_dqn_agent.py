@@ -10,12 +10,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torchvision.transforms as T
-from latentrl.dqn_models import DQN, DQN_MLP, DVN, DQN_paper
-from latentrl.policies.utils import ReplayMemory
-from latentrl.utils.learning import EarlyStopping, ReduceLROnPlateau
-from latentrl.utils.misc import get_linear_fn, linear_schedule, polyak_sync, update_learning_rate
-from latentrl.vqvae_end2end import VQVAE
-from latentrl.vqvae_prototype import VQVAE2
+from dqn_models import DQN, DQN_MLP, DVN, DQN_paper
+from policies.utils import ReplayMemory
+from common.learning_scheduler import EarlyStopping, ReduceLROnPlateau
+from common.utils import get_linear_fn, linear_schedule, polyak_sync, update_learning_rate
+from nn_models.vqvae_end2end import VQVAE
+from nn_models.vqvae_prototype import VQVAE2
 
 
 class SingelLayerAgent:

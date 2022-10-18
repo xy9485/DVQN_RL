@@ -14,9 +14,9 @@ from torchvision.utils import save_image
 from typing import Any, Dict, List, Optional, Tuple, Type, Union, TypeVar
 import torchvision.transforms as T
 
-from latentrl.utils.misc import wandb_log_image
+from common.utils import wandb_log_image
 
-Tensor = TypeVar("torch.tensor")
+Tensor = TypeVar("Tensor")
 
 
 class VectorQuantizer(nn.Module):

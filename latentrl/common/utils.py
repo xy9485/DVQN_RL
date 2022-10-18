@@ -1,24 +1,22 @@
 """ Various auxiliary utilities """
-from itertools import zip_longest
 import json
 import math
 import os
-from typing import Any, Callable, Dict, Optional, Type, Union, Tuple, Iterable
-
+from itertools import zip_longest
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Type, Union
 
 import gym
-import torch
 import numpy as np
-from PIL import Image
-
+import torch
 import torchvision
-from torchvision.utils import make_grid
+import wandb
+from PIL import Image, ImageColor, ImageDraw, ImageFont
 
 # from models import MDRNNCell, VAE, Controller
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
-from PIL import Image, ImageDraw, ImageFont, ImageColor
-import wandb
+from torch import Tensor
+from torchvision.utils import make_grid
 
 
 def sample_continuous_policy(action_space, seq_len, dt):
@@ -303,3 +301,16 @@ def zip_strict(*iterables: Iterable) -> Iterable:
         if sentinel in combo:
             raise ValueError("Iterables have different lengths")
         yield combo
+
+
+class Dataset_pretrain(torch.utils.data.Dataset):
+    def __init__(self, data_list: Tensor):
+        data_list = data_list[torch.randperm(data_list.size(0)), :]
+        self.data_list = data_list
+
+    def __len__(self):
+        return len(self.data_list)
+
+    def __getitem__(self, idx):
+        state = self.data_list[idx]
+        return state

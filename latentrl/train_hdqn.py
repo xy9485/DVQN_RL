@@ -10,14 +10,10 @@ from os import makedirs
 from pprint import pprint
 from tkinter import N
 from types import SimpleNamespace
-import yaml
-
-# import tracemalloc
 
 import colored_traceback.auto
 import GPUtil
 import gym
-from gym.wrappers import TimeLimit
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -26,26 +22,30 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torchvision.transforms as T
+import yaml
 from cv2 import mean
+from gym.wrappers import TimeLimit
+from minigrid.envs import EmptyEnv
+from minigrid.wrappers import FullyObsWrapper, ImgObsWrapper, RGBImgObsWrapper, StateBonus
 from PIL import Image
-
-# from tensorboard import summary
 from torch.utils.tensorboard import SummaryWriter
 from torchsummary import summary
-
-from latentrl.hdqn import HDQN
-from latentrl.hdqn_vae import HDQN_KMeans_CURL, HDQN_KMeans_VAE, HDQN_ManualAbs
-from latentrl.policies import utils
-
-print("sys.path:", sys.path)
 import wandb
-from data2 import RolloutDatasetNaive
-from policies.hrl_dqn_agent import DuoLayerAgent, SingelLayerAgent
-from policies.vanilla_dqn_agent import VanillaDQNAgent
-from transforms import transform_dict
-from utils.learning import EarlyStopping, ReduceLROnPlateau
-from utils.misc import get_linear_fn, linear_schedule, make_vec_env_customized, update_learning_rate
-from wrappers import (
+
+from common.atari_wrapper import (
+    make_env_atari,
+)  # NoopResetEnv,; MaxAndSkipEnv,; FireResetEnv,; EpisodicLifeEnv,; WarpFrame,; ClipRewardEnv,; FrameStack,; ScaledFloatFrame,
+
+# from data2 import RolloutDatasetNaive
+from common.learning_scheduler import EarlyStopping, ReduceLROnPlateau
+from common.transforms import transform_dict
+from common.utils import (
+    get_linear_fn,
+    linear_schedule,
+    make_vec_env_customized,
+    update_learning_rate,
+)
+from common.wrappers import (
     ActionDiscreteWrapper,
     ActionRepetitionWrapper,
     CarRandomStartWrapper,
@@ -59,26 +59,22 @@ from wrappers import (
     LimitNumberActionsWrapper,
     MinigridEmptyRewardWrapper,
     MinigridInfoWrapper,
+    PreprocessObservationWrapper,
     StateBonusCustom,
     WarpFrameRGB,
-    PreprocessObservationWrapper,
     pack_env_wrappers,
 )
-
-# from atari_wrapper import (
-#     # NoopResetEnv,
-#     # MaxAndSkipEnv,
-#     # FireResetEnv,
-#     # EpisodicLifeEnv,
-#     # WarpFrame,
-#     # ClipRewardEnv,
-#     # FrameStack,
-#     # ScaledFloatFrame,
-#     make_env_atari,
-# )
-from gym_minigrid.wrappers import RGBImgObsWrapper, FullyObsWrapper, ImgObsWrapper, StateBonus
-from gym_minigrid.envs.empty import EmptyEnv
-from gym_minigrid.minigrid import MiniGridEnv
+from envs.fourrooms import FourRoomsEnv
+from policies import (
+    HDQN,
+    HDQN_AdaptiveAbs,
+    HDQN_KMeans_CURL,
+    HDQN_KMeans_VAE,
+    HDQN_ManualAbs,
+    utils,
+)
+from policies.hrl_dqn_agent import DuoLayerAgent, SingelLayerAgent
+from policies.vanilla_dqn_agent import VanillaDQNAgent
 
 
 def make_env_carracing(config):
@@ -180,26 +176,40 @@ def make_env_carracing(config):
     return env
 
 
-def make_env_minigrid(config):
+def make_env_minigrid(config, env_id):
     # env = gym.make(
     #     env_id,
     #     # new_step_api=True,
     #     # render_mode="human",
     # )
-    env = EmptyEnv(
-        size=config.env_size,
-        # agent_start_pos=tuple(config.agent_start_pos),
-    )
-    # env = LimitNumberActionsWrapper(env, limit=3)
+    if env_id == "MiniGrid-Empty-v0":
+        env = EmptyEnv(
+            size=config.env_size,
+            # agent_start_pos=tuple(config.agent_start_pos),
+        )
+    if env_id == "MiniGrid-FourRooms-v0":
+        env = FourRoomsEnv(
+            agent_pos=tuple(config.agent_start_pos),
+            goal_pos=tuple(config.goal_pos),
+        )
+
+    env = LimitNumberActionsWrapper(env, limit=3)
     # env = TimeLimit(env, max_episode_steps=3000, new_step_api=True)
     # env = StateBonus(env)
-    env = FullyObsWrapper(env)
-    # env = RGBImgObsWrapper(env)
+    if config.input_format == "partial_obs":
+        pass
+    if config.input_format == "full_obs":
+        env = FullyObsWrapper(env)
+    elif config.input_format == "full_img":
+        env = RGBImgObsWrapper(env, tile_size=config.tile_size)
+    else:
+        raise NotImplementedError
+
     env = ImgObsWrapper(env)
     # env = PreprocessObservationWrapper(env, shape=84, num_output_channels=1)
     # env = WarpFrameRGB(env)
     # env = StateBonusCustom(env)
-    env = MinigridEmptyRewardWrapper(env)
+    # env = MinigridEmptyRewardWrapper(env)
     env = MinigridInfoWrapper(env)
     # env = FrameStack(env, n_frames=1)
     # env.new_step_api = True
@@ -570,7 +580,12 @@ def train_dqn_kmeans():
     env.close()
 
 
-def train_hq_table():
+def train_manual_absT_grdTN():
+    """
+    abstract level using table
+    ground level using table or network, by setting use_table4grd
+
+    """
     # env_id = "MiniGrid-Empty-Random-6x6-v0"
     # env_id = "MiniGrid-Empty-16x16-v0"
     # env_id = "CarRacing-v2"
@@ -578,9 +593,9 @@ def train_hq_table():
     # vae_version = "vqvae_c3_embedding16x64_3_duolayer"
 
     # cfg_key = "MiniGrid-Empty-RGB"
-    cfg_key = "MiniGrid-Empty-v0-table"
+    cfg_key = "MiniGrid-Empty-v0"
     # load hyperparameters from yaml config file
-    with open("/workspace/repos_dev/VQVAE_RL/hyperparams/dqn_ae.yaml") as f:
+    with open("/workspace/repos_dev/VQVAE_RL/hyperparams/minigrid/manual_abstraction.yaml") as f:
         cfg = yaml.load(f, Loader=yaml.FullLoader)[cfg_key]
         pprint(cfg)
     for rep in range(30):
@@ -590,21 +605,21 @@ def train_hq_table():
         # 🐝 initialise a wandb run
         run = wandb.init(
             project="HDQN_AbsTable_GrdNN",
-            # mode="disaled",
+            # mode="disabled",
             group=cfg["wandb_group"],
             tags=[
                 "tbl",
                 "shp" if cfg["use_shaping"] else "no_shp",
                 f"omg{cfg['omega']}",
                 f"env{cfg['env_size']}x{cfg['env_size']}",
-                f"start({cfg['agent_start_pos']}, {cfg['agent_start_pos']})",
+                f"start({cfg['agent_start_pos'][0]}, {cfg['agent_start_pos'][1]})",
             ],
             notes=cfg["wandb_notes"],
             config=cfg,
         )
         config = wandb.config
         make_env = MAKE_ENV_FUNCS[config.env_type]
-        env = make_env(config)
+        env = make_env(config, env_id=cfg_key)
 
         # agent = HDQN_KMeans_VAE(config, env)
         agent = HDQN_ManualAbs(config, env, use_table4grd=False)
@@ -625,7 +640,6 @@ def train_hq_table():
         time_start_training = time.time()
         # gym.reset(seed=int(time.time()))
         total_steps = int(config.total_timesteps + config.init_steps)
-        agent.cache_goal_transition()
         while agent.timesteps_done < total_steps:
             time_start_episode = time.time()
             # Initialize the environment and state
@@ -635,9 +649,9 @@ def train_hq_table():
             episodic_non_negative_reward = 0
             episodic_shaped_reward = 0
             # action = agent.act_table(info)
-            agent.grd_visits = np.zeros_like(agent.grd_visits)
+            agent.grd_visits = np.zeros((env.height, env.width, 4))
             for t in count():
-                # Select and perform an action
+                # [Select and perform an action]
                 # action = agent.act_table(info)
                 with utils.eval_mode(agent):
                     action = agent.act(state)
@@ -655,11 +669,12 @@ def train_hq_table():
                     # this conditino should match the one in update_absV
                     interval4SemiMDP = 0
                 if abs_state1 != abs_state2:
-                    shaping = config.gamma * abs_value2 - abs_value1
+                    # shaping = config.gamma * abs_value2 - abs_value1
+                    shaping = abs_value2 - abs_value1
                     episodic_shaped_reward += shaping
-                    agent.shaping_distribution[
-                        info["agent_pos2"][1], info["agent_pos2"][0], info["agent_dir2"]
-                    ] += shaping
+                    # agent.shaping_distribution[
+                    #     info["agent_pos2"][1], info["agent_pos2"][0], info["agent_dir2"]
+                    # ] += shaping
                 agent.update_grd_visits(info)
 
                 for i in range(len(config.abs_ticks) - 1):
@@ -720,11 +735,254 @@ def train_hq_table():
                     # print(torch.cuda.memory_allocated()/(1024*1024), "MB")
                     agent.episodes_done += 1
                     if agent.episodes_done > 0 and agent.episodes_done % 1 == 0:
+                        # agent.vis_abstraction()
                         agent.vis_abstract_values()
                         agent.vis_grd_visits(norm_log=50)
                         agent.vis_grd_visits(norm_log=0)
                         agent.vis_shaping_distribution(norm_log=100)
                         agent.vis_shaping_distribution(norm_log=0)
+
+                    metrics = {
+                        "reward/episodic_reward": episodic_reward,
+                        "reward/episodic_negative_reward": episodic_negative_reward,
+                        "reward/episodic_non_negative_reward": episodic_non_negative_reward,
+                        "reward/episodic_shaped_reward": episodic_shaped_reward,
+                        "time/timesteps_done": agent.timesteps_done,
+                        "time/time_elapsed": (time.time() - time_start_training) / 3600,
+                        "time/episode_length": t + 1,
+                        "time/episodes_done": agent.episodes_done,
+                        "time/fps_per_episode": int((t + 1) / (time.time() - time_start_episode)),
+                    }
+                    if goal_found:
+                        episodes_since_goal_found += 1
+                        metrics.update(
+                            {
+                                "After_goal_found/episode_length_after_first_found": t + 1,
+                                "After_goal_found/episodic_reward": episodic_reward,
+                                "After_goal_found/episodic_shaped_reward": episodic_shaped_reward,
+                                "After_goal_found/episodes_done_after_first_found": episodes_since_goal_found,
+                                "After_goal_found/steps_done_after_first_found": steps_after_goal_found,
+                            }
+                        )
+                    wandb.log(metrics)
+
+                    print(
+                        f">>>>>>>>>>>>>>>>Episode{agent.episodes_done} Done| Repetition {rep}>>>>>>>>>>>>>>>>>"
+                    )
+                    print("terminal, trauncated:", terminated, truncated)
+                    print(
+                        "time cost so far: {:.3f} h".format(
+                            (time.time() - time_start_training) / 3600
+                        )
+                    )
+                    print("episodic time cost: {:.1f} s".format(time.time() - time_start_episode))
+                    print("Total_steps_done:", agent.timesteps_done)
+                    print("Episodic_fps:", int((t + 1) / (time.time() - time_start_episode)))
+                    print("Episode finished after {} timesteps".format(t + 1))
+                    print(f"++++++Episode: {agent.episodes_done} reward: {episodic_reward}++++++")
+                    print(f"agent.goal_found: {agent.goal_found}")
+
+                    print(
+                        "memory_allocated: {:.1f} MB".format(
+                            torch.cuda.memory_allocated() / (1024 * 1024)
+                        )
+                    )
+                    print(
+                        "memory_reserved: {:.1f} MB".format(
+                            torch.cuda.memory_reserved() / (1024 * 1024)
+                        )
+                    )
+
+                    # print(
+                    #     "mean losses(recon, vq, abstract_td_error, ground_td_error):",
+                    #     np.around(mean_losses, decimals=6),
+                    # )
+                    print("_current_progress_remaining:", agent._current_progress_remaining)
+                    print("train/exploration_rate:", agent.exploration_rate)
+                    # print("number of vqvae model forward passes:", agent.decoder.n_forward_call)
+                    print(
+                        "size of agent.memory: {} entries and {} mb".format(
+                            len(agent.memory), sys.getsizeof(agent.memory) / (1024 * 1024)
+                        )
+                    )
+                    # End this episode
+                    break
+            # if agent.episodes_done > 0 and agent.episodes_done % 3 == 0:
+            #     agent.vis_abstract_values()
+            #     print("Evaluate the agent by visualizing grd visits")
+            #     # evaluate_agent(env, agent, exploit_only=True)
+            #     # evaluate_agent(env, agent, exploit_only=False)
+            #     evaluate_dqn_agent(env, agent)
+        wandb.finish()
+
+        # if goal_found:
+        #     print("====Goal Found====")
+        # else:
+        #     print("====Goal Not Found in this repetition, deleting this run from wandb====")
+        # if not isinstance(run.mode, wandb.sdk.lib.disabled.RunDisabled):
+        #     api = wandb.Api()
+        #     run = api.run(f"team-yuan/HDQN_Neo/{run.id}")
+        #     run.delete()
+
+    print("Complete")
+    env.close()
+
+
+def train_adaptive_absT_grdTN():
+    """
+    abstract level using table
+    ground level using table or network, by setting use_table4grd
+
+    """
+    # env_id = "MiniGrid-Empty-Random-6x6-v0"
+    # env_id = "MiniGrid-Empty-16x16-v0"
+    # env_id = "CarRacing-v2"
+    # CarRacing-v05, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5, BreakoutNoFrameskip-v4, RiverraidNoFrameskip-v4
+    # vae_version = "vqvae_c3_embedding16x64_3_duolayer"
+
+    # cfg_key = "MiniGrid-Empty-RGB"
+    # cfg_key = "MiniGrid-Empty-v0"
+    cfg_key = "MiniGrid-FourRooms-v0"
+    # load hyperparameters from yaml config file
+    with open("/workspace/repos_dev/VQVAE_RL/hyperparams/minigrid/adaptive_abstraction.yaml") as f:
+        cfg = yaml.load(f, Loader=yaml.FullLoader)[cfg_key]
+        pprint(cfg)
+    for rep in range(30):
+        print(f"====Starting Repetition {rep}====")
+        current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
+        current_time = current_time.strftime("%b%d_%H-%M-%S")
+        # 🐝 initialise a wandb run
+        run = wandb.init(
+            project="HDQN_AbsTable_GrdNN",
+            # mode="disabled",
+            group=cfg["wandb_group"],
+            tags=[
+                "tbl",
+                "shp" if cfg["use_shaping"] else "no_shp",
+                f"omg{cfg['omega']}",
+                f"env{cfg['env_size']}x{cfg['env_size']}",
+                f"start({cfg['agent_start_pos'][0]}, {cfg['agent_start_pos'][1]})",
+            ],
+            notes=cfg["wandb_notes"],
+            config=cfg,
+        )
+        config = wandb.config
+        make_env = MAKE_ENV_FUNCS[config.env_type]
+        env = make_env(config, cfg_key)
+
+        agent = HDQN_AdaptiveAbs(config, env, use_table4grd=False)
+
+        goal_found = False
+        steps_after_goal_found = 0
+        episodes_since_goal_found = 0
+        interval4SemiMDP = 0
+        time_start_training = time.time()
+        # gym.reset(seed=int(time.time()))
+        total_steps = int(config.total_timesteps + config.init_steps)
+        # agent.cache_goal_transition()
+        while agent.timesteps_done < total_steps:
+            time_start_episode = time.time()
+            # Initialize the environment and state
+            state, info = env.reset()
+            episodic_reward = 0
+            episodic_negative_reward = 0
+            episodic_non_negative_reward = 0
+            episodic_shaped_reward = 0
+            # action = agent.act_table(info)
+            agent.grd_visits = np.zeros((env.height, env.width, 4))
+            for t in count():
+                # [Select and perform an action]
+                # action = agent.act_table(info)
+                with utils.eval_mode(agent):
+                    action = agent.act(state)
+                if goal_found:
+                    steps_after_goal_found += 1
+                # [Step]
+                next_state, reward, terminated, truncated, info = env.step(action)
+                agent.timesteps_done += 1
+
+                # abs_state1, abs_value1 = agent.get_abstract_value(info["agent_pos1"])
+                # abs_state2, abs_value2 = agent.get_abstract_value(info["agent_pos2"])
+                # interval4SemiMDP += 1
+                # info["interval4SemiMDP"] = interval4SemiMDP
+                # if not (abs_state1 == abs_state2 and reward == 0):
+                #     # this conditino should match the one in update_absV
+                #     interval4SemiMDP = 0
+                # if abs_state1 != abs_state2:
+                #     shaping = config.gamma * abs_value2 - abs_value1
+                #     episodic_shaped_reward += shaping
+                #     agent.shaping_distribution[
+                #         info["agent_pos2"][1], info["agent_pos2"][0], info["agent_dir2"]
+                #     ] += shaping
+                agent.update_grd_visits(info)
+
+                # for i in range(len(config.abs_ticks) - 1):
+                #     if agent.timesteps_done == (i + 1) * total_steps / len(config.abs_ticks):
+                #         agent.set_abs_ticks(config, i + 1)
+                # if isinstance(env.unwrapped, MiniGridEnv):
+                #     info["agent_pos"] = env.agent_pos
+                #     info["agent_dir"] = env.agent_dir
+                # print(env.agent_pos, env.agent_dir)
+                # time.sleep(10)
+
+                # [Store the transition in memory]
+                shaping = agent.cache(state, action, next_state, reward, terminated, info)
+                # agent.cache_ema(state, action, next_state, reward, terminated, info)
+                # agent.cache_lazy(state, action, next_state, reward, terminated)
+                episodic_shaped_reward += shaping
+
+                # reward = info["original_reward"]
+                episodic_reward += reward
+                if reward < 0:
+                    episodic_negative_reward += reward
+                else:
+                    episodic_non_negative_reward += reward
+                # [update]
+                # action_prime = agent.act_table(info)
+                if agent.timesteps_done >= config.init_steps:
+                    agent.update(use_shaping=config.use_shaping)
+                    # here we use table to do update
+                    # agent.update_table(use_shaping=config.use_shaping)
+                    # agent.update_table_no_memory(
+                    #     use_shaping=config.use_shaping, action_prime=action_prime
+                    # )
+                    # agent.update_table_abs_update_non_parallel2(use_shaping=config.use_shaping)
+                # [visualization]
+                for i in range(20):
+                    if agent.timesteps_done == (i + 1) * total_steps / 20:
+                        # agent.vis_grd_visits(norm_log=50)
+                        # agent.vis_grd_visits(norm_log=0)
+                        # agent.grd_visits = np.zeros_like(agent.grd_visits)
+                        # agent.vis_shaping_distribution(norm_log=100)
+                        # agent.vis_shaping_distribution(norm_log=0)
+                        # agent.vis_grd_q_values(norm_log=100)
+                        # agent.vis_grd_q_values(norm_log=1e8)
+                        # agent.vis_abstract_values()
+                        break
+                # agent.maybe_buffer_recent_states(state)
+                if agent.timesteps_done >= total_steps:
+                    truncated = True
+
+                state = next_state
+                # action = action_prime
+
+                if terminated or truncated:
+                    if terminated:
+                        goal_found = True
+                        print("!!Goal Found!!")
+                        agent.goal_found = True
+                    # print("sys.getsizeof(agent.memory)", sys.getsizeof(agent.memory))
+                    # print(torch.cuda.memory_reserved()/(1024*1024), "MB")
+                    # print(torch.cuda.memory_allocated()/(1024*1024), "MB")
+                    agent.episodes_done += 1
+                    if agent.episodes_done > 0 and agent.episodes_done % 1 == 0:
+                        if agent.timesteps_done > config.init_steps:
+                            agent.vis_abstraction()
+                            agent.vis_abstract_values()
+                            agent.vis_grd_visits(norm_log=50)
+                            agent.vis_grd_visits(norm_log=0)
+                            agent.vis_shaping_distribution(norm_log=100)
+                            agent.vis_shaping_distribution(norm_log=0)
 
                     metrics = {
                         "reward/episodic_reward": episodic_reward,
@@ -870,6 +1128,7 @@ def find_gpu():
 
 
 if __name__ == "__main__":
+    print("sys.path:", sys.path)
 
     # from utils.gpu_profile import gpu_profile
     find_gpu()
@@ -880,7 +1139,8 @@ if __name__ == "__main__":
 
     # train_hdqn()
     # train_dqn_kmeans()
-    train_hq_table()
+    train_manual_absT_grdTN()
+    # train_adaptive_absT_grdTN()
 
     # env = make_env_minigrid(env_id="MiniGrid-Empty-6x6-v0")
     # print(env.observation_space.shape)

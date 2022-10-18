@@ -27,10 +27,10 @@ from stable_baselines3.common.vec_env import (
 )
 from stable_baselines3.common.monitor import Monitor
 import wandb
-from utils.misc import ProcessFrame, linear_schedule, make_vec_env_customized
-from transforms import transform_dict
-from wrappers import pack_env_wrappers
-from wrappers import (
+from latentrl.common.utils import ProcessFrame, linear_schedule, make_vec_env_customized
+from latentrl.common.transforms import transform_dict
+from latentrl.common.wrappers import pack_env_wrappers
+from latentrl.common.wrappers import (
     ActionRepetitionWrapper,
     LatentWrapper,
     NaiveWrapper,
@@ -49,8 +49,8 @@ from wrappers import (
     EpisodeEarlyStopWrapper,
     PunishRewardWrapper,
 )
-from models.vae import VAE
-from custom_callbacks import (
+from nn_models.vae import VAE
+from latentrl.common.custom_callbacks import (
     HparamsWriterCallback,
     EarlyStopCallback,
     NonZeroRewardWriterCallback,

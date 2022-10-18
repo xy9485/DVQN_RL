@@ -37,10 +37,15 @@ import wandb
 from data2 import RolloutDatasetNaive
 from policies.hrl_dqn_agent import DuoLayerAgent, SingelLayerAgent
 from policies.vanilla_dqn_agent import VanillaDQNAgent
-from transforms import transform_dict
-from utils.learning import EarlyStopping, ReduceLROnPlateau
-from utils.misc import get_linear_fn, linear_schedule, make_vec_env_customized, update_learning_rate
-from wrappers import (
+from latentrl.common.transforms import transform_dict
+from latentrl.common.learning_scheduler import EarlyStopping, ReduceLROnPlateau
+from latentrl.common.utils import (
+    get_linear_fn,
+    linear_schedule,
+    make_vec_env_customized,
+    update_learning_rate,
+)
+from latentrl.common.wrappers import (
     ActionDiscreteWrapper,
     ActionRepetitionWrapper,
     CarRandomStartWrapper,
@@ -54,7 +59,7 @@ from wrappers import (
     pack_env_wrappers,
 )
 
-from atari_wrapper import *
+from latentrl.common.atari_wrapper import *
 
 
 def make_env(

@@ -25,8 +25,8 @@ from torchvision.utils import save_image
 
 import wandb
 from latentrl.policies.utils import ReplayMemory
-from latentrl.utils.learning import EarlyStopping, ReduceLROnPlateau
-from latentrl.utils.misc import (
+from latentrl.common.learning_scheduler import EarlyStopping, ReduceLROnPlateau
+from latentrl.common.utils import (
     get_linear_fn,
     linear_schedule,
     polyak_sync,
@@ -1152,7 +1152,7 @@ class HDQN(nn.Module):
                 self.lr_scheduler_abstract_V(self._current_progress_remaining),
             )
 
-        batch = self.memory.sample(batch_size=self.batch_size)    
+        batch = self.memory.sample(batch_size=self.batch_size)
         # batch = self.memory.lazy_sample(batch_size=self.batch_size)
         state_batch = torch.cat(batch.state).to(self.device)
         action_batch = torch.cat(batch.action).to(self.device)

@@ -1,4 +1,3 @@
-import datetime
 import os
 import time
 
@@ -12,9 +11,9 @@ from torchvision.utils import save_image
 # from .types_ import *
 from typing import Any, Dict, List, Optional, Tuple, Type, Union, TypeVar
 
-from latentrl.utils.misc import wandb_log_image
+from common.utils import wandb_log_image
 
-Tensor = TypeVar("torch.tensor")
+Tensor = TypeVar("Tensor")
 
 
 class VectorQuantizer(nn.Module):
@@ -30,8 +29,7 @@ class VectorQuantizer(nn.Module):
         self.beta = beta
 
         self.embedding = nn.Embedding(self.K, self.D)
-        # try detach
-        self.embedding.weight.data.uniform_(-1 / self.K, 1 / self.K)
+        self.embedding.weight.data.uniform_(-1 / self.K, 1 / self.K)  # try detach
 
     def forward(self, latents: Tensor) -> Tensor:
         latents = latents.permute(0, 2, 3, 1).contiguous()  # [B x D x H x W] -> [B x H x W x D]
@@ -66,87 +64,7 @@ class VectorQuantizer(nn.Module):
         # Add the residue back to the latents
         quantized_latents = latents + (quantized_latents - latents).detach()
 
-        return (
-            quantized_latents.permute(0, 3, 1, 2).contiguous(),
-            vq_loss,
-        )  # [B x D x H x W]
-
-
-class VectorQuantizerEMA(nn.Module):
-    def __init__(
-        self, num_embeddings, embedding_dim, commitment_cost=0.25, decay=0.99, epsilon=1e-5
-    ):
-        super(VectorQuantizerEMA, self).__init__()
-
-        self._embedding_dim = embedding_dim
-        self._num_embeddings = num_embeddings
-
-        self._embedding = nn.Embedding(self._num_embeddings, self._embedding_dim)
-        self._embedding.weight.data.normal_()
-        self._commitment_cost = commitment_cost
-
-        self.register_buffer("_ema_cluster_size", torch.zeros(num_embeddings))
-        self._ema_w = nn.Parameter(torch.Tensor(num_embeddings, self._embedding_dim))
-        self._ema_w.data.normal_()
-
-        self._decay = decay
-        self._epsilon = epsilon
-
-    def forward(self, inputs):
-        # convert inputs from BCHW -> BHWC
-        inputs = inputs.permute(0, 2, 3, 1).contiguous()
-        input_shape = inputs.shape
-
-        # Flatten input
-        flat_input = inputs.view(-1, self._embedding_dim)
-
-        # Calculate distances
-        distances = (
-            torch.sum(flat_input**2, dim=1, keepdim=True)
-            + torch.sum(self._embedding.weight**2, dim=1)
-            - 2 * torch.matmul(flat_input, self._embedding.weight.t())
-        )
-
-        # Encoding
-        encoding_indices = torch.argmin(distances, dim=1).unsqueeze(1)
-        encodings = torch.zeros(
-            encoding_indices.shape[0], self._num_embeddings, device=inputs.device
-        )
-        encodings.scatter_(1, encoding_indices, 1)
-
-        # Quantize and unflatten
-        quantized = torch.matmul(encodings, self._embedding.weight).view(input_shape)
-
-        # Use EMA to update the embedding vectors
-        if self.training:
-            self._ema_cluster_size = self._ema_cluster_size * self._decay + (
-                1 - self._decay
-            ) * torch.sum(encodings, 0)
-
-            # Laplace smoothing of the cluster size
-            n = torch.sum(self._ema_cluster_size.data)
-            self._ema_cluster_size = (
-                (self._ema_cluster_size + self._epsilon)
-                / (n + self._num_embeddings * self._epsilon)
-                * n
-            )
-
-            dw = torch.matmul(encodings.t(), flat_input)
-            self._ema_w = nn.Parameter(self._ema_w * self._decay + (1 - self._decay) * dw)
-
-            self._embedding.weight = nn.Parameter(self._ema_w / self._ema_cluster_size.unsqueeze(1))
-
-        # Loss
-        e_latent_loss = F.mse_loss(quantized.detach(), inputs)
-        loss = self._commitment_cost * e_latent_loss
-
-        # Straight Through Estimator
-        quantized = inputs + (quantized - inputs).detach()
-        avg_probs = torch.mean(encodings, dim=0)
-        perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
-
-        # convert quantized from BHWC -> BCHW
-        return quantized.permute(0, 3, 1, 2).contiguous(), loss, perplexity, encodings
+        return quantized_latents.permute(0, 3, 1, 2).contiguous(), vq_loss  # [B x D x H x W]
 
 
 class ResidualLayer(nn.Module):
@@ -170,12 +88,11 @@ class VQVAE(nn.Module):
         in_channels: int,
         embedding_dim: int,
         num_embeddings: int,
-        # device: torch.device,
         hidden_dims: List = None,
         beta: float = 0.25,
         img_size: int = 64,
         reconstruction_path=None,
-        **kwargs,
+        **kwargs
     ) -> None:
         super(VQVAE, self).__init__()
 
@@ -184,25 +101,18 @@ class VQVAE(nn.Module):
         self.img_size = img_size
         self.beta = beta
         self.reconstruction_path = reconstruction_path
-        # self.device = device
+
         self.forward_call = 0
-        self.initial_in_channels = in_channels
 
         modules = []
         if hidden_dims is None:
-            hidden_dims = [32, 64]
+            hidden_dims = [128, 256]
 
         # Build Encoder
         for h_dim in hidden_dims:
             modules.append(
                 nn.Sequential(
-                    nn.Conv2d(
-                        in_channels,
-                        out_channels=h_dim,
-                        kernel_size=4,
-                        stride=2,
-                        padding=1,
-                    ),
+                    nn.Conv2d(in_channels, out_channels=h_dim, kernel_size=4, stride=2, padding=1),
                     nn.LeakyReLU(),
                 )
             )
@@ -215,21 +125,19 @@ class VQVAE(nn.Module):
             )
         )
 
-        for _ in range(1):
+        for _ in range(6):
             modules.append(ResidualLayer(in_channels, in_channels))
         modules.append(nn.LeakyReLU())
 
         modules.append(
             nn.Sequential(
-                nn.Conv2d(in_channels, embedding_dim, kernel_size=1, stride=1),
-                nn.LeakyReLU(),
+                nn.Conv2d(in_channels, embedding_dim, kernel_size=1, stride=1), nn.LeakyReLU()
             )
         )
 
         self.encoder = nn.Sequential(*modules)
 
-        # self.vq_layer = VectorQuantizer(num_embeddings, embedding_dim, self.beta)
-        self.vq_layer = VectorQuantizerEMA(num_embeddings, embedding_dim)
+        self.vq_layer = VectorQuantizer(num_embeddings, embedding_dim, self.beta)
 
         # Build Decoder
         modules = []
@@ -240,7 +148,7 @@ class VQVAE(nn.Module):
             )
         )
 
-        for _ in range(1):
+        for _ in range(6):
             modules.append(ResidualLayer(hidden_dims[-1], hidden_dims[-1]))
 
         modules.append(nn.LeakyReLU())
@@ -251,11 +159,7 @@ class VQVAE(nn.Module):
             modules.append(
                 nn.Sequential(
                     nn.ConvTranspose2d(
-                        hidden_dims[i],
-                        hidden_dims[i + 1],
-                        kernel_size=4,
-                        stride=2,
-                        padding=1,
+                        hidden_dims[i], hidden_dims[i + 1], kernel_size=4, stride=2, padding=1
                     ),
                     nn.LeakyReLU(),
                 )
@@ -264,11 +168,7 @@ class VQVAE(nn.Module):
         modules.append(
             nn.Sequential(
                 nn.ConvTranspose2d(
-                    hidden_dims[-1],
-                    out_channels=self.initial_in_channels,
-                    kernel_size=4,
-                    stride=2,
-                    padding=1,
+                    hidden_dims[-1], out_channels=3, kernel_size=4, stride=2, padding=1
                 ),
                 nn.Tanh(),
             )
@@ -298,28 +198,18 @@ class VQVAE(nn.Module):
         return result
 
     def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
-        # input = input.to(self.device)
-        encoded = self.encode(input)[0]
-        # quantized_inputs, vq_loss = self.vq_layer(encoded)
-        quantized_inputs, vq_loss, _, _ = self.vq_layer(encoded)  # EMA
+        encoding = self.encode(input)[0]
+        quantized_inputs, vq_loss = self.vq_layer(encoding)
         recon = self.decode(quantized_inputs)
         # print(type(recon), recon.size())
-        if (
-            self.forward_call % 10000 == 0
-            and self.reconstruction_path
-            # and self.initial_in_channels == 3
-        ):
-            # current_time = datetime.datetime.now().strftime("%b%d_%H-%M-%S")
-            # save_to = os.path.join(self.reconstruction_path, f"recon_{current_time}.png")
-            # save_image(input[:8],save_to)
-            # save_image(recon[:8], save_to)
-            # print("save input and recon to path: ", save_to)
-            stacked = torch.cat((recon[:7, :1], input[:1, :1]), dim=0)
-            wandb_log_image(stacked)
+        if self.forward_call % 10000 == 0 and self.reconstruction_path:
+            # print("save input and recon")
+            # save_image(input[:8], os.path.join(self.reconstruction_path,f"input_{time.time()}.png"))
+            # save_image(recon[:8], os.path.join(self.reconstruction_path,f"recon_{time.time()}.png"))
+            wandb_log_image(recon[:8, :1])
             print("log recons as image to wandb")
-
         self.forward_call += 1
-        return [recon, quantized_inputs, encoded, vq_loss]
+        return [recon, input, vq_loss]
 
     def loss_function(self, *args, **kwargs) -> dict:
         """
@@ -352,21 +242,7 @@ class VQVAE(nn.Module):
 if __name__ == "__main__":
     from torchsummary import summary
 
-    # model = VQVAE(3, 64, 128)
+    model = VQVAE(3, 64, 128)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    model = VQVAE(
-        in_channels=3,
-        embedding_dim=16,
-        num_embeddings=64,
-        reconstruction_path=None,
-    ).to(device)
-
-    # summary(model, (3, 64, 64))
-    # print(model)
-    summary(model.encoder, (3, 84, 84))
-    summary(model.decoder, (16, 21, 21))
-    # summary(model.vq_layer, (16, 21, 21))
-    # print(model.encoder.parameters)
-    # print(model.encoder._parameters)
-    # print(model.encoder._modules)
+    model.to("cuda")
+    summary(model, (3, 64, 64))

@@ -1,0 +1,4 @@
+from policies.HDQN_KMeans_CURL import HDQN_KMeans_CURL
+from policies.HDQN_KMeans_VAE import HDQN_KMeans_VAE
+from policies.minigrid.HDQN_AdaptiveAbs import HDQN_AdaptiveAbs
+from policies.minigrid.HDQN_ManualAbs import HDQN_ManualAbs

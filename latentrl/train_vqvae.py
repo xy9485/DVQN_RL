@@ -36,14 +36,14 @@ from torchsummary import summary
 
 # from models.vae import VAE
 # from models.vae2 import VAE
-from models.vqvae import VQVAE
-from models.vae3 import VAE
-from transforms import transform_dict
+from nn_models.vqvae import VQVAE
+from nn_models.vae3 import VAE
+from latentrl.common.transforms import transform_dict
 
-from utils.misc import save_checkpoint
+from latentrl.common.utils import save_checkpoint
 
 ## WARNING : THIS SHOULD BE REPLACE WITH PYTORCH 0.5
-from utils.learning import EarlyStopping
+from latentrl.common.learning_scheduler import EarlyStopping
 
 # from utils.learning import ReduceLROnPlateau
 from torch.optim.lr_scheduler import ReduceLROnPlateau

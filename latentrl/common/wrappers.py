@@ -1,32 +1,29 @@
+import importlib
+import itertools as it
 import math
-from os import truncate
 import time
 from collections import deque
+from os import truncate
+from os.path import join
 from statistics import mean
-import itertools as it
 from turtle import position
-import gym
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
-# from gym.spaces.box import Box
-# from gym.spaces.discrete import Discrete
-from gym.spaces import Box
-from gym.spaces import Discrete
-from gym.envs.box2d.car_racing import CarRacing
-from gym.envs.box2d.car_dynamics import Car
+import cv2
+import gym
 import numpy as np
-from PIL import Image, ImageOps
+import torch
 from gym import spaces
-from stable_baselines3 import SAC, DQN
-from stable_baselines3.common.vec_env import VecEnvWrapper, VecEnv
+from gym.envs.box2d.car_dynamics import Car
+from gym.envs.box2d.car_racing import CarRacing
+from gym.spaces import Box, Discrete
+from PIL import Image, ImageOps
+from stable_baselines3 import DQN, SAC
+from stable_baselines3.common.vec_env import VecEnv, VecEnvWrapper
 from stable_baselines3.common.vec_env.base_vec_env import VecEnvStepReturn
 from torchvision import transforms as T
-from os.path import join
-import torch
-from models.vae import VAE
-from models.vqvae import VQVAE
-import importlib
-from typing import List, Set, Dict, Tuple, Optional, Union, Any, Callable
-import cv2
+
+from nn_models import VAE, VQVAE
 
 cv2.ocl.setUseOpenCL(False)
 
@@ -1418,14 +1415,14 @@ class FrameStackCustom(gym.Wrapper):
         return LazyFramesCustom(list(self.frames))
 
 
-class LimitNumberActionsWrapper(gym.ActionWrapper):
+class LimitNumberActionsWrapper(gym.Wrapper):
     def __init__(self, env, limit):
         super().__init__(env)
         self.limit = limit
         self.action_space = gym.spaces.Discrete(limit)
 
-    def action(self, action):
-        return action
+    # def action(self, action):
+    #     return action
 
 
 class MinigridInfoWrapper(gym.Wrapper):
@@ -1469,7 +1466,7 @@ class MinigridEmptyRewardWrapper(gym.Wrapper):
         if terminated:
             reward = 1
         else:
-            reward = -1e-5
+            reward = -1e-4
         return obs, reward, terminated, truncated, info
 
 

@@ -6,7 +6,7 @@ from hparams import HyperParams as hp
 from car_racing import CarRacingWrapper
 import math
 from PIL import Image
-from utils.misc import sample_continuous_policy
+from latentrl.common.utils import sample_continuous_policy
 from gym.envs.box2d.car_dynamics import Car
 
 

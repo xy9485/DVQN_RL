@@ -12,7 +12,7 @@ from stable_baselines3.common.logger import Image, TensorBoardOutputFormat
 from stable_baselines3.common.utils import safe_mean
 from stable_baselines3.common.vec_env import VecTransposeImage
 
-from utils.misc import pretty_json
+from common.utils import pretty_json
 
 
 class PrintTrainingRewardCallback(BaseCallback):
