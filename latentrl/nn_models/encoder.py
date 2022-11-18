@@ -13,10 +13,10 @@ from nn_models.components import ConvBlock, ResidualLayer
 class Encoder(nn.Module):
     def __init__(
         self,
-        in_channels: int,
+        input_channels: int,
         linear_out_dim: Optional[int] = None,  # latent_dim
         observation_space: gym.spaces.box.Box = None,
-        hidden_dims: List = [32, 64],
+        hidden_dims: List = [32, 64, 64],
         n_redisual_layers: int = 0,
         **kwargs,
     ) -> None:
@@ -25,7 +25,7 @@ class Encoder(nn.Module):
         self.linear_out_dim = linear_out_dim
         blocks = [
             ConvBlock(
-                in_channels,
+                input_channels,
                 hidden_dims[0],
                 kernel_size=8,
                 stride=4,
@@ -42,7 +42,7 @@ class Encoder(nn.Module):
             ),
             ConvBlock(
                 hidden_dims[1],
-                hidden_dims[1],
+                hidden_dims[2],
                 kernel_size=3,
                 stride=2,
                 padding=0,
@@ -57,8 +57,9 @@ class Encoder(nn.Module):
         # Compute shape by doing one forward pass
         with torch.no_grad():
             x = observation_space.sample()
-            x = T.ToTensor()(x).unsqueeze(0)
-            x = nn.Sequential(*blocks)(x.float())
+            x = torch.from_numpy(x).unsqueeze(0).float()
+            # x = torch.from_numpy(x).unsqueeze(0).permute(0, 3, 1, 2).float()
+            x = nn.Sequential(*blocks)(x)
             self.shape_conv_output = x.shape
             # shape of the last feature map of the encoder, [B, C, H, W]
             self.n_flatten = torch.prod(torch.tensor(x.shape[1:])).item()
@@ -72,6 +73,8 @@ class Encoder(nn.Module):
                     nn.ReLU(),
                 ]
             )
+        else:
+            blocks.append(nn.Flatten())
         # self.ln = nn.LayerNorm([C, H, W])
 
         # self.outputs = dict()
@@ -93,7 +96,8 @@ class Encoder(nn.Module):
 
     def forward(self, x):
         x = x / 255.0
-        x = x.permute(0, 3, 2, 1).float()
+        # x = x.float()
+        # x = x.permute(0, 3, 1, 2).float()
         return self.blocks(x)
 
         # x = self.blocks(x)
@@ -185,7 +189,7 @@ class Encoder_MiniGrid(nn.Module):
         super().__init__()
         self.forward_call = 0
         self.linear_out_dim = linear_out_dim
-        final_channels = hidden_dims[-1]
+        n_channel_last = hidden_dims[-1]
         # encoder architecture #1
         # blocks = [
         #     ConvBlock(
@@ -221,7 +225,7 @@ class Encoder_MiniGrid(nn.Module):
             ConvBlock(
                 in_channels,
                 hidden_dims[0],
-                kernel_size=5,
+                kernel_size=3,
                 stride=2,
                 padding=0,
                 batch_norm=False,
@@ -236,8 +240,8 @@ class Encoder_MiniGrid(nn.Module):
             ),
             ConvBlock(
                 hidden_dims[1],
-                final_channels,
-                kernel_size=3,
+                n_channel_last,
+                kernel_size=2,
                 stride=1,
                 padding=0,
                 batch_norm=False,
@@ -245,7 +249,7 @@ class Encoder_MiniGrid(nn.Module):
         ]
         if n_redisual_layers > 0:
             for _ in range(n_redisual_layers):
-                blocks.append(ResidualLayer(final_channels, final_channels))
+                blocks.append(ResidualLayer(n_channel_last, n_channel_last))
             blocks.append(nn.ReLU())
 
         # Compute shape by doing one forward pass
@@ -264,11 +268,14 @@ class Encoder_MiniGrid(nn.Module):
                 [
                     nn.Flatten(),
                     nn.Linear(self.n_flatten, self.linear_out_dim),
-                    nn.LayerNorm(self.linear_out_dim),
-                    nn.Tanh(),
-                    # nn.ReLU(),
+                    # nn.LayerNorm(self.linear_out_dim),
+                    # nn.Tanh(),
+                    nn.ReLU(),
+                    # nn.LeakyReLU(),
                 ]
             )
+        else:
+            blocks.append(nn.Flatten())
         # self.ln = nn.LayerNorm([C, H, W])
 
         # self.outputs = dict()
@@ -290,8 +297,10 @@ class Encoder_MiniGrid(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         # x = x.transpose(1, 3).transpose(2, 3).float()
-        x = x / 10
-        x = x.permute(0, 3, 2, 1).float()
+        x = x.float()
+        # x = x / 10.0
+        x = x.permute(0, 3, 1, 2).float()
+        # x = x.permute(0, 3, 2, 1).float()
         return self.blocks(x)
 
         # x = self.blocks(x)

@@ -248,7 +248,9 @@ class PreprocessObservationWrapper(
         self.observation_space = Box(
             low=0,
             high=255,
-            shape=(shape, shape) + (num_output_channels,),
+            shape=(shape, shape, num_output_channels)
+            if num_output_channels == 3
+            else (shape, shape),
             dtype=np.uint8,  # this is important to have
         )
 
@@ -263,12 +265,13 @@ class PreprocessObservationWrapper(
             obs = obs.resize(self.shape, Image.BILINEAR)
             if self.num_output_channels == 1:
                 obs = ImageOps.grayscale(obs)
+                # obs = np.array(obs)[..., np.newaxis]
             return np.array(obs)
         elif self.preprocess_mode == "cv2":
             obs = cv2.resize(obs, self.shape, interpolation=cv2.INTER_AREA)
             if self.num_output_channels == 1:
                 obs = cv2.cvtColor(obs, cv2.COLOR_RGB2GRAY)
-                obs = np.array(obs)[..., np.newaxis]
+                # obs = np.array(obs)[..., np.newaxis]
             return np.array(obs)
         elif self.preprocess_mode == "torchvision":
             obs = T.ToPILImage()(obs)
@@ -276,7 +279,7 @@ class PreprocessObservationWrapper(
             obs = T.Resize(self.shape)(obs)
             if self.num_output_channels == 1:
                 obs = T.Grayscale(num_output_channels=self.num_output_channels)(obs)
-                return np.array(obs)[..., np.newaxis]
+                # return np.array(obs)[..., np.newaxis]
                 # or return np.expand_dims(np.array(obs), -1)
             return np.array(obs)
 
@@ -1437,6 +1440,7 @@ class MinigridInfoWrapper(gym.Wrapper):
         info["agent_dir2"] = self.env.agent_dir
         info["agent_pos1"] = agent_pos1
         info["agent_dir1"] = agent_dir1
+        info["original_reward"] = reward
         return obs, reward, terminated, truncated, info
 
     def step_(self, action):
@@ -1457,16 +1461,17 @@ class MinigridInfoWrapper(gym.Wrapper):
         return env, info
 
 
-class MinigridEmptyRewardWrapper(gym.Wrapper):
+class MinigridRewardWrapper(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
         if terminated:
-            reward = 1
+            reward = reward * 100
         else:
             reward = -1e-4
+            # reward = 0
         return obs, reward, terminated, truncated, info
 
 
@@ -1482,7 +1487,6 @@ class StateBonusCustom(gym.Wrapper):
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
-        info["original_reward"] = reward
 
         # Tuple based on which we index the counts
         # We use the position after an update
@@ -1498,7 +1502,8 @@ class StateBonusCustom(gym.Wrapper):
         new_count = pre_count + 1
         self.counts[tup] = new_count
 
-        bonus = 1 / math.sqrt(new_count)
+        bonus = 1 / (new_count * 10) ** 2
+        # bonus = 1 / math.sqrt(new_count)
         reward += bonus
 
         info["bonus"] = bonus

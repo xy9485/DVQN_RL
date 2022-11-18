@@ -21,6 +21,21 @@ class ResidualLayer(nn.Module):
         return input + self.resblock(input)
 
 
+class ResidualLinearLayer(nn.Module):
+    def __init__(self, dim_in: int, dim_out: int):
+        super().__init__()
+        self.resblock = nn.Sequential(
+            nn.Linear(dim_in, dim_out),
+            nn.LayerNorm(dim_out),
+            nn.ReLU(True),
+            nn.Linear(dim_out, dim_out),
+            nn.LayerNorm(dim_out),
+        )
+
+    def forward(self, input: Tensor) -> Tensor:
+        return input + self.resblock(input)
+
+
 class ConvBlock(nn.Module):
     def __init__(
         self,
@@ -30,7 +45,6 @@ class ConvBlock(nn.Module):
         stride: int,
         padding: int,
         batch_norm: bool = True,
-        negative_slope: Optional[float] = None,
     ):
         super().__init__()
         blocks = [
@@ -38,11 +52,10 @@ class ConvBlock(nn.Module):
         ]
         if batch_norm:
             blocks.append(nn.BatchNorm2d(out_channels))
-        if negative_slope:
-            blocks.append(nn.LeakyReLU(negative_slope=negative_slope))
-        else:
-            blocks.append(nn.ReLU())
-            # blocks.append(nn.ELU())
+
+        # blocks.append(nn.LeakyReLU())
+        blocks.append(nn.ReLU())
+        # blocks.append(nn.ELU())
         self.blocks = nn.Sequential(*blocks)
 
     def forward(self, x):
@@ -111,6 +124,7 @@ class RandomShiftsAug(nn.Module):
         self.pad = pad
 
     def forward(self, x):
+        x = x.float()
         n, c, h, w = x.size()
         assert h == w
         padding = tuple([self.pad] * 4)

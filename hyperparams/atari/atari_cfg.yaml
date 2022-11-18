@@ -1,0 +1,50 @@
+ALE/Breakout-v5:
+  env_type: Atari
+  total_timesteps: 100000
+  init_steps: 10000
+  input_format: full_img
+  grd_hidden_dims:
+    - 32
+    - 64
+    - 64
+  grd_embedding_dim: False
+  n_clusters: 20
+  cluster_embedding_dim: 64
+  # lr_ground_Q: 0.0002
+  # lr_abstract_V: 0.1
+  lr_ground_Q: 0.0001
+  lr_abstract_V: 0.01
+  # lr_encoder: 0.0005
+  # lr_decoder: 0.0005
+  batch_size: 32
+  size_replay_memory: 50000
+  gamma: 0.99
+  abstract_gamma: 0.99
+  omega: 10
+  ground_tau: 1
+  # abstract_tau: 0.2
+  # encoder_tau: 0.2
+  exploration_fraction: 1
+  exploration_initial_eps: 0.1
+  exploration_final_eps: 0.01
+  save_model_every: 500000.0
+  ground_learn_every: 4
+  ground_sync_every: 8
+  ground_gradient_steps: 1
+  abstract_learn_every: 2000
+  abstract_sync_every: 8
+  abstract_gradient_steps: 1000
+  # learn_with_ae: True
+  # init_clustering: True
+  use_shaping: True
+  # wandb_group: AE_KMeans_DQN
+  # wandb_group: AE_DQN
+  wandb_group: shp_100k_buf50k_alr0.01_aug_shaddow
+  # wandb_group: shp_100k_lrabs0.1_tau0.1_aevery4_rrward_mod
+  wandb_notes: nothing
+  # wandb_tags: ["shp", "omg1", "tbl", "16x16", "(1,1)"]
+  clip_grad: True
+  # validate_every: 1000
+  reset_training_info_every: 1000
+  save_recon_every: 1000
+  # buffer_recent_states_every: 1000

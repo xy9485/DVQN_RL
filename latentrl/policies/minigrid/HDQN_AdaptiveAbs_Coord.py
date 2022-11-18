@@ -51,7 +51,7 @@ from torchvision.utils import save_image
 from minigrid import Wall
 
 
-class HDQN_AdaptiveAbs(HDQN):
+class HDQN_AdaptiveAbs_Coord(HDQN):
     def __init__(self, config, env, use_table4grd=False):
         super().__init__(config, env)
         # self.set_hparams(config)
@@ -90,6 +90,8 @@ class HDQN_AdaptiveAbs(HDQN):
         self.abstract_V_array = np.zeros((config.n_clusters))
         # self.lr_abs_V = config.lr_abstract_V
         self.abstract_eligibllity_list = []
+        self.abstract_V_update_count = 300
+        self.abstract_A = np.zeros((config.n_clusters, config.n_clusters))
 
         # self.random_encoder = RandomEncoderMiniGrid(
         #     observation_space=env.observation_space,
@@ -100,7 +102,7 @@ class HDQN_AdaptiveAbs(HDQN):
             in_channels=3,
             observation_space=env.observation_space,
             linear_out_dim=None,
-            hidden_dims=config.hidden_dims,
+            hidden_dims=config.grd_hidden_dims,
         ).to(self.device)
 
         # self.random_encoder = self.ground_Q_target.encoder
@@ -109,6 +111,7 @@ class HDQN_AdaptiveAbs(HDQN):
         self.memory = ReplayMemoryWithCluster(self.size_replay_memory, self.device)
         self.buffer_before_kmeans = set()
         self.abs_centroids = np.zeros((config.n_clusters, config.cluster_embedding_dim))
+        self.abs_centroids_shaddow = np.zeros((config.n_clusters, config.cluster_embedding_dim))
 
         self.list_recent_state_encoded = []
         self._ema_cluster_size = np.zeros((config.n_clusters))
@@ -239,23 +242,28 @@ class HDQN_AdaptiveAbs(HDQN):
     #     dist = np.sum(np.absolute(diff), axis=-1)
     #     return np.argmin(dist)
 
-    def assign_abs_state(self, state_encoded):
+    def assign_abs_state(self, state_encoded, use_shaddow_abs_centroids=True):
+        if use_shaddow_abs_centroids:
+            abs_centroids = self.abs_centroids_shaddow
+        else:
+            abs_centroids = self.abs_centroids
         if len(state_encoded) > 2:
-            diff = self.abs_centroids - state_encoded
-            dist = np.linalg.norm(np.absolute(diff), axis=-1)
+            diff = abs_centroids - state_encoded
+            dist = np.linalg.norm(diff, axis=-1)
             return np.argmin(dist)
         elif len(state_encoded) == 2:
             # use Hanming distance
-            diff = self.abs_centroids - state_encoded
+            diff = abs_centroids - state_encoded
             dist = np.sum(np.absolute(diff), axis=-1)
             return np.argmin(dist)
 
-    def assign_abs_state_matrixwise(self, X: np.ndarray):
-        distances = X[:, np.newaxis, :] - self.abs_centroids
-        distances = np.sum(np.absolute(distances, out=distances), axis=-1)
+    def assign_abs_state_broadcast(self, X: np.ndarray):
+        diff = X[:, np.newaxis, :] - self.abs_centroids
+        distances = np.sum(np.absolute(diff), axis=-1)
         return np.argmin(distances, axis=-1)
 
     def replace_abstraction_in_memory(self):
+        self.abs_centroids_shaddow = copy.deepcopy(self.abs_centroids)
         for _ in range(len(self.memory)):
             trs = self.memory.pop()
             if self.cluster_embedding_dim > 2:
@@ -376,7 +384,7 @@ class HDQN_AdaptiveAbs(HDQN):
             self.list_recent_state_encoded.append(state_encoded)
             if len(self.list_recent_state_encoded) > self.ema_window:
                 X = np.array(self.list_recent_state_encoded)
-                abs_states = self.assign_abs_state_matrixwise(X)
+                abs_states = self.assign_abs_state_broadcast(X)
                 abs_states_onehot = np.eye(self.n_clusters)[abs_states]
                 self._ema_cluster_size = self._ema_cluster_size * self._decay + (
                     1 - self._decay
@@ -423,6 +431,7 @@ class HDQN_AdaptiveAbs(HDQN):
         reward2 = np.random.uniform(0, 0.5)
         self.cache(temp, 2, temp, reward1, True, info1)
         self.cache(temp, 2, temp, reward2, True, info2)
+        print("Inject goal transitions with reward1: {}, reward2: {}".format(reward1, reward2))
 
     def vis_abstraction_and_values(self, prefix: str):
         width = self.env.width
@@ -588,7 +597,6 @@ class HDQN_AdaptiveAbs(HDQN):
                 # h += 1
                 if not isinstance(self.env.grid.get(w, h), Wall):
                     if self.cluster_embedding_dim > 2:
-
                         for dir in range(4):
                             if self.input_format == "partial_obs":
                                 env_ = copy.deepcopy(self.env)
@@ -647,7 +655,7 @@ class HDQN_AdaptiveAbs(HDQN):
         if self.cluster_embedding_dim > 2:
             pass
         elif self.cluster_embedding_dim == 2:
-            for i, (x, y) in enumerate(self.abs_centroids):
+            for i, (x, y) in enumerate(self.abs_centroids_shaddow):
                 ax_abs.text(
                     x,
                     y,
@@ -776,7 +784,7 @@ class HDQN_AdaptiveAbs(HDQN):
         if self.cluster_embedding_dim > 2:
             pass
         elif self.cluster_embedding_dim == 2:
-            for i, (x, y) in enumerate(self.abs_centroids):
+            for i, (x, y) in enumerate(self.abs_centroids_shaddow):
                 ax_abs_v.text(
                     x,
                     y,
@@ -1485,6 +1493,50 @@ class HDQN_AdaptiveAbs(HDQN):
 
         return mean(delta_l)
 
+    def update_absV_laplacian(
+        self,
+        abs_indices: tuple,
+        abs_indices_next: tuple,
+        reward: tuple,
+        terminated: tuple,
+        info: tuple,
+    ):
+        if hasattr(self, "lr_scheduler_abstract_V"):
+            self.lr_abs_V = self.lr_scheduler_abstract_V(self._current_progress_remaining)
+        reward = list(reward)
+        # target = reward + self.gamma * abs_value_next_l
+        # delta = target - abs_value_l
+        # abs_indices = list(abs_indices)
+        # abs_indices_next = list(abs_indices_next)
+        # abs_value_l = self.abstract_V_array[abs_indices]
+        # abs_value_next_l = self.abstract_V_array[abs_indices_next]
+
+        # reward = reward / 10
+        delta_l = []
+        for i, (abs_idx, abs_idx_next) in enumerate(zip(abs_indices, abs_indices_next)):
+            if reward[i] < 0:
+                reward[i] = 0
+            if abs_idx == abs_idx_next and reward[i] == 0:
+                delta_l.append(0)
+            else:
+                target = reward[i] + self.abs_gamma * self.abstract_V_array[abs_idx_next] * (
+                    1 - terminated[i]
+                )
+                # target = reward[i] + self.gamma ** info[i]["interval4SemiMDP"] * abs_value_next_l[
+                #     i
+                # ] * (1 - terminated[i])
+                # target = reward[i] + self.gamma ** info[i]["interval4SemiMDP"] * abs_value_next_l[i]
+                delta = target - self.abstract_V_array[abs_idx]
+                # if delta <= 0:
+                #     delta_l.append(0)
+                # else:
+                self.abstract_V_array[abs_idx] += self.lr_abs_V * delta
+                delta_l.append(delta)
+
+        self.training_info["abstract_V_error"].append(mean(delta_l))
+
+        return mean(delta_l)
+
     def maybe_update_absV(
         self,
         abs_indices: list,
@@ -1605,11 +1657,17 @@ class HDQN_AdaptiveAbs(HDQN):
         if self.timesteps_done == self.init_steps:
             print("Init steps done")
         if self.timesteps_done == self.init_steps + 1:
-            # self.cache_goal_transition()
-            pass
+            for _ in range(3):
+                self.cache_goal_transition()
+                pass
 
         if use_shaping:
-            if self.timesteps_done % self.abstract_learn_every == 0:
+            if (
+                self.abstract_V_update_count > 0
+                and (self.timesteps_done - self.init_steps) % self.abstract_learn_every == 0
+            ):
+                self.abs_centroids_shaddow = copy.deepcopy(self.abs_centroids)
+                # self.abstract_V_array = np.zeros_like(self.abstract_V_array)
                 for _ in range(self.abstract_gradient_steps):
                     (
                         state,
@@ -1624,6 +1682,11 @@ class HDQN_AdaptiveAbs(HDQN):
                     # [data augmentation]
                     # state = self.aug(state)
                     # next_state = self.aug(next_state)
+                    abs_state = []
+                    next_abs_state = []
+                    for info_i in info:
+                        abs_state.append(self.assign_abs_state(info_i["agent_pos1"]))
+                        next_abs_state.append(self.assign_abs_state(info_i["agent_pos2"]))
 
                     # [update abstract_V]
                     self.update_absV_immediate(
@@ -1633,6 +1696,12 @@ class HDQN_AdaptiveAbs(HDQN):
                         terminated,
                         info,
                     )
+
+                self.abstract_V_update_count -= 1
+                # if self.abstract_V_update_count == 0:
+                print(
+                    f"rest time of abstract_V updating #{self.abstract_V_update_count}, self.timesteps_done: {self.timesteps_done}"
+                )
 
             if self.timesteps_done % self.ground_learn_every == 0:
                 for _ in range(self.ground_gradient_steps):
@@ -1650,6 +1719,11 @@ class HDQN_AdaptiveAbs(HDQN):
                     # [data augmentation]
                     # state = self.aug(state)
                     # next_state = self.aug(next_state)
+                    abs_state = []
+                    next_abs_state = []
+                    for info_i in info:
+                        abs_state.append(self.assign_abs_state(info_i["agent_pos1"]))
+                        next_abs_state.append(self.assign_abs_state(info_i["agent_pos2"]))
 
                     # [update ground_Q with reward shaping]
                     self.update_grdQ_shaping(
@@ -1686,6 +1760,8 @@ class HDQN_AdaptiveAbs(HDQN):
             #     self.ground_Q_target.critic.parameters(),
             #     self.ground_tau,
             # )
+        # if self.timesteps_done % self.abstract_sync_every == 0:
+        #     self.abs_centroids_shaddow = copy.deepcopy(self.abs_centroids)
 
         if self.timesteps_done % self.save_model_every == 0:
             pass

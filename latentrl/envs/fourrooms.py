@@ -55,15 +55,19 @@ class FourRoomsEnv(MiniGridEnv):
 
     """
 
-    def __init__(self, agent_pos=None, goal_pos=None, **kwargs):
+    def __init__(self, agent_pos=None, goal_pos=None, env_size=19, **kwargs):
         self._agent_default_pos = agent_pos
         self._goal_default_pos = goal_pos
 
-        self.size = 19
+        self.size = env_size
         mission_space = MissionSpace(mission_func=lambda: "reach the goal")
 
         super().__init__(
-            mission_space=mission_space, width=self.size, height=self.size, max_steps=3000, **kwargs
+            mission_space=mission_space,
+            width=self.size,
+            height=self.size,
+            max_steps=3000,
+            **kwargs,
         )
 
     def _gen_grid(self, width, height):

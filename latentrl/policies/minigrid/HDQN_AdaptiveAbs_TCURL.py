@@ -3,6 +3,7 @@ import io
 import math
 import random
 from collections import Counter, deque, namedtuple
+from pprint import pprint
 from statistics import mean
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
@@ -12,15 +13,6 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torchvision.transforms as T
 import wandb
-
-from matplotlib import pyplot as plt
-from PIL import Image
-from sklearn.cluster import KMeans
-from sympy.solvers import solve
-from torch import Tensor, nn
-from torchsummary import summary
-from torchvision.utils import save_image
-
 from common.batch_kmeans import Batch_KMeans
 from common.learning_scheduler import EarlyStopping, ReduceLROnPlateau
 from common.utils import (
@@ -32,25 +24,39 @@ from common.utils import (
     update_learning_rate,
     wandb_log_image,
 )
-
+from envs import FourRoomsEnv
+from matplotlib import pyplot as plt
 from nn_models import (
     DQN,
+    V_MLP,
+    Decoder,
+    Decoder_MiniGrid,
+    DQN_Repara,
     Encoder,
-    Encoder_MiniGrid,
     Encoder_MiniGrid_PartialObs,
-    EncoderRes,
+    Encoder_MiniGrid,
     RandomShiftsAug,
+    RandomEncoder,
+    RandomEncoderMiniGrid,
+    CURL,
 )
+from PIL import Image
 from policies.HDQN import HDQN
 from policies.utils import EncoderMaker, ReplayMemory, ReplayMemoryWithCluster
+from sklearn.cluster import KMeans
+from sympy.solvers import solve
+from torch import Tensor, nn
+from torchsummary import summary
+from torchvision.utils import save_image
+
+from minigrid import Wall
 
 
-class HDQN_ManualAbs(HDQN):
+class HDQN_AdaptiveAbs_TCURL(HDQN):
     def __init__(self, config, env, use_table4grd=False):
         super().__init__(config, env)
         # self.set_hparams(config)
         self.n_actions = env.action_space.n
-        self.n_clusters = config.n_clusters
         self.use_table4grd = use_table4grd
 
         # self.abs_ticks = np.array([5, 10, 14])
@@ -68,13 +74,16 @@ class HDQN_ManualAbs(HDQN):
                 observation_space=env.observation_space,
                 action_space=env.action_space,
                 encoder_maker=EncoderMaker(input_format=config.input_format, agent=self),
+                encoder_detach=config.encoder_detach,
             ).to(self.device)
 
             self.ground_Q_target = DQN(
                 observation_space=env.observation_space,
                 action_space=env.action_space,
                 encoder_maker=EncoderMaker(input_format=config.input_format, agent=self),
+                encoder_detach=config.encoder_detach,
             ).to(self.device)
+
             self.ground_Q_target.load_state_dict(self.ground_Q.state_dict())
             self.ground_Q_target.train()
 
@@ -84,14 +93,37 @@ class HDQN_ManualAbs(HDQN):
         self.abstract_V_array = np.zeros((config.n_clusters))
         # self.lr_abs_V = config.lr_abstract_V
         self.abstract_eligibllity_list = []
+        self.abstract_V_update_count = 300
+        self.abstract_A = np.zeros((config.n_clusters, config.n_clusters))
+
+        self.tcurl = CURL(
+            z_dim=config.grd_embedding_dim,
+            critic=self.ground_Q,
+            critic_target=self.ground_Q_target,
+        ).to(self.device)
+
+        # self.random_encoder = self.ground_Q_target.encoder
 
         self.aug = RandomShiftsAug(pad=4)
-        self.memory = ReplayMemory(self.size_replay_memory, self.device)
+        self.memory = ReplayMemoryWithCluster(self.size_replay_memory, self.device)
+        self.buffer_before_kmeans = set()
+        self.abs_centroids = np.zeros((config.n_clusters, config.grd_embedding_dim))
+        self.abs_centroids_shaddow = np.zeros((config.n_clusters, config.grd_embedding_dim))
+
+        self.list_recent_state_encoded = []
+        self._ema_cluster_size = np.zeros((config.n_clusters))
+        # self._ema_w = np.random.randn(config.n_clusters, 2)
+        self._ema_w = np.zeros((config.n_clusters, config.grd_embedding_dim))
+        self.ema_window = 1000
+        self.n_centroids_ema_updates = 0
+        self._decay = 0.95
+        self._epsilon = 1e-5
 
         # self.timesteps_done = 0
         # self.episodes_done = 0
         # self._current_progress_remaining = 1.0
         # self.to_buffer_recent_states = False  # for func maybe_buffer_recent_states
+        self.use_shaping = config.use_shaping
         self.count_vis = 0
         self.goal_found = False
         self.n_abs_updates = 60
@@ -113,12 +145,6 @@ class HDQN_ManualAbs(HDQN):
             "n_cross_upper_bound": [],
         }
 
-    def set_abs_ticks(self, config, idx_abs_layout):
-        self.abs_ticks = np.array(config.abs_ticks[idx_abs_layout])
-        self.abs_txt_ticks = ((np.insert(self.abs_ticks, 0, 0) + np.append(self.abs_ticks, 0)) / 2)[
-            :-1
-        ]
-
     def set_hparams(self, config):
         # Hyperparameters
         # self.total_episodes = config.total_episodes
@@ -129,11 +155,12 @@ class HDQN_ManualAbs(HDQN):
         self.gamma = config.gamma
         self.abs_gamma = config.abstract_gamma
         self.omega = config.omega
-        self.ground_tau = config.ground_tau
-        # self.encoder_tau = config.encoder_tau
+        self.ground_Q_critic_tau = config.ground_Q_critic_tau
+        self.ground_Q_encoder_tau = config.ground_Q_encoder_tau
         # self.abstract_tau = config.abstract_tau
         self.grd_hidden_dims = config.grd_hidden_dims
         self.grd_embedding_dim = config.grd_embedding_dim
+        self.cluster_embedding_dim = config.grd_embedding_dim
 
         self.ground_learn_every = config.ground_learn_every
         self.ground_sync_every = config.ground_sync_every
@@ -141,6 +168,7 @@ class HDQN_ManualAbs(HDQN):
         self.abstract_learn_every = config.abstract_learn_every
         self.abstract_sync_every = config.abstract_sync_every
         self.abstract_gradient_steps = config.abstract_gradient_steps
+        self.tcurl_learn_every = config.tcurl_learn_every
 
         # self.validate_every = config.validate_every
         self.save_model_every = config.save_model_every
@@ -169,9 +197,7 @@ class HDQN_ManualAbs(HDQN):
     def log_training_info(self, wandb_log=True):
         if wandb_log:
             metrics = {
-                "Info/ground_Q_error": mean(self.training_info["ground_Q_error"])
-                if len(self.training_info["ground_Q_error"]) > 0
-                else 0,
+                "Info/ground_Q_error": mean(self.training_info["ground_Q_error"]),
                 "Info/abstract_V_error": mean(self.training_info["abstract_V_error"])
                 if len(self.training_info["abstract_V_error"])
                 else 0,
@@ -197,27 +223,174 @@ class HDQN_ManualAbs(HDQN):
             # print("logging training info:")
             # pp(metrics)
 
+    @torch.no_grad()
+    def encode_state(self, state):
+        # assert isinstance(state, np.ndarray)
+        if len(state.shape) == 4:
+            return self.tcurl.encode_anchor(state).cpu().numpy()
+            # return self.ground_Q.encoder(state).cpu().numpy()
+        state = state[:]
+        state = torch.from_numpy(state).unsqueeze(0).to(self.device)
+        return self.tcurl.encode_anchor(state).squeeze().cpu().numpy()
+        # return self.ground_Q.encoder(state).squeeze().cpu().numpy()
+
+    # def assign_abs_state(self, state_encoded):
+    #     dist = []
+    #     for i in range(self.n_clusters):
+    #         dist.append(np.sum(np.absolute(state_encoded - self.abs_centroids[i])))
+    #     return np.argmin(dist)
+
+    # def assign_abs_state(self, state_encoded):
+    #     diff = self.abs_centroids - state_encoded
+    #     dist = np.sum(np.absolute(diff), axis=-1)
+    #     return np.argmin(dist)
+
+    def assign_abs_state(self, state_encoded, use_shaddow_abs_centroids=False):
+        # handle one state
+        if use_shaddow_abs_centroids:
+            abs_centroids = self.abs_centroids_shaddow
+        else:
+            abs_centroids = self.abs_centroids
+        if len(state_encoded) > 2:
+            diff = abs_centroids - state_encoded
+            dist = np.linalg.norm(diff, axis=-1)
+            return np.argmin(dist)
+        elif len(state_encoded) == 2:
+            # use Hanming distance
+            diff = abs_centroids - state_encoded
+            dist = np.sum(np.absolute(diff), axis=-1)
+            return np.argmin(dist)
+
+    def assign_batch_abs_state(self, X, use_shaddow_abs_centroids=False):
+        # handle a batch of states
+        if use_shaddow_abs_centroids:
+            abs_centroids = self.abs_centroids_shaddow
+        else:
+            abs_centroids = self.abs_centroids
+        diff = X[:, np.newaxis, :] - abs_centroids
+        if diff.shape[-1] > 2:
+            dist = np.linalg.norm(diff, axis=-1)
+        elif diff.shape[-1] == 2:
+            dist = np.sum(np.absolute(diff), axis=-1)
+        return np.argmin(dist, axis=-1)
+
+    def replace_abstraction_in_memory(self):
+        for _ in range(len(self.memory)):
+            trs = self.memory.pop()
+            state_encoded = self.encode_state(trs.state)
+            next_state_encoded = self.encode_state(trs.next_state)
+            abs_state = self.assign_abs_state(state_encoded)
+            next_abs_state = self.assign_abs_state(next_state_encoded)
+            self.memory.push(
+                trs.state,
+                abs_state,
+                trs.action,
+                trs.next_state,
+                next_abs_state,
+                trs.reward,
+                trs.terminated,
+                trs.info,
+            )
+
     def cache(self, state, action, next_state, reward, terminated, info):
         """Add the experience to memory"""
-        # if state_type == "rgb":
-        #     state = T.ToTensor()(state).float().unsqueeze(0)
-        #     next_state = T.ToTensor()(next_state).float().unsqueeze(0)
-        # else:
-        #     state = torch.from_numpy(state.transpose((2, 0, 1))).contiguous().float().unsqueeze(0)
-        #     next_state = (
-        #         torch.from_numpy(next_state.transpose((2, 0, 1))).contiguous().float().unsqueeze(0)
-        #     )
-        # if state_type == "img":
-        #     state = state / 255.0
-        #     next_state = next_state / 255.0
-        # action = torch.tensor([action]).unsqueeze(0)
-        # reward = torch.tensor([reward]).unsqueeze(0)
-        # terminated = torch.tensor([terminated]).unsqueeze(0)
+        if not self.use_shaping:
+            self.memory.push(state, 0, action, next_state, 0, reward, terminated, info)
+            shaping = 0
+            return shaping
 
-        self.memory.push(state, action, next_state, reward, terminated, info)
+        state_encoded = self.encode_state(state)
+        next_state_encoded = self.encode_state(next_state)
+        abs_state = self.assign_abs_state(state_encoded)
+        next_abs_state = self.assign_abs_state(next_state_encoded)
+        self.memory.push(
+            state, abs_state, action, next_state, next_abs_state, reward, terminated, info
+        )
+
+        if self.timesteps_done > self.init_steps:
+            # abs_label = self.kmeans.predict([state_encoded])[0]
+            self.abs_state_count[abs_state] += 1
+            self.abs_centroids[abs_state] += (
+                1
+                / self.abs_state_count[abs_state]
+                * (state_encoded - self.abs_centroids[abs_state])
+            )
+        # Compute shaping
+        if abs_state != next_abs_state:
+            abs_value = self.abstract_V_array[abs_state]
+            abs_value_next = self.abstract_V_array[next_abs_state]
+            shaping = abs_value_next - abs_value
+            # print("shaping:", shaping)
+        else:
+            shaping = 0
+
+        return shaping
+
+    def cache_ema(self, state, action, next_state, reward, terminated, info):
+        """Add the experience to memory"""
+        if not self.use_shaping:
+            self.memory.push(state, 0, action, next_state, 0, reward, terminated, info)
+            shaping = 0
+            return shaping
+
+        state_encoded = self.encode_state(state)
+        next_state_encoded = self.encode_state(next_state)
+        abs_state = self.assign_abs_state(state_encoded)
+        next_abs_state = self.assign_abs_state(next_state_encoded)
+        self.memory.push(
+            state, abs_state, action, next_state, next_abs_state, reward, terminated, info
+        )
+
+        if self.timesteps_done > self.init_steps:
+            self.list_recent_state_encoded.append(state_encoded)
+            if len(self.list_recent_state_encoded) == self.ema_window:
+                X = np.array(self.list_recent_state_encoded)
+                abs_states = self.assign_batch_abs_state(X)
+                abs_states_onehot = np.eye(self.n_clusters)[abs_states]
+                self._ema_cluster_size = self._ema_cluster_size * self._decay + (
+                    1 - self._decay
+                ) * np.sum(abs_states_onehot, axis=0)
+                print("assignment:", np.sum(abs_states_onehot, axis=0))
+
+                # Laplace smoothing of the cluster size
+                n = np.sum(self._ema_cluster_size)
+                self._ema_cluster_size = (
+                    (self._ema_cluster_size + self._epsilon)
+                    / (n + self.n_clusters * self._epsilon)
+                    * n
+                )
+
+                dw = np.matmul(abs_states_onehot.T, X)
+                self._ema_w = self._ema_w * self._decay + (1 - self._decay) * dw
+                self.abs_centroids = self._ema_w / self._ema_cluster_size[:, np.newaxis]
+
+                self.list_recent_state_encoded = []
+                self.n_centroids_ema_updates += 1
+                print("EMA update #:", self.n_centroids_ema_updates)
+
+        if abs_state != next_abs_state:
+            abs_value = self.abstract_V_array[abs_state]
+            abs_value_next = self.abstract_V_array[next_abs_state]
+            shaping = abs_value_next - abs_value
+        else:
+            shaping = 0
+
+        return shaping
 
     def cache_goal_transition(self):
-        temp = np.zeros((self.env.width, self.env.height, 3))
+        print("cache goal transitions")
+        # temp = np.zeros((self.env.width, self.env.height, 3))
+
+        state1 = self.env.unwrapped.grid.copy().encode()
+        state1[self.env.width - 3][self.env.height - 2] = np.array([10, 0, 0])
+        next_state1 = self.env.unwrapped.grid.copy().encode()
+        next_state1[self.env.width - 2][self.env.height - 2] = np.array([10, 0, 0])
+
+        state2 = self.env.unwrapped.grid.copy().encode()
+        state2[self.env.width - 2][self.env.height - 3] = np.array([10, 0, 1])
+        next_state2 = self.env.unwrapped.grid.copy().encode()
+        next_state2[self.env.width - 2][self.env.height - 2] = np.array([10, 0, 1])
+
         goal_pos = (self.env.width - 2, self.env.height - 2)
         info1 = {
             "agent_pos1": (goal_pos[0] - 1, goal_pos[1]),
@@ -236,8 +409,8 @@ class HDQN_ManualAbs(HDQN):
         # sample a reward from uniform distribution in range [0, 0.5)
         reward1 = np.random.uniform(0, 0.5)
         reward2 = np.random.uniform(0, 0.5)
-        self.cache(temp, 2, temp, reward1, True, info1)
-        self.cache(temp, 2, temp, reward2, True, info2)
+        self.cache(state1, 2, next_state1, reward1, True, info1)
+        self.cache(state2, 2, next_state2, reward2, True, info2)
         print("Inject goal transitions with reward1: {}, reward2: {}".format(reward1, reward2))
 
     def vis_abstraction_and_values(self, prefix: str):
@@ -394,23 +567,45 @@ class HDQN_ManualAbs(HDQN):
         # clustersS = np.random.randint(0, 4, size=(height, width))
         clustersW = np.full(shape=(height, width), fill_value=-1)
         clustersE = np.full(shape=(height, width), fill_value=-1)
-
-        for w in range(width - 2):
-            w += 1
-            for h in range(height - 2):
-                h += 1
-                abstract_state_idx, abstract_value = self.get_abstract_value((w, h))
-                clustersN[h, w] = abstract_state_idx
-                clustersE[h, w] = abstract_state_idx
-                clustersS[h, w] = abstract_state_idx
-                clustersW[h, w] = abstract_state_idx
+        for w in range(width):
+            # w += 1
+            for h in range(height):
+                # h += 1
+                if not isinstance(self.env.grid.get(w, h), Wall):
+                    if self.cluster_embedding_dim > 2:
+                        for dir in range(4):
+                            if self.input_format == "partial_obs":
+                                env_ = copy.deepcopy(self.env)
+                                env_.agent_pos = (w, h)
+                                env_.agent_dir = dir
+                                grid, vis_mask = env_.gen_obs_grid(agent_view_size=7)
+                                state = grid.encode(vis_mask)
+                            elif self.input_format == "full_img":
+                                state = self.env.unwrapped.grid.copy().render(
+                                    tile_size=self.env.tile_size, agent_pos=(w, h), agent_dir=dir
+                                )
+                            elif self.input_format == "full_obs":
+                                state = self.env.unwrapped.grid.copy().encode()
+                                state[w][h] = np.array([10, 0, dir])
+                            encoded = self.encode_state(state)
+                            abstract_state_idx = self.assign_abs_state(encoded)
+                            if dir == 3:
+                                clustersN[h, w] = abstract_state_idx
+                            if dir == 0:
+                                clustersE[h, w] = abstract_state_idx
+                            if dir == 1:
+                                clustersS[h, w] = abstract_state_idx
+                            if dir == 2:
+                                clustersW[h, w] = abstract_state_idx
+                    elif self.cluster_embedding_dim == 2:
+                        abstract_state_idx = self.assign_abs_state((w, h))
+                        clustersN[h, w] = abstract_state_idx
+                        clustersE[h, w] = abstract_state_idx
+                        clustersS[h, w] = abstract_state_idx
+                        clustersW[h, w] = abstract_state_idx
 
         values = [clustersN, clustersE, clustersS, clustersW]
         triangulations = self.triangulation_for_triheatmap(width, height)
-
-        xx, yy = np.meshgrid(self.abs_txt_ticks, self.abs_txt_ticks)
-        xx = xx.flatten()
-        yy = yy.flatten()
 
         # [Plot Abstraction]
         fig_abs, ax_abs = plt.subplots(figsize=(5, 5))
@@ -429,20 +624,32 @@ class HDQN_ManualAbs(HDQN):
             )
             for t, val in zip(triangulations, values)
         ]
-        for i, (x, y) in enumerate(zip(xx, yy)):
-            ax_abs.text(
-                x,
-                y,
-                str(i),
-                # horizontalalignment="center",
-                # verticalalignment="center",
-                fontsize=13,
-                color="k",
-                fontweight="semibold",
-                bbox=dict(
-                    boxstyle="round,pad=0.08, rounding_size=0.2", fc=(1.0, 0.8, 0.8), ec="k", lw=1.5
-                ),
-            )
+
+        # xx, yy = np.meshgrid(self.abs_txt_ticks, self.abs_txt_ticks)
+        # xx = xx.flatten()
+        # yy = yy.flatten()
+        if self.cluster_embedding_dim > 2:
+            pass
+        elif self.cluster_embedding_dim == 2:
+            for i, (x, y) in enumerate(self.abs_centroids_shaddow):
+                ax_abs.text(
+                    x,
+                    y,
+                    str(i),
+                    # horizontalalignment="center",
+                    # verticalalignment="center",
+                    fontsize=9,
+                    color="k",
+                    fontweight="semibold",
+                    # fontweight="normal",
+                    bbox=dict(
+                        boxstyle="round,pad=0.08, rounding_size=0.2",
+                        fc=(1.0, 0.8, 0.8),
+                        ec="k",
+                        lw=1.5,
+                    ),
+                )
+
         ax_abs.invert_yaxis()
         fig_abs.tight_layout()
 
@@ -473,25 +680,57 @@ class HDQN_ManualAbs(HDQN):
         clustersW = np.full(shape=(height, width), fill_value=np.nan, dtype=np.float32)
         abstract_V_array_to_vis = copy.deepcopy(self.abstract_V_array)
         # abstract_V_array_to_vis -= np.min(abstract_V_array_to_vis)
+        # if len(np.argwhere(abstract_V_array_to_vis)) > 0:
+        #     print("abstract_V_array_to_vis:")
+        #     pprint(abstract_V_array_to_vis)
+        #     print(f"np.argwhere(abstract_V_array_to_vis): {np.argwhere(abstract_V_array_to_vis)}")
+        #     goal_pos = (self.env.width - 2, self.env.height - 2)
+        #     print(f"abs_state where goal located: {self.assign_abs_state(goal_pos)}")
 
-        for w in range(width - 2):
-            w += 1
-            for h in range(height - 2):
-                h += 1
+        for w in range(width):
+            # w += 1
+            for h in range(height):
+                # h += 1
                 # abstract_state_idx, abstract_value = self.get_abstract_value((w, h))
-                abstract_state_idx = self.get_abstract_state_idx((w, h))
-                abstract_value = abstract_V_array_to_vis[abstract_state_idx]
-                clustersN[h, w] = abstract_value
-                clustersE[h, w] = abstract_value
-                clustersS[h, w] = abstract_value
-                clustersW[h, w] = abstract_value
+                if not isinstance(self.env.grid.get(w, h), Wall):
+                    if self.cluster_embedding_dim > 2:
+                        for dir in range(4):
+                            if self.input_format == "partial_obs":
+                                env_ = copy.deepcopy(self.env)
+                                env_.agent_pos = (w, h)
+                                env_.agent_dir = dir
+                                grid, vis_mask = env_.gen_obs_grid(agent_view_size=7)
+                                state = grid.encode(vis_mask)
+                            elif self.input_format == "full_img":
+                                state = self.env.unwrapped.grid.copy().render(
+                                    tile_size=self.env.tile_size, agent_pos=(w, h), agent_dir=dir
+                                )
+                            elif self.input_format == "full_obs":
+                                state = self.env.unwrapped.grid.copy().encode()
+                                state[w][h] = np.array([10, 0, dir])
+                            encoded = self.encode_state(state)
+                            abstract_state_idx = self.assign_abs_state(encoded)
+                            abstract_value = abstract_V_array_to_vis[abstract_state_idx]
+                            if dir == 3:
+                                clustersN[h, w] = abstract_value
+                            if dir == 0:
+                                clustersE[h, w] = abstract_value
+                            if dir == 1:
+                                clustersS[h, w] = abstract_value
+                            if dir == 2:
+                                clustersW[h, w] = abstract_value
+
+                    elif self.cluster_embedding_dim == 2:
+                        abstract_state_idx = self.assign_abs_state((w, h))
+                        abstract_value = abstract_V_array_to_vis[abstract_state_idx]
+                        clustersN[h, w] = abstract_value
+                        clustersE[h, w] = abstract_value
+                        clustersS[h, w] = abstract_value
+                        clustersW[h, w] = abstract_value
 
         values = [clustersN, clustersE, clustersS, clustersW]
 
         triangulations = self.triangulation_for_triheatmap(width, height)
-        xx, yy = np.meshgrid(self.abs_txt_ticks, self.abs_txt_ticks)
-        xx = xx.flatten()
-        yy = yy.flatten()
 
         # [Plot Abstract Values]
         fig_abs_v, ax_abs_v = plt.subplots(figsize=(5, 5))
@@ -515,20 +754,30 @@ class HDQN_ManualAbs(HDQN):
         ]
         # round the values
         abstract_V_array = self.abstract_V_array.round(3)
-        for i, (x, y) in enumerate(zip(xx, yy)):
-            ax_abs_v.text(
-                x,
-                y,
-                abstract_V_array[i],
-                # horizontalalignment="center",
-                # verticalalignment="center",
-                fontsize=11,
-                color="k",
-                fontweight="semibold",
-                bbox=dict(
-                    boxstyle="round,pad=0.08, rounding_size=0.2", fc=(1.0, 0.8, 0.8), ec="k", lw=1.5
-                ),
-            )
+        # xx, yy = np.meshgrid(self.abs_txt_ticks, self.abs_txt_ticks)
+        # xx = xx.flatten()
+        # yy = yy.flatten()
+        if self.cluster_embedding_dim > 2:
+            pass
+        elif self.cluster_embedding_dim == 2:
+            for i, (x, y) in enumerate(self.abs_centroids_shaddow):
+                ax_abs_v.text(
+                    x,
+                    y,
+                    abstract_V_array[i],
+                    # horizontalalignment="center",
+                    # verticalalignment="center",
+                    fontsize=11,
+                    color="k",
+                    fontweight="semibold",
+                    bbox=dict(
+                        boxstyle="round,pad=0.08, rounding_size=0.2",
+                        fc=(1.0, 0.8, 0.8),
+                        ec="k",
+                        lw=1.5,
+                    ),
+                )
+
         ax_abs_v.invert_yaxis()
         # ax_abs_v.set_xlabel(f"Abs_V:{abstract_V_array}")
         fig_abs_v.tight_layout()
@@ -815,13 +1064,10 @@ class HDQN_ManualAbs(HDQN):
         #     self.ground_Q_net.parameters(), lr=lr_abstract_V, alpha=0.95, momentum=0.95, eps=0.01
         # )
 
-        if hasattr(self, "ground_Q"):
-            self.ground_Q_optimizer = optim.Adam(self.ground_Q.parameters(), lr=lr_ground_Q)
+        self.ground_Q_optimizer = optim.Adam(self.ground_Q.parameters(), lr=lr_ground_Q)
+        self.tcurl_optimizer = optim.Adam(self.tcurl.parameters(), lr=config.lr_tcurl)
 
     def act(self, state):
-        """
-        selects an action based by neural network
-        """
         # warm up phase
         if self.timesteps_done < self.init_steps:
             # action = self.env.action_space.sample()
@@ -835,9 +1081,9 @@ class HDQN_ManualAbs(HDQN):
             # state = state.transpose(2, 0, 1)[np.newaxis, ...]
             state = torch.from_numpy(state).unsqueeze(0).to(self.device)
             # state = T.ToTensor()(state).float().unsqueeze(0).to(self.device)
-            # summary(self.ground_Q, state.shape[1:])
+
             if random.random() > self.exploration_rate:
-                # action = self.ground_Q(state)[0].max(1)[1].item()
+                # action = self.ground_Q(state.unsqueeze(0))[0].max(1)[1].item()
                 action = self.ground_Q(state)[0].argmax(dim=1).item()
             else:
                 action = random.randrange(self.n_actions)
@@ -852,47 +1098,6 @@ class HDQN_ManualAbs(HDQN):
         #     self.abstract_eligibllity_list.append((state, 1))
 
         # self.timesteps_done += 1
-        return action
-
-    def act_table(self, info, exploit_only=False):
-        """
-        selects an action based on a table
-        """
-        self._update_current_progress_remaining(self.timesteps_done, self.total_timesteps)
-        self.exploration_rate = self.exploration_scheduler(self._current_progress_remaining)
-        agent_pos = info["agent_pos2"]
-        agent_dir = info["agent_dir2"]
-
-        if exploit_only:
-            rand = 1.0
-        else:
-            rand = random.random()
-
-        if rand > self.exploration_rate:
-
-            q_values = np.array(
-                [
-                    self.grd_Q_table[agent_pos[1], agent_pos[0], agent_dir, a]
-                    for a in range(self.n_actions)
-                ]
-            )
-            action = np.random.choice(np.flatnonzero(q_values == q_values.max()))
-
-            # naive greedy
-            # action = np.argmax(self.grd_Q_table[agent_pos[1], agent_pos[0], agent_dir, :])
-
-            assert action in range(self.n_actions)
-        else:
-            action = random.randrange(self.n_actions)
-
-        # [maintain eligibility]
-        # found = False
-        # for x in self.abstract_eligibllity_list:
-        #     if x[0] == state:
-        #         x[1] = 1
-        #         found = True
-        # if not found:
-        #     self.abstract_eligibllity_list.append((state, 1))
         return action
 
     def update_grd_visits(self, info):
@@ -943,7 +1148,7 @@ class HDQN_ManualAbs(HDQN):
         abstract_value = self.abstract_V_array[abstract_state_idx]
         return abstract_state_idx, abstract_value
 
-    def get_abs_indices_and_values(self, info: tuple):
+    def get_abs_indices_values(self, info: tuple):
         abs_value_l = []
         abs_value_next_l = []
         abs_indices = []
@@ -973,16 +1178,14 @@ class HDQN_ManualAbs(HDQN):
         abs_indices,
         abs_indices_next,
     ):
-        """
-        update ground Q network with tabular shaping
-        """
         if hasattr(self, "lr_scheduler_ground_Q"):
+            self.lr_grd_Q = self.lr_scheduler_ground_Q(self._current_progress_remaining)
             update_learning_rate(
                 self.ground_Q_optimizer,
-                self.lr_scheduler_ground_Q(self._current_progress_remaining),
+                self.lr_grd_Q,
             )
-        abs_indices = list(abs_indices)
-        abs_indices_next = list(abs_indices_next)
+        reward.clamp_(-1, 1)
+
         abs_value_l = self.abstract_V_array[abs_indices]
         abs_value_next_l = self.abstract_V_array[abs_indices_next]
 
@@ -1028,12 +1231,12 @@ class HDQN_ManualAbs(HDQN):
             # # abs_value_next_l = torch.tensor(abs_value_next_l)
             # # shaping = (abs_value_next_l - abs_value_l).unsqueeze(1).to(self.device)
             # shaping = torch.tensor(shaping).unsqueeze(1).to(self.device)
-            abs_indices = torch.tensor(abs_indices).to(self.device)
-            abs_indices_next = torch.tensor(abs_indices_next).to(self.device)
             abs_value_l = torch.tensor(abs_value_l).to(self.device)
             abs_value_next_l = torch.tensor(abs_value_next_l).to(self.device)
             # abs_value_l -= self.abstract_V_array.min()
             # abs_value_next_l -= self.abstract_V_array.min()
+            abs_indices = torch.tensor(abs_indices).to(self.device)
+            abs_indices_next = torch.tensor(abs_indices_next).to(self.device)
             mask = abs_indices != abs_indices_next
             # shaping = self.gamma * abs_value_next_l - abs_value_l
             shaping = abs_value_next_l - abs_value_l
@@ -1064,7 +1267,8 @@ class HDQN_ManualAbs(HDQN):
         if self.clip_grad:
             # 1 clamp gradients to avoid exploding gradient
             for param in self.ground_Q.parameters():
-                param.grad.data.clamp_(-1, 1)
+                if param.grad is not None:  # make sure grad is not None
+                    param.grad.data.clamp_(-1, 1)
 
             # 2 Clip gradient norm
             # max_grad_norm = 10
@@ -1080,91 +1284,28 @@ class HDQN_ManualAbs(HDQN):
         self.training_info["ground_Q_error"].append(ground_td_error.item())
         self.training_info["avg_shaping"].append(torch.mean(shaping).item())
 
-    def update_grdQ_table_shaping(
-        self,
-        action: tuple,
-        reward: tuple,
-        terminated: tuple,
-        info: tuple,
-        abs_indices: list,
-        abs_indices_next: list,
-        abs_value_l: list,
-        abs_value_next_l: list,
-        use_shaping: bool,
-        action_prime: int = None,
-    ):
-        """
-        Update ground Q table with tabular shaping
-        """
-
-        # [Update ground Q table]
-        delta_l = []
-        shaping_l = []
-        for i, info_i in enumerate(info):
-            agent_pos1 = info_i["agent_pos1"]
-            agent_dir1 = info_i["agent_dir1"]
-            agent_pos2 = info_i["agent_pos2"]
-            agent_dir2 = info_i["agent_dir2"]
-            if use_shaping:
-                if abs_indices_next[i] != abs_indices[i]:
-                    shaping = self.gamma * abs_value_next_l[i] - abs_value_l[i]
-                    # shaping = abs_value_next_l[i] - abs_value_l[i]
-                    self.shaping_distribution[agent_pos2[1], agent_pos2[0], agent_dir2] += shaping
-                else:
-                    shaping = 0
-            else:
-                shaping = 0
-
-            q = self.grd_Q_table[agent_pos1[1], agent_pos1[0], agent_dir1, action[i]]
-            # Use Sarsa Backup if action prime is given, otherwise use Q-learning backup
-            if action_prime:
-                q_prime = self.grd_Q_table[agent_pos2[1], agent_pos2[0], agent_dir2, action_prime]
-                q_target = (
-                    reward[i]
-                    + self.omega * shaping * (1 - terminated[i])
-                    + self.gamma * q_prime * (1 - terminated[i])
-                )
-            else:
-                max_q_prime = self.grd_Q_table[agent_pos2[1], agent_pos2[0], agent_dir2, :].max()
-                q_target = (
-                    reward[i]
-                    + self.omega * shaping * (1 - terminated[i])
-                    + self.gamma * max_q_prime * (1 - terminated[i])
-                )
-            delta = q_target - q
-            self.grd_Q_table[agent_pos1[1], agent_pos1[0], agent_dir1, action[i]] += (
-                self.lr_grd_Q * delta
-            )
-            delta_l.append(delta)
-            shaping_l.append(shaping)
-
-        self.training_info["ground_Q_error"].append(mean(delta_l))
-        self.training_info["avg_shaping"].append(mean(shaping_l))
-
     def update_absV(
         self,
-        abs_indices: list,
-        abs_indices_next: list,
-        abs_value_l: list,
-        abs_value_next_l: list,
+        abs_indices: tuple,
+        abs_indices_next: tuple,
         reward: tuple,
         terminated: tuple,
         info: tuple,
     ):
-        """
-        Update tabular abstract V
-        """
+        if hasattr(self, "lr_scheduler_abstract_V"):
+            self.lr_abs_V = self.lr_scheduler_abstract_V(self._current_progress_remaining)
         # target = reward + self.gamma * abs_value_next_l
         # delta = target - abs_value_l
-        reward = list(reward)
-        # reward = nn.functional.relu(torch.tensor(reward)).tolist()
+        abs_indices = list(abs_indices)
+        abs_indices_next = list(abs_indices_next)
+        abs_value_l = self.abstract_V_array[abs_indices]
+        abs_value_next_l = self.abstract_V_array[abs_indices_next]
+
         # reward = reward / 10
         update_flag = np.full(len(self.abstract_V_array), 20, dtype=np.int8)
         delta_l = []
         for i, (abs_idx, abs_idx_next) in enumerate(zip(abs_indices, abs_indices_next)):
             if update_flag[abs_idx] > 0:
-                if reward[i] < 0:
-                    reward[i] = 0
                 if abs_idx == abs_idx_next and reward[i] == 0:
                     delta_l.append(0)
                 else:
@@ -1177,12 +1318,9 @@ class HDQN_ManualAbs(HDQN):
                     # if delta <= 0:
                     #     delta_l.append(0)
                     #     continue
-                    if delta <= 0:
-                        delta_l.append(0)
-                    else:
-                        self.abstract_V_array[abs_idx] += self.lr_abs_V * delta
-                        update_flag[abs_idx] -= 1
-                        delta_l.append(delta)
+                    self.abstract_V_array[abs_idx] += self.lr_abs_V * delta
+                    update_flag[abs_idx] -= 1
+                    delta_l.append(delta)
             else:
                 delta_l.append(0)
 
@@ -1192,23 +1330,25 @@ class HDQN_ManualAbs(HDQN):
 
     def update_absV_immediate(
         self,
-        abs_indices: list,
-        abs_indices_next: list,
-        reward: tuple,
-        terminated: tuple,
-        info: tuple,
+        abs_indices: np.ndarray,
+        abs_indices_next: np.ndarray,
+        reward: Tensor,
+        terminated: Tensor,
     ):
-        """
-        Even a batch is given, update tabular abstract V immediately
-        """
+        if hasattr(self, "lr_scheduler_abstract_V"):
+            self.lr_abs_V = self.lr_scheduler_abstract_V(self._current_progress_remaining)
+        reward = reward.squeeze().float().tolist()
+        terminated = terminated.squeeze().float().tolist()
         # target = reward + self.gamma * abs_value_next_l
         # delta = target - abs_value_l
-        reward = list(reward)
-        # reward = nn.functional.relu(torch.tensor(reward)).tolist()
+        # abs_indices = list(abs_indices)
+        # abs_indices_next = list(abs_indices_next)
+        # abs_value_l = self.abstract_V_array[abs_indices]
+        # abs_value_next_l = self.abstract_V_array[abs_indices_next]
+
         # reward = reward / 10
         delta_l = []
         for i, (abs_idx, abs_idx_next) in enumerate(zip(abs_indices, abs_indices_next)):
-            # if update_flag[abs_idx] > 0:
             if reward[i] < 0:
                 reward[i] = 0
             if abs_idx == abs_idx_next and reward[i] == 0:
@@ -1222,18 +1362,32 @@ class HDQN_ManualAbs(HDQN):
                 # ] * (1 - terminated[i])
                 # target = reward[i] + self.gamma ** info[i]["interval4SemiMDP"] * abs_value_next_l[i]
                 delta = target - self.abstract_V_array[abs_idx]
-                if delta <= 0:
-                    delta_l.append(0)
-                else:
-                    self.abstract_V_array[abs_idx] += self.lr_abs_V * delta
-                    # update_flag[abs_idx] -= 1
-                    delta_l.append(delta)
-            # else:
-            #     delta_l.append(0)
+                # if delta <= 0:
+                #     delta_l.append(0)
+                # else:
+                self.abstract_V_array[abs_idx] += self.lr_abs_V * delta
+                delta_l.append(delta)
 
         self.training_info["abstract_V_error"].append(mean(delta_l))
 
         return mean(delta_l)
+
+    def update_tcurl(self, obs_anchor, obs_pos):
+
+        z_a = self.tcurl.encode_anchor(obs_anchor)
+        z_pos = self.tcurl.encode_positive(obs_pos)
+
+        logits = self.tcurl.compute_logits(z_a, z_pos)
+        labels = torch.arange(logits.shape[0]).long().to(self.device)
+        cross_entropy_loss = nn.CrossEntropyLoss()
+        loss = cross_entropy_loss(logits, labels)
+
+        self.ground_Q_optimizer.zero_grad()
+        self.tcurl_optimizer.zero_grad()
+        loss.backward()
+
+        self.ground_Q_optimizer.step()
+        self.tcurl_optimizer.step()
 
     def maybe_update_absV(
         self,
@@ -1245,11 +1399,7 @@ class HDQN_ManualAbs(HDQN):
         terminated: Tensor,
         info: tuple,
     ):
-        """
-        Update abstract value function when abstract error acrosses the threshold
-
-        """
-
+        """Update abstract value function when abstract error acrosses the threshold"""
         # target = reward + self.gamma * abs_value_next_l
         # delta = target - abs_value_l
 
@@ -1279,7 +1429,7 @@ class HDQN_ManualAbs(HDQN):
             to_update_grd_q = True
             return to_update_grd_q
 
-    def update_absV_potential(
+    def update_absV_potential_like(
         self,
         abs_indices: list,
         abs_indices_next: list,
@@ -1289,10 +1439,6 @@ class HDQN_ManualAbs(HDQN):
         terminated: Tensor,
         info: tuple,
     ):
-
-        """
-        make sure the distribution of abstract value is potential-like
-        """
         # target = reward + self.gamma * abs_value_next_l
         # delta = target - abs_value_l
 
@@ -1356,471 +1502,12 @@ class HDQN_ManualAbs(HDQN):
         self.training_info["abstract_V_error"].append(mean(delta_l))
         self.training_info["n_cross_upper_bound"].append(n_cross_upper_bound)
 
-    def update(self, use_shaping: bool):
-        if self.timesteps_done == self.init_steps:
-            print("Init steps done")
-        if self.timesteps_done == self.init_steps + 1:
-            for _ in range(5):
-                self.cache_goal_transition()
-                pass
-
-        if hasattr(self, "lr_scheduler_ground_Q"):
-            self.lr_grd_Q = self.lr_scheduler_ground_Q(self._current_progress_remaining)
-        if hasattr(self, "lr_scheduler_abstract_V"):
-            self.lr_abs_V = self.lr_scheduler_abstract_V(self._current_progress_remaining)
-        if use_shaping:
-            if (
-                self.timesteps_done < 1500000
-                and self.timesteps_done % self.abstract_learn_every == 0
-            ):
-                for _ in range(self.abstract_gradient_steps):
-                    state, action, next_state, reward, terminated, info = self.memory.sample(
-                        self.batch_size, mode="pure"
-                    )
-                    # [data augmentation]
-                    # state = self.aug(state)
-                    # next_state = self.aug(next_state)
-
-                    # [extract abstract information]
-                    (
-                        abs_indices,
-                        abs_indices_next,
-                        _,
-                        _,
-                    ) = self.get_abs_indices_and_values(info)
-
-                    # [update abstract_V]
-                    self.update_absV_immediate(
-                        abs_indices,
-                        abs_indices_next,
-                        reward,
-                        terminated,
-                        info,
-                    )
-
-            if self.timesteps_done > 1 and self.timesteps_done % self.ground_learn_every == 0:
-                for _ in range(self.ground_gradient_steps):
-                    state, action, next_state, reward, terminated, info = self.memory.sample(
-                        self.batch_size, mode=None
-                    )
-
-                    (
-                        abs_indices,
-                        abs_indices_next,
-                        _,
-                        _,
-                    ) = self.get_abs_indices_and_values(info)
-                    # [data augmentation]
-                    # state = self.aug(state)
-                    # next_state = self.aug(next_state)
-
-                    # [update ground_Q with reward shaping]
-                    self.update_grdQ_shaping(
-                        state,
-                        action,
-                        next_state,
-                        reward,
-                        terminated,
-                        info,
-                        abs_indices,
-                        abs_indices_next,
-                    )
-        else:
-            # [purely update ground Q]
-            if self.timesteps_done % self.ground_learn_every == 0:
-                state, action, next_state, reward, terminated, info = self.memory.sample(
-                    self.batch_size, mode=None
-                )
-                self.update_grdQ_pure(state, action, next_state, reward, terminated, info)
-
-        if self.timesteps_done % self.ground_sync_every == 0:
-            soft_sync_params(
-                self.ground_Q.parameters(),
-                self.ground_Q_target.parameters(),
-                self.ground_tau,
-            )
-            # soft_sync_params(
-            #     self.ground_Q.encoder.parameters(),
-            #     self.ground_Q_target.encoder.parameters(),
-            #     self.encoder_tau,
-            # )
-            # soft_sync_params(
-            #     self.ground_Q.critic.parameters(),
-            #     self.ground_Q_target.critic.parameters(),
-            #     self.ground_tau,
-            # )
-
-        if self.timesteps_done % self.save_model_every == 0:
-            pass
-
-        if self.timesteps_done % self.reset_training_info_every == 0:
-            self.log_training_info(wandb_log=True)
-            self.reset_training_info()
-
-    def update_table(self, use_shaping: bool):
-        """
-        update of absV and grdQ based on different timesteps interval
-        """
-        if self.timesteps_done == self.init_steps:
-            print("Init steps done")
-
-        if hasattr(self, "lr_scheduler_ground_Q"):
-            self.lr_grd_Q = self.lr_scheduler_ground_Q(self._current_progress_remaining)
-        if hasattr(self, "lr_scheduler_abstract_V"):
-            self.lr_abs_V = self.lr_scheduler_abstract_V(self._current_progress_remaining)
-
-        if self.timesteps_done % self.abstract_learn_every == 0:
-            for _ in range(self.abstract_gradient_steps):
-                state, action, next_state, reward, terminated, info = self.memory.sample(
-                    self.batch_size, mode="pure"
-                )
-                # [data augmentation]
-                # state = self.aug(state)
-                # next_state = self.aug(next_state)
-
-                # [extract abstract information]
-                (
-                    abs_indices,
-                    abs_indices_next,
-                    abs_value_l,
-                    abs_value_next_l,
-                ) = self.get_abs_indices_and_values(info)
-
-                # [update abstract_V]
-                self.update_absV(
-                    abs_indices,
-                    abs_indices_next,
-                    abs_value_l,
-                    abs_value_next_l,
-                    reward,
-                    terminated,
-                    info,
-                )
-
-        if self.timesteps_done % self.ground_learn_every == 0:
-            for _ in range(self.ground_gradient_steps):
-                # [update ground_Q with reward shaping, purely update ground Q with use_shaping=False]
-                # if grd_update_step > 0:
-                state, action, next_state, reward, terminated, info = self.memory.sample(
-                    self.batch_size, mode="pure"
-                )
-
-                (
-                    abs_indices,
-                    abs_indices_next,
-                    abs_value_l,
-                    abs_value_next_l,
-                ) = self.get_abs_indices_and_values(info)
-
-                self.update_grdQ_table_shaping(
-                    action,
-                    reward,
-                    terminated,
-                    info,
-                    abs_indices,
-                    abs_indices_next,
-                    abs_value_l,
-                    abs_value_next_l,
-                    use_shaping=use_shaping,
-                    action_prime=None,
-                )
-                # grd_update_step -= 1
-
-        if self.timesteps_done % self.save_model_every == 0:
-            pass
-
-        if self.timesteps_done % self.reset_training_info_every == 0:
-            self.log_training_info(wandb_log=True)
-            self.reset_training_info()
-
-    def update_table_same_update_interval(self, use_shaping: bool):
-        """
-        update absV and grdQ with same interval of time steps
-        """
-        if self.timesteps_done == self.init_steps:
-            print("Init steps done")
-
-        if self.timesteps_done % self.abstract_learn_every == 0:
-            for _ in range(self.abstract_gradient_steps):
-                state, action, next_state, reward, terminated, info = self.memory.sample(
-                    self.batch_size, mode="pure"
-                )
-                # [data augmentation]
-                # state = self.aug(state)
-                # next_state = self.aug(next_state)
-
-                # [extract abstract information]
-                (
-                    abs_indices,
-                    abs_indices_next,
-                    abs_value_l,
-                    abs_value_next_l,
-                ) = self.get_abs_indices_and_values(info)
-
-                # [update abstract_V]
-                self.update_absV(
-                    abs_indices,
-                    abs_indices_next,
-                    abs_value_l,
-                    abs_value_next_l,
-                    reward,
-                    terminated,
-                    info,
-                )
-
-                # if self.timesteps_done % self.ground_learn_every == 0:
-                #     for _ in range(self.ground_gradient_steps):
-                # [update ground_Q with reward shaping, purely update ground Q with use_shaping=False]
-                # if grd_update_step > 0:
-                # state, action, next_state, reward, terminated, info = self.memory.sample(
-                #     self.batch_size, mode="pure"
-                # )
-
-                (
-                    abs_indices,
-                    abs_indices_next,
-                    abs_value_l,
-                    abs_value_next_l,
-                ) = self.get_abs_indices_and_values(info)
-
-                self.update_grdQ_table_shaping(
-                    action,
-                    reward,
-                    terminated,
-                    info,
-                    abs_indices,
-                    abs_indices_next,
-                    abs_value_l,
-                    abs_value_next_l,
-                    use_shaping=use_shaping,
-                    action_prime=None,
-                )
-                # grd_update_step -= 1
-
-        if self.timesteps_done % self.save_model_every == 0:
-            pass
-
-        if self.timesteps_done % self.reset_training_info_every == 0:
-            self.log_training_info(wandb_log=True)
-            self.reset_training_info()
-
-    def update_table_sarsa(self, use_shaping: bool, action_prime: int):
-        if self.timesteps_done == self.init_steps:
-            print("Init steps done")
-        if hasattr(self, "lr_scheduler_ground_Q"):
-            self.lr_grd_Q = self.lr_scheduler_ground_Q(self._current_progress_remaining)
-        if hasattr(self, "lr_scheduler_abstract_V"):
-            self.lr_abs_V = self.lr_scheduler_abstract_V(self._current_progress_remaining)
-
-        latest_transition = self.memory.latest_transition
-        state = (latest_transition.state,)
-        action = (latest_transition.action,)
-        next_state = (latest_transition.next_state,)
-        reward = (latest_transition.reward,)
-        terminated = (latest_transition.terminated,)
-        info = (latest_transition.info,)
-
-        # [data augmentation]
-        # state = self.aug(state)
-        # next_state = self.aug(next_state)
-
-        # [extract abstract information]
-        (
-            abs_indices,
-            abs_indices_next,
-            abs_value_l,
-            abs_value_next_l,
-        ) = self.get_abs_indices_and_values(info)
-
-        # [update abstract_V]
-        self.update_absV(
-            abs_indices,
-            abs_indices_next,
-            abs_value_l,
-            abs_value_next_l,
-            reward,
-            terminated,
-            info,
-        )
-
-        # [update ground_Q with reward shaping, purely update ground Q with use_shaping=False]
-        # state, action, next_state, reward, terminated, info = self.memory.sample(
-        #     self.batch_size
-        # )
-
-        (
-            abs_indices,
-            abs_indices_next,
-            abs_value_l,
-            abs_value_next_l,
-        ) = self.get_abs_indices_and_values(info)
-
-        self.update_grdQ_table_shaping(
-            action,
-            reward,
-            terminated,
-            info,
-            abs_indices,
-            abs_indices_next,
-            abs_value_l,
-            abs_value_next_l,
-            use_shaping=use_shaping,
-            action_prime=action_prime,
-        )
-
-        if self.timesteps_done % self.save_model_every == 0:
-            pass
-
-        if self.timesteps_done % self.reset_training_info_every == 0:
-            self.log_training_info(wandb_log=True)
-            self.reset_training_info()
-
-    def update_table_abs_update_limit_times(self, use_shaping: bool):
-        if self.timesteps_done == self.init_steps:
-            print("Init steps done")
-
-        if (
-            self.timesteps_done == self.init_steps
-            or self.timesteps_done % self.ground_learn_every == 0
-        ):
-            # abs_update_step = 20
-            grd_update_step = 1
-            if self.goal_found:
-                while self.n_abs_updates > 0:
-                    state, action, next_state, reward, terminated, info = self.memory.sample(
-                        self.batch_size
-                    )
-                    # [data augmentation]
-                    # state = self.aug(state)
-                    # next_state = self.aug(next_state)
-
-                    # [extract abstract information]
-                    (
-                        abs_indices,
-                        abs_indices_next,
-                        abs_value_l,
-                        abs_value_next_l,
-                    ) = self.get_abs_indices_and_values(info)
-
-                    # [update abstract_V]
-                    abs_error = self.update_absV(
-                        abs_indices,
-                        abs_indices_next,
-                        abs_value_l,
-                        abs_value_next_l,
-                        reward,
-                        terminated,
-                        info,
-                    )
-                    if abs_error != 0:
-                        self.n_abs_updates -= 1
-
-                # [update ground_Q with reward shaping, purely update ground Q with use_shaping=False]
-            for _ in range(grd_update_step):
-                state, action, next_state, reward, terminated, info = self.memory.sample(
-                    self.batch_size
-                )
-
-                (
-                    _,
-                    _,
-                    abs_value_l,
-                    abs_value_next_l,
-                ) = self.get_abs_indices_and_values(info)
-
-                self.update_grdQ_table_shaping(
-                    action,
-                    reward,
-                    terminated,
-                    info,
-                    abs_value_l,
-                    abs_value_next_l,
-                    use_shaping=use_shaping,
-                )
-
-        if self.timesteps_done % self.save_model_every == 0:
-            pass
-
-        if self.timesteps_done % self.reset_training_info_every == 0:
-            self.log_training_info(wandb_log=True)
-            self.reset_training_info()
-
-    def update_table_abs_grd_interleaved(self, use_shaping: bool):
-        """
-        Update abstract and ground Q tables interleaved, when abs_error is higher than a threshold, update absV, otherwise update ground Q
-        """
-        if self.timesteps_done == self.init_steps:
-            print("Init steps done")
-
-        if (
-            self.timesteps_done == self.init_steps
-            or self.timesteps_done % self.ground_learn_every == 0
-        ):
-            abs_update_step = 1
-            grd_update_step = 1
-            for _ in range(abs_update_step):
-                state, action, next_state, reward, terminated, info = self.memory.sample(
-                    self.batch_size
-                )
-                # [data augmentation]
-                # state = self.aug(state)
-                # next_state = self.aug(next_state)
-
-                # [extract abstract information]
-                (
-                    abs_indices,
-                    abs_indices_next,
-                    abs_value_l,
-                    abs_value_next_l,
-                ) = self.get_abs_indices_and_values(info)
-
-                # [update abstract_V]
-                to_update_grd_q = self.maybe_update_absV(
-                    abs_indices,
-                    abs_indices_next,
-                    abs_value_l,
-                    abs_value_next_l,
-                    reward,
-                    terminated,
-                    info,
-                )
-
-            # [update ground_Q with reward shaping, purely update ground Q with use_shaping=False]
-            if to_update_grd_q:
-                for _ in range(grd_update_step):
-                    state, action, next_state, reward, terminated, info = self.memory.sample(
-                        self.batch_size
-                    )
-
-                    (
-                        _,
-                        _,
-                        abs_value_l,
-                        abs_value_next_l,
-                    ) = self.get_abs_indices_and_values(info)
-
-                    self.update_grdQ_table_shaping(
-                        action,
-                        reward,
-                        terminated,
-                        info,
-                        abs_value_l,
-                        abs_value_next_l,
-                        use_shaping=use_shaping,
-                    )
-
-        if self.timesteps_done % self.save_model_every == 0:
-            pass
-
-        if self.timesteps_done % self.reset_training_info_every == 0:
-            self.log_training_info(wandb_log=True)
-            self.reset_training_info()
-
     def update_grdQ_pure(self, state, action, next_state, reward, terminated, info):
         if hasattr(self, "lr_scheduler_ground_Q"):
+            self.lr_grd_Q = self.lr_scheduler_ground_Q(self._current_progress_remaining)
             update_learning_rate(
                 self.ground_Q_optimizer,
-                self.lr_scheduler_ground_Q(self._current_progress_remaining),
+                self.lr_grd_Q,
             )
 
         # [Update ground Q network]
@@ -1850,7 +1537,8 @@ class HDQN_ManualAbs(HDQN):
         if self.clip_grad:
             # 1 clamp gradients to avoid exploding gradient
             for param in self.ground_Q.parameters():
-                param.grad.data.clamp_(-1, 1)
+                if param.grad is not None:  # make sure grad is not None
+                    param.grad.data.clamp_(-1, 1)
 
             # 2 Clip gradient norm
             # max_grad_norm = 10
@@ -1859,3 +1547,171 @@ class HDQN_ManualAbs(HDQN):
         self.ground_Q_optimizer.step()
 
         self.training_info["ground_Q_error"].append(ground_td_error.item())
+
+    def learn_after_warmup(self):
+        print("Init steps done")
+        print("TCURL Init Training...")
+        # pretrain TCURL representation
+        for i in range(1000):
+            (
+                state,
+                abs_state,
+                action,
+                next_state,
+                next_abs_state,
+                reward,
+                terminated,
+                info,
+            ) = self.memory.sample(self.batch_size, mode=None)
+
+            self.update_tcurl(obs_anchor=state, obs_pos=next_state)
+            # self.update_tcurl(obs_anchor=next_state, obs_pos=state)
+            if i % 100 == 0:
+                soft_sync_params(
+                    self.ground_Q.critic.parameters(),
+                    self.ground_Q_target.critic.parameters(),
+                    self.ground_Q_critic_tau,
+                )
+        # init kmeans centroids
+        (
+            state,
+            abs_state,
+            action,
+            next_state,
+            next_abs_state,
+            reward,
+            terminated,
+            info,
+        ) = self.memory.sample(len(self.memory), mode=None)
+        state_encoded = self.encode_state(state)
+        state_encoded = np.unique(state_encoded, axis=0)
+        np.random.shuffle(state_encoded)
+        print("Kmeans Init Training...")
+        self.kmeans = KMeans(n_clusters=self.n_clusters, n_init=20, random_state=0).fit(
+            state_encoded
+        )
+        abs_state_counter_dict: Dict = Counter(self.kmeans.labels_)
+        self.abs_state_count = np.array([abs_state_counter_dict[i] for i in range(self.n_clusters)])
+        self.abs_centroids = self.kmeans.cluster_centers_
+        self.abs_centroids_shaddow = copy.deepcopy(self.abs_centroids)
+        self.replace_abstraction_in_memory()
+        print("Init plotting...")
+        self.vis_grd_visits(norm_log=50)
+        self.vis_grd_visits(norm_log=0)
+        self.vis_abstraction()
+        self.vis_abstract_values()
+        print("Warmup done")
+
+    def update(self, use_shaping: bool):
+        """
+        update with adaptive abstraction
+        """
+        if self.timesteps_done == self.init_steps:
+            self.learn_after_warmup()
+        if self.timesteps_done == self.init_steps + 1:
+            for _ in range(3):
+                self.cache_goal_transition()
+                pass
+        steps = self.timesteps_done - self.init_steps
+        if use_shaping:
+            if self.abstract_V_update_count > 0 and steps % self.abstract_learn_every == 0:
+                self.abs_centroids_shaddow = copy.deepcopy(self.abs_centroids)
+                self.abstract_V_array = np.zeros_like(self.abstract_V_array)
+                for _ in range(self.abstract_gradient_steps):
+                    (
+                        state,
+                        abs_state,
+                        action,
+                        next_state,
+                        next_abs_state,
+                        reward,
+                        terminated,
+                        info,
+                    ) = self.memory.sample(self.batch_size, mode=None)
+                    # [data augmentation]
+                    # state = self.aug(state)
+                    # next_state = self.aug(next_state)
+                    abs_state = self.assign_batch_abs_state(self.encode_state(state))
+                    next_abs_state = self.assign_batch_abs_state(self.encode_state(next_state))
+
+                    # [update abstract_V]
+                    self.update_absV_immediate(
+                        abs_state,
+                        next_abs_state,
+                        reward,
+                        terminated,
+                    )
+
+                self.abstract_V_update_count -= 1
+                # if self.abstract_V_update_count == 0:
+                print(
+                    f"rest time of abstract_V updating #{self.abstract_V_update_count}, self.timesteps_done: {self.timesteps_done}"
+                )
+
+            (
+                state,
+                abs_state,
+                action,
+                next_state,
+                next_abs_state,
+                reward,
+                terminated,
+                info,
+            ) = self.memory.sample(self.batch_size, mode=None)
+
+            if steps % self.ground_learn_every == 0:
+                # [data augmentation]
+                # state = self.aug(state)
+                # next_state = self.aug(next_state)
+                abs_state = self.assign_batch_abs_state(self.encode_state(state))
+                next_abs_state = self.assign_batch_abs_state(self.encode_state(next_state))
+
+                # [update ground_Q with reward shaping]
+                self.update_grdQ_shaping(
+                    state,
+                    action,
+                    next_state,
+                    reward,
+                    terminated,
+                    info,
+                    abs_state,
+                    next_abs_state,
+                )
+            if steps % self.tcurl_learn_every == 0:
+                self.update_tcurl(obs_anchor=state, obs_pos=next_state)
+                # self.update_tcurl(obs_anchor=next_state, obs_pos=state)
+
+        else:
+            # [purely update ground Q]
+            if steps % self.ground_learn_every == 0:
+                state, _, action, next_state, _, reward, terminated, info = self.memory.sample(
+                    self.batch_size, mode=None
+                )
+                self.update_grdQ_pure(state, action, next_state, reward, terminated, info)
+
+        if steps % self.ground_sync_every == 0:
+            # soft_sync_params(
+            #     self.ground_Q.parameters(),
+            #     self.ground_Q_target.parameters(),
+            #     self.ground_tau,
+            # )
+            soft_sync_params(
+                self.ground_Q.encoder.parameters(),
+                self.ground_Q_target.encoder.parameters(),
+                self.ground_Q_encoder_tau,
+            )
+
+            soft_sync_params(
+                self.ground_Q.critic.parameters(),
+                self.ground_Q_target.critic.parameters(),
+                self.ground_Q_critic_tau,
+            )
+        # if self.timesteps_done % self.abstract_sync_every == 0:
+        #     self.abs_centroids_shaddow = copy.deepcopy(self.abs_centroids)
+
+        if steps % self.save_model_every == 0:
+            pass
+
+        if steps % self.reset_training_info_every == 0:
+            self.log_training_info(wandb_log=True)
+            self.reset_training_info()

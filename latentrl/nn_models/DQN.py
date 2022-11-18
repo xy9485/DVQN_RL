@@ -17,7 +17,7 @@ class Q_MLP(nn.Module):
             blocks.extend(
                 [
                     nn.Flatten(),
-                    nn.Linear(np.prod(input_dim), hidden_dim),
+                    nn.Linear(input_dim, hidden_dim),
                     nn.ReLU(),
                 ]
             )
@@ -47,21 +47,23 @@ class Q_MLP(nn.Module):
 
 
 class V_MLP(nn.Module):
-    def __init__(self, input_dim, flatten=False):
+    def __init__(self, input_dim, mlp_hidden_dim_abs, flatten=False):
         super().__init__()
         blocks = []
         if flatten:
             blocks.extend(
                 [
                     nn.Flatten(),
-                    nn.Linear(np.prod(input_dim), 512),
+                    nn.Linear(np.prod(input_dim), mlp_hidden_dim_abs),
                     nn.ReLU(),
                 ]
             )
         else:
             blocks.extend(
                 [
-                    nn.Linear(input_dim, 512),
+                    nn.Linear(input_dim, mlp_hidden_dim_abs),
+                    nn.ReLU(),
+                    nn.Linear(mlp_hidden_dim_abs, mlp_hidden_dim_abs),
                     nn.ReLU(),
                 ]
             )
@@ -69,9 +71,9 @@ class V_MLP(nn.Module):
             [
                 # nn.Linear(256, 256),
                 # nn.ReLU(),
-                nn.Linear(512, 512),
-                nn.ReLU(),
-                nn.Linear(512, 1),
+                # nn.Linear(512, 512),
+                # nn.ReLU(),
+                nn.Linear(mlp_hidden_dim_abs, 1),
             ]
         )
 
@@ -87,6 +89,7 @@ class DQN(nn.Module):
         observation_space: gym.spaces.box.Box,
         action_space: gym.spaces.discrete.Discrete,
         encoder_maker,
+        mlp_hidden_dim_grd,
     ) -> None:
         super().__init__()
         self.encoder = encoder_maker.make()
@@ -100,14 +103,20 @@ class DQN(nn.Module):
             # n_flatten = x.shape[1]
             self.encoder_out_shape = x.shape[1:]
 
-        critic_input_dim = self.encoder.linear_out_dim or self.encoder.n_flatten
-        self.critic = Q_MLP(critic_input_dim, action_space, flatten=False, hidden_dim=64)
+        self.critic_input_dim = self.encoder.linear_out_dim or self.encoder.n_flatten
+        self.critic = Q_MLP(
+            self.critic_input_dim, action_space, flatten=False, hidden_dim=mlp_hidden_dim_grd
+        )
 
     def forward_conv(self, x: Tensor) -> Tensor:
         return self.encoder(x)
 
     def forward(self, x: Tensor):
         x = self.encoder(x)
+        return self.critic(x), x
+
+    def forward_enc_detach(self, x: Tensor):
+        x = self.encoder(x).detach()
         return self.critic(x), x
 
 

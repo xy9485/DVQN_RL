@@ -13,7 +13,7 @@ from nn_models.components import ConvBlock, ResidualLayer
 class RandomEncoder(nn.Module):
     def __init__(self, observation_space: gym.spaces.Box, feature_dim) -> None:
         super().__init__()
-        n_input_channels = observation_space.shape[-1]
+        n_input_channels = observation_space.shape[0]
 
         # test_layer = nn.Conv2d(n_input_channels, 32, kernel_size=8, stride=4, padding=0)
         # print("test_layer.weight.size():", test_layer.weight.size())
@@ -31,20 +31,24 @@ class RandomEncoder(nn.Module):
         # Compute shape by doing one forward pass
         with torch.no_grad():
             x = observation_space.sample()
-            x = T.ToTensor()(x).unsqueeze(0)
-            x = self.cnn(x.float())
+            x = torch.from_numpy(x).unsqueeze(0).float()
+            # x = torch.from_numpy(x).unsqueeze(0).permute(0, 3, 1, 2).float()
+            x = self.cnn(x)
             x = self.flatten_layer(x)
             n_flatten = x.shape[1]
 
-        self.linear = nn.Sequential(
+        self.head = nn.Sequential(
             nn.Linear(n_flatten, feature_dim),
+            nn.LayerNorm(feature_dim),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x /= 255.0
+        x = x / 255.0
+        x = x.float()
+        # x = x.permute(0, 3, 2, 1).float()
         x = self.cnn(x)
         x = self.flatten_layer(x)
-        return self.linear(x)
+        return self.head(x)
 
 
 class RandomEncoderMiniGrid(nn.Module):

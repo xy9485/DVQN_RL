@@ -72,6 +72,152 @@ class VectorQuantizer(nn.Module):
         )  # [B x D x H x W]
 
 
+class VectorQuantizerLinear(nn.Module):
+    """
+    Reference:
+    [1] https://github.com/deepmind/sonnet/blob/v2/sonnet/src/nets/vqvae.py
+    """
+
+    def __init__(self, num_embeddings: int, embedding_dim: int, beta: float = 0.25):
+        super().__init__()
+        self.K = num_embeddings
+        self.D = embedding_dim
+        self.beta = beta
+
+        self.embedding = nn.Embedding(self.K, self.D)
+        # try detach
+        self.embedding.weight.data.uniform_(-1 / self.K, 1 / self.K)
+
+    def forward(self, latents: Tensor) -> Tensor:
+        """
+        latent # [B x D]
+        """
+
+        # Compute L2 distance between latents and embedding weights
+        dist = (
+            torch.sum(latents**2, dim=1, keepdim=True)
+            + torch.sum(self.embedding.weight**2, dim=1)
+            - 2 * torch.matmul(latents, self.embedding.weight.t())
+        )  # [B x K]
+
+        # Get the encoding that has the min distance
+        encoding_inds = torch.argmin(dist, dim=1).unsqueeze(1)  # [B, 1]
+
+        # Convert to one-hot encodings
+        device = latents.device
+        encoding_one_hot = torch.zeros(encoding_inds.size(0), self.K, device=device)
+        encoding_one_hot.scatter_(1, encoding_inds, 1)  # [B x K]
+
+        # Quantize the latents
+        quantized_latents = torch.matmul(encoding_one_hot, self.embedding.weight)  # [B, D]
+
+        # Compute the VQ Losses
+        commitment_loss = F.mse_loss(quantized_latents.detach(), latents)
+        embedding_loss = F.mse_loss(quantized_latents, latents.detach())
+
+        vq_loss = commitment_loss * self.beta + embedding_loss
+
+        # Add the residue back to the latents
+        quantized_latents = latents + (quantized_latents - latents).detach()
+        avg_probs = torch.mean(encoding_one_hot, dim=0)
+
+        # Compute vq entropy
+
+        # perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
+        entrophy_vq = -torch.sum(avg_probs * torch.log(avg_probs + 1e-10))
+        # vq_probs = dist / torch.sum(dist, dim=1, keepdim=True)
+        # vq_probs = -vq_probs * torch.log(vq_probs + 1e-10)
+        # entrophy_vq = -torch.sum(vq_probs, dim=1).mean()
+
+        # entrophy_vq = torch.std(dist, dim=1).mean()
+
+        return (
+            quantized_latents,  # [B x D]
+            vq_loss,
+            entrophy_vq,
+            encoding_inds,
+        )
+
+
+class VectorQuantizerLinearSoft(nn.Module):
+    """
+    Reference:
+    [1] https://github.com/deepmind/sonnet/blob/v2/sonnet/src/nets/vqvae.py
+    """
+
+    def __init__(
+        self, num_embeddings: int, embedding_dim: int, beta: float = 0.25, softmin_beta: float = 10
+    ):
+        super().__init__()
+        self.K = num_embeddings
+        self.D = embedding_dim
+        self.beta = beta
+        self.softmin_beta = softmin_beta
+
+        self.embedding = nn.Embedding(self.K, self.D)
+        # try detach
+        self.embedding.weight.data.uniform_(-1 / self.K, 1 / self.K)
+
+    def forward(self, latents: Tensor) -> Tensor:
+        """
+        latent # [B x D]
+        """
+
+        # Compute L2 distance between latents and embedding weights
+        dist = (
+            torch.sum(latents**2, dim=1, keepdim=True)
+            + torch.sum(self.embedding.weight**2, dim=1)
+            - 2 * torch.matmul(latents, self.embedding.weight.t())
+        )  # [B x K]
+
+        # [Get the encoding that has the min distance]
+        # encoding_inds = torch.argmin(dist, dim=1).unsqueeze(1)  # [B, 1]
+        encoding_inds = F.softmin(self.softmin_beta * dist, dim=1)
+
+        # [Quantize the latents]
+        quantized_latents = torch.matmul(encoding_inds, self.embedding.weight)  # [B, D]
+
+        # [Compute the VQ Losses[]
+        commitment_loss = F.mse_loss(quantized_latents.detach(), latents)
+        embedding_loss = F.mse_loss(quantized_latents, latents.detach())
+
+        vq_loss = commitment_loss * self.beta + embedding_loss
+
+        # Add the residue back to the latents
+        # quantized_latents = latents + (quantized_latents - latents).detach()
+        avg_probs = torch.mean(encoding_inds, dim=0)
+
+        # [Compute vq entropy]
+        # perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
+        entrophy_vq = -torch.sum(avg_probs * torch.log(avg_probs + 1e-10))
+        # vq_probs = dist / torch.sum(dist, dim=1, keepdim=True)
+        # vq_probs = -vq_probs * torch.log(vq_probs + 1e-10)
+        # entrophy_vq = -torch.sum(vq_probs, dim=1).mean()
+
+        # entrophy_vq = torch.std(dist, dim=1).mean()
+
+        # dist_std = torch.std(dist, dim=1)
+        # entrophy_vq = entrophy_vq + dist_std.mean()
+
+        # [Get Hard Quantization]
+        device = latents.device
+        hard_encoding_inds = torch.argmin(dist, dim=1).unsqueeze(1)  # [B, 1]
+        encoding_one_hot = torch.zeros(hard_encoding_inds.size(0), self.K, device=device)
+        encoding_one_hot.scatter_(1, hard_encoding_inds, 1)  # [B x K]
+        hard_quantized_latents = torch.matmul(encoding_one_hot, self.embedding.weight)  # [B, D]
+        output_dict = {
+            "hard_encoding_inds": hard_encoding_inds,
+            "hard_quantized_latents": hard_quantized_latents,
+        }
+
+        return (
+            quantized_latents,  # [B x D]
+            vq_loss,
+            entrophy_vq,
+            output_dict,
+        )
+
+
 class VectorQuantizerEMA(nn.Module):
     def __init__(
         self, num_embeddings, embedding_dim, commitment_cost=0.25, decay=0.99, epsilon=1e-5

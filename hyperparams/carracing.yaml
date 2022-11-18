@@ -1,0 +1,173 @@
+# CarRacing-v2:
+#   env_name: CarRacing-v2
+#   env_type: CarRacing
+#   total_timesteps: 300000
+#   init_steps: 10000
+#   input_format: full_img
+#   grd_hidden_channels:
+#     - 32
+#     - 64
+#     - 64
+#   grd_embedding_dim: False
+#   mlp_hidden_dim_grd: 128
+#   n_clusters: 20
+#   cluster_embedding_dim: 64
+#   # lr_ground_Q: 0.0002
+#   # lr_abstract_V: 0.1
+#   lr_ground_Q: lin_5.3e-4
+#   lr_abstract_V: 0.01
+#   # lr_encoder: 0.0005
+#   # lr_decoder: 0.0005
+#   batch_size: 256
+#   size_replay_memory: 100000
+#   gamma: 0.97
+#   abstract_gamma: 0.99
+#   omega: 10
+#   ground_tau: 0.01
+#   # abstract_tau: 0.2
+#   # encoder_tau: 0.2
+#   exploration_fraction: 0.9
+#   exploration_initial_eps: 0.1
+#   exploration_final_eps: 0.01
+#   save_model_every: 500000.0
+#   ground_learn_every: 4
+#   ground_sync_every: 8
+#   ground_gradient_steps: 1
+#   abstract_learn_every: 4
+#   abstract_sync_every: 8
+#   abstract_gradient_steps: 1
+#   # learn_with_ae: True
+#   # init_clustering: True
+#   use_shaping: False
+#   # wandb_group: AE_KMeans_DQN
+#   # wandb_group: AE_DQN
+#   wandb_group: noshp_300k_alr0.01_aug#2
+#   # wandb_group: shp_100k_lrabs0.1_tau0.1_aevery4_rrward_mod
+#   wandb_notes: nothing
+#   # wandb_tags: ["shp", "omg1", "tbl", "16x16", "(1,1)"]
+#   clip_grad: True
+#   # validate_every: 1000
+#   reset_training_info_every: 1000
+#   save_recon_every: 1000
+#   # buffer_recent_states_every: 1000
+
+CarRacing-v2:
+  env_name: CarRacing-v2
+  env_type: CarRacing
+  total_timesteps: 300000
+  init_steps: 5000
+  input_format: full_img
+  grd_hidden_channels:
+    - 32
+    - 64
+    - 64
+  use_shaping: False
+  # cluster_embedding_dim: None
+  encoded_detach4abs: False
+  grd_embedding_dim: 128
+  num_vq_embeddings: 500
+  dim_vq_embeddings: 128
+  vq_softmin_beta: 20
+  mlp_hidden_dim_abs: 128
+  mlp_hidden_dim_grd: 128
+  # lr_ground_Q: 0.0002
+  # lr_abstract_V: 0.1
+  lr_ground_Q: 0.0005
+  lr_abstract_V: 0.0005
+  lr_vq: 0.0005
+  # lr_encoder: 0.0005
+  # lr_decoder: 0.0005
+  batch_size: 256
+  size_replay_memory: 100000
+  gamma: 0.97
+  abstract_gamma: 0.99
+  omega: 10
+  ground_Q_encoder_tau: 1
+  ground_Q_critic_tau: 1
+  abstract_tau: 1
+  # encoder_tau: 0.2
+  exploration_fraction: 0.9
+  exploration_initial_eps: 0.1
+  exploration_final_eps: 0.01
+  save_model_every: 500000.0
+  # tcurl_learn_every: 4
+  ground_learn_every: 4
+  ground_sync_every: 1000
+  ground_gradient_steps: 1
+  abstract_learn_every: 0
+  abstract_sync_every: 8
+  abstract_gradient_steps: 0
+  clip_grad: True
+  clip_reward: False
+  # wandb_group: AE_KMeans_DQN
+  # wandb_group: AE_DQN
+  wandb_group: car_e2e_300k_buf100k_pure#6
+  # wandb_group: shp_100k_lrabs0.1_tau0.1_aevery4_rrward_mod
+  wandb_notes: total_loss = ground_td_error + vq_loss - entrophy_vq + commit_error_abs2grd + commit_error_grd2abs; vq_softmin_beta 10
+
+  # wandb_tags: ["shp", "omg1", "tbl", "16x16", "(1,1)"]
+
+  # validate_every: 1000
+  reset_training_info_every: 1000
+  save_recon_every: 1000
+  # buffer_recent_states_every: 1000
+
+CarRacing-v2-PureDQN:
+  env_name: CarRacing-v2
+  env_type: CarRacing
+  total_timesteps: 300000
+  init_steps: 10000
+  input_format: full_img
+  grd_hidden_channels:
+    - 32
+    - 64
+    - 64
+  use_shaping: False
+  # cluster_embedding_dim: None
+  encoded_detach4abs: True
+  grd_embedding_dim: False
+  num_vq_embeddings: 256
+  dim_vq_embeddings: 128
+  vq_softmin_beta: 50
+  mlp_hidden_dim_abs: 256
+  mlp_hidden_dim_grd: 128
+  # lr_ground_Q: 0.0002
+  # lr_abstract_V: 0.1
+  lr_ground_Q: lin_5.3e-4
+  lr_abstract_V: 0.0001
+  lr_vq: 0.0001
+  # lr_encoder: 0.0005
+  # lr_decoder: 0.0005
+  batch_size: 256
+  size_replay_memory: 100000
+  gamma: 0.97
+  abstract_gamma: 0.99
+  omega: 10
+  ground_Q_encoder_tau: 0.01
+  ground_Q_critic_tau: 0.01
+  abstract_tau: 1
+  # encoder_tau: 0.2
+  exploration_fraction: 0.95
+  exploration_initial_eps: 0.1
+  exploration_final_eps: 0.01
+  save_model_every: 500000.0
+  # tcurl_learn_every: 4
+  ground_learn_every: 4
+  ground_sync_every: 8
+  ground_gradient_steps: 1
+  abstract_learn_every: 0
+  abstract_sync_every: 8
+  abstract_gradient_steps: 0
+  clip_grad: True
+  clip_reward: False
+  # wandb_group: AE_KMeans_DQN
+  # wandb_group: AE_DQN
+  wandb_group: car_pure_300k_buf100k
+  # wandb_group: shp_100k_lrabs0.1_tau0.1_aevery4_rrward_mod
+  wandb_notes: nothing
+  # wandb_tags: ["shp", "omg1", "tbl", "16x16", "(1,1)"]
+
+  # validate_every: 1000
+  reset_training_info_every: 1000
+  save_recon_every: 1000
+  # buffer_recent_states_every: 1000

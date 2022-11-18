@@ -239,7 +239,7 @@ def make_vec_env_customized(  # to customize the order of Monitor wrapper
 
 
 @torch.no_grad()
-def wandb_log_image(tensor, **kwargs) -> None:
+def wandb_log_image(tensor, nrow, section_name, **kwargs) -> None:
     """
     Save a given Tensor into an image file.
 
@@ -252,11 +252,12 @@ def wandb_log_image(tensor, **kwargs) -> None:
         **kwargs: Other arguments are documented in ``make_grid``.
     """
 
-    grid = make_grid(tensor, **kwargs)
+    grid = make_grid(tensor, nrow=nrow, **kwargs)
     # Add 0.5 after unnormalizing to [0, 255] to round to nearest integer
-    ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+    # ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+    ndarr = grid.permute(1, 2, 0).cpu().numpy()
     im = Image.fromarray(ndarr)
-    wandb.log({"reconstructions": wandb.Image(im)})
+    wandb.log({section_name: wandb.Image(im)})
 
 
 def polyak_sync(

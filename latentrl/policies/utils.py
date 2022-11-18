@@ -192,9 +192,9 @@ class ReplayMemoryWithCluster(object):
             transitions = random.sample(self.memory, batch_size)
 
         if mode == "pure":
-            if len(self.recent_goal_transitions) > 0:
-                transitions += self.recent_goal_transitions
-                self.recent_goal_transitions = []
+            # if len(self.recent_goal_transitions) > 0:
+            #     transitions += self.recent_goal_transitions
+            #     self.recent_goal_transitions = []
             batch = self.Transition(*zip(*transitions))
             return (
                 batch.state,
@@ -216,7 +216,7 @@ class ReplayMemoryWithCluster(object):
         state_batch = np.stack(batch.state, axis=0)
         next_state_batch = np.stack(batch.next_state, axis=0)
         state_batch = torch.from_numpy(state_batch).to(self.device)
-        next_state_batch = torch.from_numpy(next_state_batch).contiguous().to(self.device)
+        next_state_batch = torch.from_numpy(next_state_batch).to(self.device)
         abs_state_batch = batch.abs_state
         next_abs_state_batch = batch.next_abs_state
         # batch = self.memory.lazy_sample(batch_size=self.batch_size)
@@ -241,9 +241,6 @@ class ReplayMemoryWithCluster(object):
             terminated_batch,
             info_batch,
         )
-
-    def __len__(self):
-        return len(self.memory)
 
     def lazy_to_tensor(self, batch):
         states = list(batch.state)
@@ -315,14 +312,14 @@ class EncoderMaker:
                 input_channels=self.agent.env.observation_space.shape[-1],
                 linear_out_dim=self.agent.grd_embedding_dim,
                 observation_space=self.agent.env.observation_space,
-                hidden_dims=self.agent.grd_hidden_dims,
+                hidden_dims=self.agent.grd_hidden_channels,
             )
         elif self.input_format == "full_img":
             encoder = Encoder(
-                input_channels=self.agent.env.observation_space.shape[-1],
+                input_channels=self.agent.env.observation_space.shape[0],
                 linear_out_dim=self.agent.grd_embedding_dim,
                 observation_space=self.agent.env.observation_space,
-                hidden_dims=self.agent.grd_hidden_dims,
+                hidden_dims=self.agent.grd_hidden_channels,
             )
         else:
             raise NotImplementedError
