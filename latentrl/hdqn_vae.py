@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
     encoder = Encoder_MiniGrid(
         inchannels=3,
-        linear_out_dim=64,
+        linear_dims=64,
         observation_space=gym.spaces.box.Box(low=0, high=1, shape=(8, 8, 3)),
         n_redisual_layers=0,
     ).to(device)

@@ -35,7 +35,7 @@ from common.utils import (
 
 from nn_models import (
     DQN,
-    Encoder,
+    EncoderImg,
     Encoder_MiniGrid,
     Encoder_MiniGrid_PartialObs,
     EncoderRes,

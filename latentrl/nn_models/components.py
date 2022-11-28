@@ -6,6 +6,26 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 
 
+class MlpModel(nn.Module):
+    def __init__(self, input_dim, hidden_dims, output_dim, activation=nn.ReLU) -> None:
+        super().__init__()
+        if isinstance(hidden_dims, int):
+            hidden_dims = [hidden_dims]
+        elif hidden_dims is None:
+            hidden_dims = []
+        blocks = []
+        for n_in, n_out in zip([input_dim] + hidden_dims[:-1], hidden_dims):
+            blocks.extend([nn.Linear(n_in, n_out), activation()])
+
+        last_hidden_dim = hidden_dims[-1] if hidden_dims else input_dim
+        blocks.extend([nn.Linear(last_hidden_dim, output_dim)])
+
+        self.blocks = nn.Sequential(*blocks)
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.blocks(x)
+
+
 class ResidualLayer(nn.Module):
     def __init__(self, in_channels: int, out_channels: int):
         super(ResidualLayer, self).__init__()

@@ -5,8 +5,14 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
-from nn_models.components import ReparameterizeModule
-from nn_models.encoder import Encoder, Encoder_MiniGrid, Encoder_MiniGrid_PartialObs, EncoderRes
+from nn_models.components import ReparameterizeModule, MlpModel
+from nn_models.encoder import (
+    Encoder,
+    EncoderImg,
+    Encoder_MiniGrid,
+    Encoder_MiniGrid_PartialObs,
+    EncoderRes,
+)
 
 
 class Q_MLP(nn.Module):
@@ -86,24 +92,24 @@ class V_MLP(nn.Module):
 class DQN(nn.Module):
     def __init__(
         self,
-        observation_space: gym.spaces.box.Box,
+        # observation_space: gym.spaces.box.Box,
         action_space: gym.spaces.discrete.Discrete,
-        encoder_maker,
-        mlp_hidden_dim_grd,
+        encoder: Encoder,
+        mlp_hidden_dim_grd: int | list,
     ) -> None:
         super().__init__()
-        self.encoder = encoder_maker.make()
-        with torch.no_grad():
-            x = observation_space.sample()  # 0-255 in defualt
-            # x = x.transpose(2, 0, 1)
-            x = torch.tensor(x).unsqueeze(0)
-            # x = T.ToTensor()(x).unsqueeze(0)
-            x = self.encoder(x)
-            # x = self.flatten_layer(x)
-            # n_flatten = x.shape[1]
-            self.encoder_out_shape = x.shape[1:]
+        self.encoder = encoder
+        # with torch.no_grad():
+        #     x = observation_space.sample()  # 0-255 in defualt
+        #     # x = x.transpose(2, 0, 1)
+        #     x = torch.tensor(x).unsqueeze(0)
+        #     # x = T.ToTensor()(x).unsqueeze(0)
+        #     x = self.encoder(x)
+        #     # x = self.flatten_layer(x)
+        #     # n_flatten = x.shape[1]
+        #     self.encoder_out_shape = x.shape[1:]
 
-        self.critic_input_dim = self.encoder.linear_out_dim or self.encoder.n_flatten
+        self.critic_input_dim = self.encoder.linear_out_dim
         self.critic = Q_MLP(
             self.critic_input_dim, action_space, flatten=False, hidden_dim=mlp_hidden_dim_grd
         )
@@ -136,11 +142,11 @@ class DQN_Repara(nn.Module):
         #     observation_space=observation_space,
         #     hidden_dims=hidden_dims,
         # )
-        self.conv_block = Encoder(
+        self.conv_block = EncoderImg(
             observation_space.shape[-1],
-            linear_out_dim=None,
+            linear_dims=None,
             observation_space=observation_space,
-            hidden_dims=hidden_dims,
+            hidden_channels=hidden_dims,
         )
 
         self.repara = ReparameterizeModule(embedding_dim, self.conv_block.shape_conv_output)

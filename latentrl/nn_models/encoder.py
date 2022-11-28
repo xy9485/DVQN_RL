@@ -11,38 +11,76 @@ from nn_models.components import ConvBlock, ResidualLayer
 
 
 class Encoder(nn.Module):
+    def __init__(self, linear_dims: int | list | None) -> None:
+        super().__init__()
+        self.linear_dims = linear_dims
+        self.linear_out_dim = None
+
+    def maybe_add_linear_module(self, layer_norm=False) -> None:
+        self.blocks.append(nn.Flatten())
+        if self.linear_dims is None:
+            self.linear_out_dim = self.cnn_flatten_dim
+            return
+        if isinstance(self.linear_dims, int):
+            self.linear_dims = [self.linear_dims]
+        for n_in, n_out in zip([self.cnn_flatten_dim] + self.linear_dims[:-1], self.linear_dims):
+            self.blocks.extend([nn.Linear(n_in, n_out), nn.ReLU()])
+        if layer_norm:
+            self.blocks.extend(
+                [
+                    nn.Linear(self.linear_dims[-1], self.linear_dims[-1]),
+                    nn.LayerNorm(self.linear_dims[-1]),
+                    nn.Tanh(),
+                ]
+            )
+        self.linear_out_dim = self.linear_dims[-1]
+
+    @property
+    @torch.no_grad()
+    def cnn_flatten_dim(self) -> int:
+        x = nn.Sequential(*self.cnn_module)(self.example_x)
+        x = nn.Flatten()(x)
+        return x.shape[1]
+
+    @property
+    @torch.no_grad()
+    def cnn_last_feature_map_dim(self) -> Tuple[int, int, int]:
+        """Returns the shape[B, C, H, W] of the last feature map of the CNN."""
+        x = nn.Sequential(*self.cnn_module)(self.example_x)
+        return x.shape
+
+
+class EncoderImg(Encoder):
     def __init__(
         self,
         input_channels: int,
-        linear_out_dim: Optional[int] = None,  # latent_dim
+        linear_dims: int | list | None = None,  # latent_dim
         observation_space: gym.spaces.box.Box = None,
-        hidden_dims: List = [32, 64, 64],
+        hidden_channels: List = [32, 64, 64],
         n_redisual_layers: int = 0,
         **kwargs,
     ) -> None:
-        super().__init__()
-        self.forward_call = 0
-        self.linear_out_dim = linear_out_dim
-        blocks = [
+        super().__init__(linear_dims)
+        self.blocks = [
             ConvBlock(
                 input_channels,
-                hidden_dims[0],
+                hidden_channels[0],
                 kernel_size=8,
                 stride=4,
                 padding=0,
                 batch_norm=False,
             ),
             ConvBlock(
-                hidden_dims[0],
-                hidden_dims[1],
+                hidden_channels[0],
+                hidden_channels[1],
                 kernel_size=4,
                 stride=2,
                 padding=0,
                 batch_norm=False,
             ),
             ConvBlock(
-                hidden_dims[1],
-                hidden_dims[2],
+                hidden_channels[1],
+                hidden_channels[2],
                 kernel_size=3,
                 stride=2,
                 padding=0,
@@ -51,36 +89,40 @@ class Encoder(nn.Module):
         ]
         if n_redisual_layers > 0:
             for _ in range(n_redisual_layers):
-                blocks.append(ResidualLayer(hidden_dims[1], hidden_dims[1]))
-            blocks.append(nn.ReLU())
+                self.blocks.append(ResidualLayer(hidden_channels[-1], hidden_channels[-1]))
+            self.blocks.append(nn.ReLU())
+
+        self.cnn_module = nn.Sequential(*self.blocks)
 
         # Compute shape by doing one forward pass
-        with torch.no_grad():
-            x = observation_space.sample()
-            x = torch.from_numpy(x).unsqueeze(0).float()
-            # x = torch.from_numpy(x).unsqueeze(0).permute(0, 3, 1, 2).float()
-            x = nn.Sequential(*blocks)(x)
-            self.shape_conv_output = x.shape
-            # shape of the last feature map of the encoder, [B, C, H, W]
-            self.n_flatten = torch.prod(torch.tensor(x.shape[1:])).item()
-            # self.shape_latent_h_w = x.shape[2:]
-            # C, H, W = x[1:]
-        if self.linear_out_dim:  # if encoder_out_dim is not None than followed by a linear layer
-            blocks.extend(
-                [
-                    nn.Flatten(),
-                    nn.Linear(self.n_flatten, self.linear_out_dim),
-                    nn.ReLU(),
-                ]
-            )
-        else:
-            blocks.append(nn.Flatten())
-        # self.ln = nn.LayerNorm([C, H, W])
+        self.example_x = observation_space.sample()
+        self.example_x = torch.from_numpy(self.example_x).unsqueeze(0).float()
+
+        # with torch.no_grad():
+        #     x = observation_space.sample()
+        #     x = torch.from_numpy(x).unsqueeze(0).float()
+        #     # when using atari wrapper, first dim is already channels, so no need to permute
+        #     x = nn.Sequential(*self.blocks)(x)
+        #     self.shape_conv_output = x.shape
+
+        #     self.n_flatten = nn.Flatten()(x).shape[1]
+        self.maybe_add_linear_module()
+        # if self.linear_dims:
+        #     self.blocks.extend(
+        #         [
+        #             nn.Flatten(),
+        #             nn.Linear(self.n_flatten, self.linear_dims),
+        #             nn.ReLU(),
+        #         ]
+        #     )
+        # else:
+        #     self.blocks.append(nn.Flatten())
+        # # self.ln = nn.LayerNorm([C, H, W])
 
         # self.outputs = dict()
         # self.fc_mu = nn.Linear(self.n_flatten, out_channels)
         # self.fc_std = nn.Linear(self.n_flatten, out_channels)
-        self.blocks = nn.Sequential(*blocks)
+        self.blocks = nn.Sequential(*self.blocks)
 
     # def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
     #     """
@@ -176,20 +218,17 @@ class Encoder2(nn.Module):
         return x
 
 
-class Encoder_MiniGrid(nn.Module):
+class Encoder_MiniGrid(Encoder):
     def __init__(
         self,
-        in_channels: int = 3,
-        linear_out_dim: Optional[int] = None,  # latent_dim
+        input_channels: int = 3,
+        linear_dims: int | list | None = None,  # latent_dim
         observation_space: gym.spaces.box.Box = None,
-        hidden_dims: List = [16, 32, 64],
+        hidden_channels: List = [16, 32, 64],
         n_redisual_layers: int = 0,
         **kwargs,
     ) -> None:
-        super().__init__()
-        self.forward_call = 0
-        self.linear_out_dim = linear_out_dim
-        n_channel_last = hidden_dims[-1]
+        super().__init__(linear_dims)
         # encoder architecture #1
         # blocks = [
         #     ConvBlock(
@@ -221,26 +260,26 @@ class Encoder_MiniGrid(nn.Module):
         #     # ),
         # ]
         # encoder architeture #2
-        blocks = [
+        self.blocks = [
             ConvBlock(
-                in_channels,
-                hidden_dims[0],
+                input_channels,
+                hidden_channels[0],
                 kernel_size=3,
                 stride=2,
                 padding=0,
                 batch_norm=False,
             ),
             ConvBlock(
-                hidden_dims[0],
-                hidden_dims[1],
+                hidden_channels[0],
+                hidden_channels[1],
                 kernel_size=3,
                 stride=2,
                 padding=0,
                 batch_norm=False,
             ),
             ConvBlock(
-                hidden_dims[1],
-                n_channel_last,
+                hidden_channels[1],
+                hidden_channels[2],
                 kernel_size=2,
                 stride=1,
                 padding=0,
@@ -249,39 +288,45 @@ class Encoder_MiniGrid(nn.Module):
         ]
         if n_redisual_layers > 0:
             for _ in range(n_redisual_layers):
-                blocks.append(ResidualLayer(n_channel_last, n_channel_last))
-            blocks.append(nn.ReLU())
+                self.blocks.append(ResidualLayer(hidden_channels[-1], hidden_channels[-1]))
+            self.blocks.append(nn.ReLU())
+        self.cnn_module = nn.Sequential(*self.blocks)
+
+        self.example_x = observation_space.sample()
+        self.example_x = torch.from_numpy(self.example_x).unsqueeze(0).permute(0, 3, 1, 2).float()
 
         # Compute shape by doing one forward pass
-        with torch.no_grad():
-            x = observation_space.sample()
-            x = torch.from_numpy(x).unsqueeze(0).transpose(1, 3).transpose(2, 3).float()
-            x = nn.Sequential(*blocks)(x)
-            self.shape_conv_output = x.shape
-            # shape of the last feature map of the encoder, [B, C, H, W]
-            # self.n_flatten = torch.prod(torch.tensor(x.shape[1:])).item()
-            self.n_flatten = nn.Flatten()(x).shape[1]
-            # self.shape_latent_h_w = x.shape[2:]
-            # C, H, W = x[1:]
-        if self.linear_out_dim:  # if linear_out_dim is not None than followed by a linear layer
-            blocks.extend(
-                [
-                    nn.Flatten(),
-                    nn.Linear(self.n_flatten, self.linear_out_dim),
-                    # nn.LayerNorm(self.linear_out_dim),
-                    # nn.Tanh(),
-                    nn.ReLU(),
-                    # nn.LeakyReLU(),
-                ]
-            )
-        else:
-            blocks.append(nn.Flatten())
+        # with torch.no_grad():
+        #     x = observation_space.sample()
+        #     # x = torch.from_numpy(x).unsqueeze(0).transpose(1, 3).transpose(2, 3).float()
+        #     x = torch.from_numpy(x).unsqueeze(0).permute(0, 3, 1, 2).float()
+        #     x = nn.Sequential(*self.blocks)(x)
+        #     self.shape_conv_output = x.shape
+        #     # shape of the last feature map of the encoder, [B, C, H, W]
+        #     # self.n_flatten = torch.prod(torch.tensor(x.shape[1:])).item()
+        #     self.n_flatten = nn.Flatten()(x).shape[1]
+        #     # self.shape_latent_h_w = x.shape[2:]
+        #     # C, H, W = x[1:]
+        self.maybe_add_linear_module()
+        # if self.linear_dims:
+        #     self.blocks.extend(
+        #         [
+        #             nn.Flatten(),
+        #             nn.Linear(self.n_flatten, self.linear_dims),
+        #             # nn.LayerNorm(self.linear_out_dim),
+        #             # nn.Tanh(),
+        #             nn.ReLU(),
+        #             # nn.LeakyReLU(),
+        #         ]
+        #     )
+        # else:
+        #     self.blocks.append(nn.Flatten())
         # self.ln = nn.LayerNorm([C, H, W])
 
         # self.outputs = dict()
         # self.fc_mu = nn.Linear(self.n_flatten, out_channels)
         # self.fc_std = nn.Linear(self.n_flatten, out_channels)
-        self.blocks = nn.Sequential(*blocks)
+        self.blocks = nn.Sequential(*self.blocks)
 
     # def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
     #     """

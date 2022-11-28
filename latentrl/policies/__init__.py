@@ -5,3 +5,4 @@ from policies.minigrid.HDQN_AdaptiveAbs_Coord import HDQN_AdaptiveAbs_Coord
 from policies.minigrid.HDQN_ManualAbs import HDQN_ManualAbs
 from policies.pixel_input.HDQN_Pixel import HDQN_Pixel
 from policies.minigrid.HDQN_AdaptiveAbs_VQ import HDQN_AdaptiveAbs_VQ
+from policies.minigrid.HDQN_TCURL_VQ import HDQN_TCURL_VQ

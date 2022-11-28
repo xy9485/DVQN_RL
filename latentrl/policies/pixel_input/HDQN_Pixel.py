@@ -32,7 +32,7 @@ from nn_models import (
     Decoder,
     Decoder_MiniGrid,
     DQN_Repara,
-    Encoder,
+    EncoderImg,
     Encoder_MiniGrid_PartialObs,
     Encoder_MiniGrid,
     RandomShiftsAug,

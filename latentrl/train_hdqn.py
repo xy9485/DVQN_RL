@@ -56,6 +56,7 @@ from policies import (
     HDQN_AdaptiveAbs_TCURL,
     HDQN_AdaptiveAbs_Coord,
     HDQN_AdaptiveAbs_VQ,
+    HDQN_TCURL_VQ,
     HDQN_KMeans_CURL,
     HDQN_KMeans_VAE,
     HDQN_ManualAbs,
@@ -880,9 +881,11 @@ def train_adaptive_absT_grdTN():
         env = make_env(config, cfg_key)
 
         agent = HDQN_AdaptiveAbs_VQ(config, env)
-        wandb.watch(agent.vq, log="all", log_freq=100)
-        wandb.watch(agent.abs_V_MLP, log="all", log_freq=100)
-        # wandb.watch(agent.ground_Q, log_freq=100)
+        # agent = HDQN_TCURL_VQ(config, env)
+        wandb.watch(agent.vq, log="all", log_freq=100, idx=0)
+        wandb.watch(agent.abs_V_MLP, log="all", log_freq=100, idx=1)
+        wandb.watch(agent.ground_Q, log="all", log_freq=100, idx=2)
+        # wandb.watch(agent.curl, log="all", log_freq=100, idx=3)
 
         goal_found = False
         steps_after_goal_found = 0
@@ -1000,16 +1003,16 @@ def train_adaptive_absT_grdTN():
                         plot_every = 30
 
                     if agent.episodes_done > 0 and agent.episodes_done % plot_every == 0:
-                        # agent.vis_grd_visits(norm_log=50)
+                        agent.vis_grd_visits(norm_log=50)
                         # agent.vis_grd_visits(norm_log=0)
-                        # agent.vis_grd_q_values(reduction_mode="max", norm_log=50)
+                        agent.vis_grd_q_values(reduction_mode="max", norm_log=50)
                         # agent.vis_grd_q_values(reduction_mode="mean", norm_log=50)
                         # agent.vis_reward_distribution()
                         pass
-                        if config.use_shaping and agent.timesteps_done > config.init_steps:
-                            # agent.vis_abstraction()
-                            # agent.vis_abstract_values(mode="soft")
-                            # agent.vis_abstract_values(mode="hard")
+                        if agent.timesteps_done > config.init_steps:
+                            agent.vis_abstraction()
+                            agent.vis_abstract_values(mode=None)
+                            agent.vis_abstract_values(mode="hard")
                             # agent.vis_shaping_distribution(norm_log=100)
                             # agent.vis_shaping_distribution(norm_log=0)
                             pass
@@ -1077,6 +1080,7 @@ def train_adaptive_absT_grdTN():
                             len(agent.memory), sys.getsizeof(agent.memory) / (1024 * 1024)
                         )
                     )
+                    print(f"wandb run name: {wandb.run.name}")
                     # End this episode
                     break
             # if agent.episodes_done > 0 and agent.episodes_done % 3 == 0:
@@ -1410,6 +1414,7 @@ if __name__ == "__main__":
     find_gpu()
     # sys.settrace(gpu_profile)
     torch.set_num_threads(1)
+    # torch.autograd.set_detect_anomaly(True)
     # tracemalloc.start()
     # set number of threads to 1, when using T.ToTensor() it will cause very high cpu usage and using milti-threads
 

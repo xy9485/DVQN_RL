@@ -42,6 +42,7 @@ class HDQN(nn.Module):
         # torch.manual_seed(seed)
         self.set_hparams(config)
         self.env = env
+        self.n_actions = env.action_space.n
         # self.n_actions = env.action_space.n
         # self.learn_with_ae = config.learn_with_ae
         # self.init_clustering = config.init_clustering

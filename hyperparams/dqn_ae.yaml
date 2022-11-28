@@ -3,6 +3,7 @@ CarRacing-v2:
   env_type: CarRacing
   total_timesteps: 300000
   init_steps: 10000
+  input_format: full_img
   hidden_dims:
     - 32
     - 64
