@@ -123,6 +123,7 @@ class HDQN_AdaptiveAbs_VQ(HDQN):
             "absV_grdQ(d)_diff": [],
             "absV_grdQ(d)_mse": [],
             "total_loss": [],
+            "codebook_diversity": [],
         }
 
     def set_hparams(self, config):
@@ -189,6 +190,9 @@ class HDQN_AdaptiveAbs_VQ(HDQN):
                 "Info/total_loss": mean(self.training_info["total_loss"])
                 if len(self.training_info["total_loss"])
                 else 0,
+                "Info/codebook_diversity": mean(self.training_info["codebook_diversity"])
+                if len(self.training_info["codebook_diversity"])
+                else 0,
                 # "info/timesteps_done": self.timesteps_done,
                 # "info/episodes_done": self.episodes_done,
                 "Info/exploration_rate": self.exploration_rate,
@@ -197,6 +201,7 @@ class HDQN_AdaptiveAbs_VQ(HDQN):
                 # "lr/lr_abstract_V_optimizer": self.abstract_V_optimizer.param_groups[0]["lr"],
                 "Info/lr_ground_Q": self.lr_grd_Q,
                 "Info/lr_abstract_V": self.lr_abs_V,
+                "Info/lr_vq": self.lr_vq,
                 "Info/timesteps_done": self.timesteps_done,
                 "Info/episodes_done": self.episodes_done,
             }
@@ -274,7 +279,7 @@ class HDQN_AdaptiveAbs_VQ(HDQN):
             abs_value = self.abs_V_MLP(quantized)
         elif mode == "hard":
             abs_value = self.abs_V_MLP(output_dict["hard_quantized_latents"])
-        return abs_value.squeeze().item()
+        return abs_value.squeeze().cpu().numpy()
 
     @torch.no_grad()
     def get_grd_reduction_v(self, state, reduction_mode="max"):
@@ -282,9 +287,9 @@ class HDQN_AdaptiveAbs_VQ(HDQN):
         grd_q, encoded = self.ground_Q(state)
         # grd_q, _ = self.ground_Q_target(state)
         if reduction_mode == "max":
-            return grd_q.squeeze().max().item()
+            return grd_q.squeeze().cpu().numpy().max()
         elif reduction_mode == "mean":
-            return grd_q.squeeze().mean().item()
+            return grd_q.squeeze().cpu().numpy().mean()
 
     def vis_abstraction(self, prefix: str = None):
         width = self.env.width
@@ -508,7 +513,7 @@ class HDQN_AdaptiveAbs_VQ(HDQN):
         # [Plot Abstract Values]
         fig_abs_v, ax_grd_v = plt.subplots(figsize=(5, 5))
         vmin = min(grd_v_avg_values)
-        vmax = max(grd_v_avg_values) + 1e-10
+        vmax = max(grd_v_avg_values)
         # vmin = vmin - 0.07 * (vmax - vmin)
         my_cmap = copy.copy(plt.cm.get_cmap("hot"))
         my_cmap.set_bad(color="green")
@@ -882,6 +887,9 @@ class HDQN_AdaptiveAbs_VQ(HDQN):
         if hasattr(self, "lr_scheduler_abstract_V"):
             self.lr_abs_V = self.lr_scheduler_abstract_V(self._current_progress_remaining)
             update_learning_rate(self.abs_V_MLP_optimizer, self.lr_abs_V)
+        if hasattr(self, "lr_scheduler_vq"):
+            self.lr_vq = self.lr_scheduler_vq(self._current_progress_remaining)
+            update_learning_rate(self.vq_optimizer, self.lr_vq)
         if self.clip_reward:
             reward.clamp_(-1, 1)
 
@@ -935,7 +943,8 @@ class HDQN_AdaptiveAbs_VQ(HDQN):
         # abs_grd_diff = criterion(abs_v, grd_q)
         # commit_error_grd2abs = criterion(abs_v.detach(), grd_q_reduction)
         # commit_error_abs2grd = criterion(abs_v, grd_q_reduction.detach())
-        commit_error_abs2grd = criterion(abs_v, grd_q_target)
+        commit_error_abs2grd = criterion(abs_v, grd_q_reduction)
+        # commit_error_abs2grd = criterion(abs_v, grd_q_target)
 
         # commit_error_grd2abs = torch.linalg.norm(F.relu(abs_v.detach() - grd_q_reduction))
         # commit_error_abs2grd = torch.linalg.norm(F.relu(grd_q_target - abs_v))
@@ -946,8 +955,12 @@ class HDQN_AdaptiveAbs_VQ(HDQN):
         diff_l2_abs_grd = F.mse_loss(abs_v, grd_q_reduction)
         diff_l1_abs_grd = F.l1_loss(abs_v, grd_q_reduction)
 
+        codebook = F.normalize(self.vq.embedding.weight, dim=1)
+        codebook_diversity = torch.einsum("ij,mj->im", [codebook, codebook]).mean()
+
         # [Compute total loss]
-        total_loss = ground_td_error + vq_loss - entrophy_vq + commit_error_abs2grd
+        total_loss = 3.0 * ground_td_error + commit_error_abs2grd - entrophy_vq + codebook_diversity
+        # total_loss = ground_td_error
 
         self.ground_Q_optimizer.zero_grad(set_to_none=True)
         self.abs_V_MLP_optimizer.zero_grad(set_to_none=True)
@@ -987,6 +1000,7 @@ class HDQN_AdaptiveAbs_VQ(HDQN):
         self.training_info["absV_grdQ(d)_diff"].append(diff_l1_abs_grd.item())
         self.training_info["absV_grdQ(d)_mse"].append(diff_l2_abs_grd.item())
         self.training_info["total_loss"].append(total_loss.item())
+        self.training_info["codebook_diversity"].append(codebook_diversity.item())
         # self.training_info["avg_shaping"].append(torch.mean(shaping).item())
 
     def update_absV(

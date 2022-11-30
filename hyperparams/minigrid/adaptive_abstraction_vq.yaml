@@ -151,9 +151,9 @@ MiniGrid-FourRooms-v0:
   mlp_hidden_dim_grd: 64
   # lr_ground_Q: 0.0002
   # lr_abstract_V: 0.1
-  lr_ground_Q: 0.0005
-  lr_abstract_V: 0.0005
-  lr_vq: 0.0005
+  lr_ground_Q: lin_0.0003
+  lr_abstract_V: lin_0.0003
+  lr_vq: lin_0.0003
   # lr_encoder: 0.0005
   # lr_decoder: 0.0005
   batch_size: 256
@@ -161,8 +161,8 @@ MiniGrid-FourRooms-v0:
   gamma: 0.99
   abstract_gamma: 0.99
   omega: 10
-  ground_Q_encoder_tau: 0.05
-  ground_Q_critic_tau: 0.05
+  ground_Q_encoder_tau: 0.01
+  ground_Q_critic_tau: 0.01
   abstract_tau: 1
   # encoder_tau: 0.2
   exploration_fraction: 0.95
@@ -171,7 +171,7 @@ MiniGrid-FourRooms-v0:
   save_model_every: 500000.0
   tcurl_learn_every: 4
   ground_learn_every: 4
-  ground_sync_every: 64
+  ground_sync_every: 8
   ground_gradient_steps: 1
   abstract_learn_every: 0
   abstract_sync_every: 8
@@ -180,9 +180,9 @@ MiniGrid-FourRooms-v0:
   clip_reward: False
   # wandb_group: AE_KMeans_DQN
   # wandb_group: AE_DQN
-  wandb_group: e2e_shp_env19_100k_buf50k_vqbeta1_atc#12
+  wandb_group: e2e_shp_env19_300k_buf50k_vqbeta1_atc#6pure
   # wandb_group: shp_100k_lrabs0.1_tau0.1_aevery4_rrward_mod
-  wandb_notes: total_loss = ground_td_error + vq_loss - entrophy_vq + commit_error_abs2grd(abs_v, grd_q_target)
+  wandb_notes: total_loss = 3.0 * ground_td_error - entrophy_vq + codebook_diversity + commit_error_abs2grd(abs_v, grd_q_reduction)
 
   # wandb_tags: ["shp", "omg1", "tbl", "16x16", "(1,1)"]
 
