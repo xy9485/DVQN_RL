@@ -22,10 +22,12 @@ from nn_models.vae import VAE
 from nn_models.vqvae import VQVAE
 from nn_models.CURL import CURL
 from nn_models.MOCO import MOCO
-from nn_models.vqvae_end2end import (
-    VectorQuantizerLinear,
+
+from nn_models.vector_quantization import (
+    VQSoftAttention,
     VectorQuantizer,
     VectorQuantizerEMA,
+    VectorQuantizerLinear,
     VectorQuantizerLinearSoft,
     VectorQuantizerLinearDiffable,
 )

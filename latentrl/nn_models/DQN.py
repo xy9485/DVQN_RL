@@ -110,8 +110,14 @@ class DQN(nn.Module):
         #     self.encoder_out_shape = x.shape[1:]
 
         self.critic_input_dim = self.encoder.linear_out_dim
-        self.critic = Q_MLP(
-            self.critic_input_dim, action_space, flatten=False, hidden_dim=mlp_hidden_dim_grd
+        # self.critic = Q_MLP(
+        #     self.critic_input_dim, action_space, flatten=False, hidden_dim=mlp_hidden_dim_grd
+        # )
+        self.critic = MlpModel(
+            input_dim=self.critic_input_dim,
+            hidden_dims=mlp_hidden_dim_grd,
+            output_dim=action_space.n,
+            activation=nn.ReLU,
         )
 
     def forward_conv(self, x: Tensor) -> Tensor:

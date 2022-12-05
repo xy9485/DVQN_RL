@@ -178,16 +178,38 @@ def make_env_minigrid(config, env_id):
         env = minigrid.envs.EmptyEnv(
             size=config.env_size,
             # agent_start_pos=tuple(config.agent_start_pos),
+            # render_mode="human",
         )
     if env_id == "MiniGrid-FourRooms-v0":
+        # use custom FourRoomsEnv because we fix positions of four doors
         env = envs.FourRoomsEnv(
             agent_pos=tuple(config.agent_start_pos),
             goal_pos=tuple(config.goal_pos),
+            # render_mode="human",
         )
         # env = minigrid.envs.FourRoomsEnv(
         #     agent_pos=tuple(config.agent_start_pos),
         #     goal_pos=tuple(config.goal_pos),
+        #     # render_mode="human",
         # )
+    if env_id == "MiniGrid-Crossing-v0":
+        env = minigrid.envs.CrossingEnv(
+            size=config.env_size,
+            num_crossings=2,
+            obstacle_type=minigrid.core.world_object.Wall,
+            # max_steps=2000,
+            # render_mode="human",
+        )
+    if env_id == "MiniGrid-DistShift-v0":
+        env = minigrid.envs.DistShiftEnv(
+            width=config.env_size,
+            height=config.env_size,
+            agent_start_pos=(1, 1),
+            agent_start_dir=0,
+            strip2_row=10,
+            # max_steps=2000,
+            # render_mode="human",
+        )
 
     env = common.wrappers.LimitNumberActionsWrapper(env, limit=3)
     # env = TimeLimit(env, max_episode_steps=3000, new_step_api=True)
@@ -850,6 +872,8 @@ def train_adaptive_absT_grdTN():
     # cfg_key = "MiniGrid-Empty-RGB"
     # cfg_key = "MiniGrid-Empty-v0"
     cfg_key = "MiniGrid-FourRooms-v0"
+    # cfg_key = "MiniGrid-Crossing-v0"
+    # cfg_key = "MiniGrid-DistShift-v0"
     # load hyperparameters from yaml config file
     with open(
         "/workspace/repos_dev/VQVAE_RL/hyperparams/minigrid/adaptive_abstraction_vq.yaml"
@@ -864,6 +888,7 @@ def train_adaptive_absT_grdTN():
         run = wandb.init(
             # project="HDQN_AbsTable_GrdNN_Empty",
             project="HDQN_AbsTable_GrdNN_4Rooms",
+            # project=f"HDQN_{cfg_key}",
             # mode="disabled",
             group=cfg["wandb_group"],
             tags=[
@@ -871,7 +896,7 @@ def train_adaptive_absT_grdTN():
                 "shp" if cfg["use_shaping"] else "no_shp",
                 f"omg{cfg['omega']}",
                 f"env{cfg['env_size']}x{cfg['env_size']}",
-                f"start({cfg['agent_start_pos'][0]}, {cfg['agent_start_pos'][1]})",
+                # f"start({cfg['agent_start_pos'][0]}, {cfg['agent_start_pos'][1]})",
             ],
             notes=cfg["wandb_notes"],
             config=cfg,
@@ -880,12 +905,12 @@ def train_adaptive_absT_grdTN():
         make_env = MAKE_ENV_FUNCS[config.env_type]
         env = make_env(config, cfg_key)
 
-        agent = HDQN_AdaptiveAbs_VQ(config, env)
-        # agent = HDQN_TCURL_VQ(config, env)
+        # agent = HDQN_AdaptiveAbs_VQ(config, env)
+        agent = HDQN_TCURL_VQ(config, env)
         wandb.watch(agent.vq, log="all", log_freq=100, idx=0)
         wandb.watch(agent.abs_V_MLP, log="all", log_freq=100, idx=1)
         wandb.watch(agent.ground_Q, log="all", log_freq=100, idx=2)
-        # wandb.watch(agent.curl, log="all", log_freq=100, idx=3)
+        wandb.watch(agent.curl, log="all", log_freq=100, idx=3)
 
         goal_found = False
         steps_after_goal_found = 0
@@ -1003,16 +1028,18 @@ def train_adaptive_absT_grdTN():
                         plot_every = 30
 
                     if agent.episodes_done > 0 and agent.episodes_done % plot_every == 0:
-                        agent.vis_grd_visits(norm_log=50)
+                        # agent.vis_grd_visits(norm_log=50)
                         # agent.vis_grd_visits(norm_log=0)
-                        agent.vis_grd_q_values(reduction_mode="max", norm_log=50)
+                        # agent.vis_grd_q_values(reduction_mode="max", norm_log=50)
                         # agent.vis_grd_q_values(reduction_mode="mean", norm_log=50)
                         # agent.vis_reward_distribution()
                         pass
                         if agent.timesteps_done > config.init_steps:
-                            agent.vis_abstraction()
-                            agent.vis_abstract_values(mode=None)
-                            agent.vis_abstract_values(mode="hard")
+                            # agent.vis_abstraction()
+                            # agent.vis_abstract_values(mode="soft")
+                            # agent.vis_abstract_values(mode="hard")
+                            # agent.vis_abstract_values(mode="target_soft")
+                            # agent.vis_abstract_values(mode="target_hard")
                             # agent.vis_shaping_distribution(norm_log=100)
                             # agent.vis_shaping_distribution(norm_log=0)
                             pass

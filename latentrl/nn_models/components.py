@@ -15,7 +15,10 @@ class MlpModel(nn.Module):
             hidden_dims = []
         blocks = []
         for n_in, n_out in zip([input_dim] + hidden_dims[:-1], hidden_dims):
-            blocks.extend([nn.Linear(n_in, n_out), activation()])
+            if activation:
+                blocks.extend([nn.Linear(n_in, n_out), activation()])
+            else:
+                blocks.extend([nn.Linear(n_in, n_out)])
 
         last_hidden_dim = hidden_dims[-1] if hidden_dims else input_dim
         blocks.extend([nn.Linear(last_hidden_dim, output_dim)])
