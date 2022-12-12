@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import torchvision.transforms as T
 
-from nn_models import EncoderImg, Encoder_MiniGrid, Encoder_MiniGrid_PartialObs
+from nn_models import EncoderImg, Encoder_MiniGrid, Encoder_MiniGrid_PartialObs, Encoder_MinAtar
 from typing import Any, Deque, Dict, List, Optional, Tuple, Type, TypeVar, Union
 from torch import Tensor
 
@@ -249,10 +249,11 @@ class ReplayBufferNStep(object):
     def sample_n_step_transits(
         self,
         n_step: int,
+        batch_size: int,
     ) -> List[None | Tuple[np.ndarray, ...]]:
         # sampel windowed transitions by anchor index
         # anchor_idxs, transitions = random.sample(list(enumerate(self.memory)), self.batch_size)
-        anchor_idxs = random.sample(range(len(self.memory)), self.batch_size)
+        anchor_idxs = random.sample(range(len(self.memory)), batch_size)
 
         N_Step_T = []
         n_transit_rew = [0] * len(anchor_idxs)
@@ -498,13 +499,26 @@ class EncoderMaker:
                 observation_space=self.agent.env.observation_space,
                 hidden_channels=self.agent.grd_hidden_channels,
             )
+        elif self.input_format == "full_img_small":
+            encoder = Encoder_MinAtar(
+                input_channels=self.agent.env.observation_space.shape[-1],
+                linear_dims=self.agent.grd_encoder_linear_dims,
+                observation_space=self.agent.env.observation_space,
+                hidden_channels=self.agent.grd_hidden_channels,
+            )
         else:
             raise NotImplementedError
 
         return encoder
 
 
-def make_encoder(input_format, input_channels:int=1, linear_dims:int|list=None, observation_space=None, hidden_channels:int=32):
+def make_encoder(
+    input_format,
+    input_channels: int = 1,
+    linear_dims: int | list = None,
+    observation_space=None,
+    hidden_channels: int = 32,
+):
     if input_format == "partial_obs":
         encoder = Encoder_MiniGrid_PartialObs(
             linear_out_dim=None,

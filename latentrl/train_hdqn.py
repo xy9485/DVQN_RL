@@ -193,20 +193,20 @@ def make_env_minigrid(config, env_id):
         #     # render_mode="human",
         # )
     if env_id == "MiniGrid-Crossing-v0":
-        env = minigrid.envs.CrossingEnv(
+        env = envs.CrossingEnv(
             size=config.env_size,
-            num_crossings=2,
+            num_crossings=1,
             obstacle_type=minigrid.core.world_object.Wall,
             # max_steps=2000,
             # render_mode="human",
         )
     if env_id == "MiniGrid-DistShift-v0":
-        env = minigrid.envs.DistShiftEnv(
+        env = envs.DistShiftEnv(
             width=config.env_size,
             height=config.env_size,
             agent_start_pos=(1, 1),
             agent_start_dir=0,
-            strip2_row=10,
+            strip_rows=[1, 2, 3, 4, 5, 6, 7, 8, 9],
             # max_steps=2000,
             # render_mode="human",
         )
@@ -229,7 +229,7 @@ def make_env_minigrid(config, env_id):
     # env = minigrid.wrappers.StateBonus(env)
     # env = common.wrappers.MinigridRewardWrapper(env)
     env = common.wrappers.MinigridInfoWrapper(env)
-    # env = common.wrappers.StateBonusCustom(env)
+    # env = common.wrappers.StateBonusCustom(env, 5000)
     # env = FrameStack(env, n_frames=1)
     # env.new_step_api = True
     return env
@@ -245,8 +245,18 @@ def make_env_atari(config, env_id):
     return env
 
 
+def make_env_minatar(config, env_id):
+    env = gym.make(
+        env_id,
+        # frameskip=1,
+    )
+    env = common.wrappers.FrameStack(env, 4)
+    return env
+
+
 MAKE_ENV_FUNCS = {
     "Atari": make_env_atari,
+    "MinAtar": make_env_minatar,
     "CarRacing": make_env_carracing,
     "GymMiniGrid": make_env_minigrid,
 }
@@ -901,6 +911,7 @@ def train_adaptive_absT_grdTN():
             notes=cfg["wandb_notes"],
             config=cfg,
         )
+        # wandb.run.log_code(".")
         config = wandb.config
         make_env = MAKE_ENV_FUNCS[config.env_type]
         env = make_env(config, cfg_key)
@@ -1030,11 +1041,11 @@ def train_adaptive_absT_grdTN():
                     if agent.episodes_done > 0 and agent.episodes_done % plot_every == 0:
                         # agent.vis_grd_visits(norm_log=50)
                         # agent.vis_grd_visits(norm_log=0)
-                        # agent.vis_grd_q_values(reduction_mode="max", norm_log=50)
-                        # agent.vis_grd_q_values(reduction_mode="mean", norm_log=50)
-                        # agent.vis_reward_distribution()
                         pass
-                        if agent.timesteps_done > config.init_steps:
+                        if agent.timesteps_done >= config.init_steps:
+                            # agent.vis_grd_q_values(reduction_mode="max", norm_log=50)
+                            # agent.vis_grd_q_values(reduction_mode="mean", norm_log=50)
+                            # agent.vis_reward_distribution()
                             # agent.vis_abstraction()
                             # agent.vis_abstract_values(mode="soft")
                             # agent.vis_abstract_values(mode="hard")
@@ -1182,24 +1193,29 @@ def train_atari_absT_grdN():
     # cfg_key = "ALE/Breakout-v5"
     # cfg_key = "ALE/MsPacman-v5"
     # cfg_key = "ALE/SpaceInvaders-v5"
-    cfg_key = "CarRacing-v2"
+    # cfg_key = "CarRacing-v2"
+    cfg_key = "MinAtar/Breakout-v0"
 
     # load hyperparameters from yaml config file
-    # with open("/workspace/repos_dev/VQVAE_RL/hyperparams/atari/atari_soft_vq.yaml") as f:
-    #     cfg = yaml.load(f, Loader=yaml.FullLoader)["Atari"]
-    #     pprint(cfg)
-    with open("/workspace/repos_dev/VQVAE_RL/hyperparams/carracing.yaml") as f:
-        cfg = yaml.load(f, Loader=yaml.FullLoader)["CarRacing-v2"]
+    with open("/workspace/repos_dev/VQVAE_RL/hyperparams/atari/atari_soft_vq.yaml") as f:
+        cfg = yaml.load(f, Loader=yaml.FullLoader)["Atari"]
         pprint(cfg)
-    for rep in range(15):
+    with open("/workspace/repos_dev/VQVAE_RL/hyperparams/minatar/minatar.yaml") as f:
+        cfg = yaml.load(f, Loader=yaml.FullLoader)["MinAtar"]
+        pprint(cfg)
+    # with open("/workspace/repos_dev/VQVAE_RL/hyperparams/carracing.yaml") as f:
+    #     cfg = yaml.load(f, Loader=yaml.FullLoader)["CarRacing-v2"]
+    #     pprint(cfg)
+    for rep in range(30):
         print(f"====Starting Repetition {rep}====")
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
         current_time = current_time.strftime("%b%d_%H-%M-%S")
         # 🐝 initialise a wandb run
         run = wandb.init(
             # project="HDQN_AbsTable_GrdNN_Atari",
-            project="HDQN_Neo_Carracing",
-            # mode="disabled",
+            project="HDQN_MinAtar",
+            # project="HDQN_Neo_Carracing",
+            mode="disabled",
             group=cfg["wandb_group"],
             tags=[
                 "shp" if cfg["use_shaping"] else "no_shp",
@@ -1214,9 +1230,11 @@ def train_atari_absT_grdN():
         # state, info = env.reset()
 
         # agent = HDQN_Pixel(config, env)
-        agent = HDQN_AdaptiveAbs_VQ(config, env)
-        wandb.watch(agent.vq, log="all", log_freq=100)
-        wandb.watch(agent.abs_V_MLP, log="all", log_freq=100)
+        agent = HDQN_TCURL_VQ(config, env)
+        wandb.watch(agent.vq, log="all", log_freq=100, idx=0)
+        wandb.watch(agent.abs_V_MLP, log="all", log_freq=100, idx=1)
+        wandb.watch(agent.ground_Q, log="all", log_freq=100, idx=2)
+        wandb.watch(agent.curl, log="all", log_freq=100, idx=3)
 
         goal_found = False
         steps_after_goal_found = 0
@@ -1289,18 +1307,7 @@ def train_atari_absT_grdN():
                     #     use_shaping=config.use_shaping, action_prime=action_prime
                     # )
                     # agent.update_table_abs_update_non_parallel2(use_shaping=config.use_shaping)
-                # [visualization]
-                for i in range(20):
-                    if agent.timesteps_done == (i + 1) * total_steps / 20:
-                        # agent.vis_grd_visits(norm_log=50)
-                        # agent.vis_grd_visits(norm_log=0)
-                        # agent.grd_visits = np.zeros_like(agent.grd_visits)
-                        # agent.vis_shaping_distribution(norm_log=100)
-                        # agent.vis_shaping_distribution(norm_log=0)
-                        # agent.vis_grd_q_values(norm_log=100)
-                        # agent.vis_grd_q_values(norm_log=1e8)
-                        # agent.vis_abstract_values()
-                        break
+
                 # agent.maybe_buffer_recent_states(state)
                 if agent.timesteps_done >= total_steps:
                     truncated = True
@@ -1390,6 +1397,7 @@ def train_atari_absT_grdN():
                             len(agent.memory), sys.getsizeof(agent.memory) / (1024 * 1024)
                         )
                     )
+                    print(f"wandb run name: {wandb.run.name}")
                     # End this episode
                     break
             # if agent.episodes_done > 0 and agent.episodes_done % 3 == 0:
@@ -1438,7 +1446,7 @@ if __name__ == "__main__":
     print("sys.path:", sys.path)
 
     # from utils.gpu_profile import gpu_profile
-    find_gpu()
+    # find_gpu()
     # sys.settrace(gpu_profile)
     torch.set_num_threads(1)
     # torch.autograd.set_detect_anomaly(True)

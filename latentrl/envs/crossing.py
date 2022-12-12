@@ -110,6 +110,7 @@ class CrossingEnv(MiniGridEnv):
             max_steps=max_steps,
             **kwargs,
         )
+        self._gen_grid(self.width, self.height)
 
     @staticmethod
     def _gen_mission_lava():
@@ -139,8 +140,8 @@ class CrossingEnv(MiniGridEnv):
         v, h = object(), object()  # singleton `vertical` and `horizontal` objects
 
         # Lava rivers or walls specified by direction and position in grid
-        rivers = [(v, i) for i in range(2, height - 2, 2)]
-        rivers += [(h, j) for j in range(2, width - 2, 2)]
+        rivers = [(v, i) for i in range(3, height - 3, 3)]
+        rivers += [(h, j) for j in range(3, width - 3, 3)]
         self.np_random.shuffle(rivers)
         rivers = rivers[: self.num_crossings]  # sample random rivers
         rivers_v = sorted(pos for direction, pos in rivers if direction is v)
@@ -178,3 +179,37 @@ class CrossingEnv(MiniGridEnv):
             if self.obstacle_type == Lava
             else "find the opening and get to the green goal square"
         )
+
+    def reset(self, *, seed=None, options=None):
+
+        # Reinitialize episode-specific variables
+        self.agent_pos = np.array((1, 1))
+        self.agent_dir = 0
+
+        # Generate a new random grid at the start of each episode
+        # self._gen_grid(self.width, self.height)
+
+        # These fields should be defined by _gen_grid
+        assert (
+            self.agent_pos >= (0, 0)
+            if isinstance(self.agent_pos, tuple)
+            else all(self.agent_pos >= 0) and self.agent_dir >= 0
+        )
+
+        # Check that the agent doesn't overlap with an object
+        start_cell = self.grid.get(*self.agent_pos)
+        assert start_cell is None or start_cell.can_overlap()
+
+        # Item picked up, being carried, initially nothing
+        self.carrying = None
+
+        # Step count since episode start
+        self.step_count = 0
+
+        if self.render_mode == "human":
+            self.render()
+
+        # Return first observation
+        obs = self.gen_obs()
+
+        return obs, {}

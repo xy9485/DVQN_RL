@@ -355,6 +355,143 @@ class Encoder_MiniGrid(Encoder):
         # return self.reparameterize(mu, std), mu, std
 
 
+class Encoder_MinAtar(Encoder):
+    def __init__(
+        self,
+        input_channels: int = 3,
+        linear_dims: int | list | None = None,  # latent_dim
+        observation_space: gym.spaces.box.Box = None,
+        hidden_channels: List = [16, 32, 64],
+        n_redisual_layers: int = 0,
+        **kwargs,
+    ) -> None:
+        super().__init__(linear_dims)
+        # encoder architecture #1
+        self.blocks = [
+            ConvBlock(
+                input_channels,
+                hidden_channels[0],
+                kernel_size=2,
+                stride=1,
+                padding=0,
+                batch_norm=False,
+            ),
+            nn.MaxPool2d((2, 2)),
+            ConvBlock(
+                hidden_channels[0],
+                hidden_channels[1],
+                kernel_size=2,
+                stride=1,
+                padding=0,
+                batch_norm=False,
+            ),
+            # nn.MaxPool2d((2, 2)),
+            # nn.MaxPool2d((2, 2)),
+            ConvBlock(
+                hidden_channels[1],
+                hidden_channels[2],
+                kernel_size=2,
+                stride=1,
+                padding=0,
+                batch_norm=False,
+            ),
+        ]
+        # encoder architeture #2
+        # self.blocks = [
+        #     ConvBlock(
+        #         input_channels,
+        #         hidden_channels[0],
+        #         kernel_size=3,
+        #         stride=2,
+        #         padding=0,
+        #         batch_norm=False,
+        #     ),
+        #     ConvBlock(
+        #         hidden_channels[0],
+        #         hidden_channels[1],
+        #         kernel_size=3,
+        #         stride=2,
+        #         padding=0,
+        #         batch_norm=False,
+        #     ),
+        #     ConvBlock(
+        #         hidden_channels[1],
+        #         hidden_channels[2],
+        #         kernel_size=2,
+        #         stride=1,
+        #         padding=0,
+        #         batch_norm=False,
+        #     ),
+        # ]
+        if n_redisual_layers > 0:
+            for _ in range(n_redisual_layers):
+                self.blocks.append(ResidualLayer(hidden_channels[-1], hidden_channels[-1]))
+            self.blocks.append(nn.ReLU())
+        self.cnn_module = nn.Sequential(*self.blocks)
+
+        self.example_x = observation_space.sample()
+        self.example_x = torch.from_numpy(self.example_x).unsqueeze(0).permute(0, 3, 1, 2).float()
+
+        # Compute shape by doing one forward pass
+        # with torch.no_grad():
+        #     x = observation_space.sample()
+        #     # x = torch.from_numpy(x).unsqueeze(0).transpose(1, 3).transpose(2, 3).float()
+        #     x = torch.from_numpy(x).unsqueeze(0).permute(0, 3, 1, 2).float()
+        #     x = nn.Sequential(*self.blocks)(x)
+        #     self.shape_conv_output = x.shape
+        #     # shape of the last feature map of the encoder, [B, C, H, W]
+        #     # self.n_flatten = torch.prod(torch.tensor(x.shape[1:])).item()
+        #     self.n_flatten = nn.Flatten()(x).shape[1]
+        #     # self.shape_latent_h_w = x.shape[2:]
+        #     # C, H, W = x[1:]
+        self.maybe_add_linear_module()
+        # if self.linear_dims:
+        #     self.blocks.extend(
+        #         [
+        #             nn.Flatten(),
+        #             nn.Linear(self.n_flatten, self.linear_dims),
+        #             # nn.LayerNorm(self.linear_out_dim),
+        #             # nn.Tanh(),
+        #             nn.ReLU(),
+        #             # nn.LeakyReLU(),
+        #         ]
+        #     )
+        # else:
+        #     self.blocks.append(nn.Flatten())
+        # self.ln = nn.LayerNorm([C, H, W])
+
+        # self.outputs = dict()
+        # self.fc_mu = nn.Linear(self.n_flatten, out_channels)
+        # self.fc_std = nn.Linear(self.n_flatten, out_channels)
+        self.blocks = nn.Sequential(*self.blocks)
+
+    # def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+    #     """
+    #     Reparameterization trick to sample from N(mu, var) from
+    #     N(0,1).
+    #     :param mu: (Tensor) Mean of the latent Gaussian [B x D]
+    #     :param logvar: (Tensor) Standard deviation of the latent Gaussian [B x D]
+    #     :return: (Tensor) [B x D]
+    #     """
+    #     std = torch.exp(0.5 * logvar)
+    #     eps = torch.randn_like(std)
+    #     return eps * std + mu
+
+    def forward(self, x: Tensor) -> Tensor:
+        # x = x.transpose(1, 3).transpose(2, 3).float()
+        # x = x.float()
+        # x = x / 10.0
+        x = x.permute(0, 3, 1, 2).float()
+        # x = x.permute(0, 3, 2, 1).float()
+        return self.blocks(x)
+
+        # x = self.blocks(x)
+        # x = x.view(-1, self.n_flatten)
+        # mu = self.fc_mu(x)
+        # std = self.fc_std(x)
+        # return self.reparameterize(mu, std), mu, std
+
+
 class Encoder_MiniGrid_PartialObs(nn.Module):
     def __init__(
         self,

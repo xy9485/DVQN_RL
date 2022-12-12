@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import numpy as np
+
 from minigrid.core.grid import Grid
 from minigrid.core.mission import MissionSpace
-from minigrid.core.world_object import Goal, Lava
+from minigrid.core.world_object import Goal, Lava, Wall
 from minigrid.minigrid_env import MiniGridEnv
 
 
@@ -68,14 +70,14 @@ class DistShiftEnv(MiniGridEnv):
         height=7,
         agent_start_pos=(1, 1),
         agent_start_dir=0,
-        strip2_row=2,
+        strip_rows: list = [1, 2, 3],
         max_steps: int | None = None,
         **kwargs,
     ):
         self.agent_start_pos = agent_start_pos
         self.agent_start_dir = agent_start_dir
         self.goal_pos = (width - 2, 1)
-        self.strip2_row = strip2_row
+        self.strip_rows = strip_rows
 
         mission_space = MissionSpace(mission_func=self._gen_mission)
 
@@ -91,6 +93,7 @@ class DistShiftEnv(MiniGridEnv):
             max_steps=max_steps,
             **kwargs,
         )
+        self._gen_grid(self.width, self.height)
 
     @staticmethod
     def _gen_mission():
@@ -107,9 +110,9 @@ class DistShiftEnv(MiniGridEnv):
         self.put_obj(Goal(), *self.goal_pos)
 
         # Place the lava rows
-        for i in range(self.width - 6):
-            self.grid.set(3 + i, 1, Lava())
-            self.grid.set(3 + i, self.strip2_row, Lava())
+        for r in self.strip_rows:
+            for i in range(self.width - 6):
+                self.grid.set(3 + i, r, Wall())
 
         # Place the agent
         if self.agent_start_pos is not None:
@@ -119,3 +122,37 @@ class DistShiftEnv(MiniGridEnv):
             self.place_agent()
 
         self.mission = "get to the green goal square"
+
+    def reset(self, *, seed=None, options=None):
+
+        # Reinitialize episode-specific variables
+        self.agent_pos = np.array((1, 1))
+        self.agent_dir = 0
+
+        # Generate a new random grid at the start of each episode
+        # self._gen_grid(self.width, self.height)
+
+        # These fields should be defined by _gen_grid
+        assert (
+            self.agent_pos >= (0, 0)
+            if isinstance(self.agent_pos, tuple)
+            else all(self.agent_pos >= 0) and self.agent_dir >= 0
+        )
+
+        # Check that the agent doesn't overlap with an object
+        start_cell = self.grid.get(*self.agent_pos)
+        assert start_cell is None or start_cell.can_overlap()
+
+        # Item picked up, being carried, initially nothing
+        self.carrying = None
+
+        # Step count since episode start
+        self.step_count = 0
+
+        if self.render_mode == "human":
+            self.render()
+
+        # Return first observation
+        obs = self.gen_obs()
+
+        return obs, {}

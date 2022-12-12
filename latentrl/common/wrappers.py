@@ -341,7 +341,8 @@ class FrameStack(gym.Wrapper):
     def _get_ob(self):
         # the original wrapper use `LazyFrames` but since we use np buffer,
         # it has no effect
-        return np.concatenate(self.frames, axis=2)
+        # return np.concatenate(self.frames, axis=2)
+        return LazyFramesCustom(list(self.frames))
 
 
 class FrameStackWrapper(gym.Wrapper):
@@ -1481,12 +1482,17 @@ class StateBonusCustom(gym.Wrapper):
     are visited on the grid.
     """
 
-    def __init__(self, env):
+    def __init__(self, env, steps_with_bonus=1e4):
         super().__init__(env)
         self.counts = {}
+        self.steps_with_bonus = steps_with_bonus
+        self.steps_done = 0
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
+        self.steps_done += 1
+        if self.steps_done > self.steps_with_bonus:
+            return obs, reward, terminated, truncated, info
 
         # Tuple based on which we index the counts
         # We use the position after an update
@@ -1502,8 +1508,8 @@ class StateBonusCustom(gym.Wrapper):
         new_count = pre_count + 1
         self.counts[tup] = new_count
 
-        bonus = 1 / (new_count * 10) ** 2
-        # bonus = 1 / math.sqrt(new_count)
+        # bonus = 1 / (new_count * 10) ** 2
+        bonus = 1 / math.sqrt(new_count)
         reward += bonus
 
         info["bonus"] = bonus

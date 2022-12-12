@@ -225,7 +225,8 @@ class VectorQuantizerLinearSoft(nn.Module):
 
         self.embedding = nn.Embedding(self.K, self.D)
         # try detach
-        self.embedding.weight.data.uniform_(-1 / self.K, 1 / self.K)
+        # self.embedding.weight.data.uniform_(-1 / self.K, 1 / self.K)
+        self.embedding.weight.data.uniform_(0, 1)
 
     def forward(self, latents: Tensor) -> Tensor:
         """

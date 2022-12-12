@@ -16,6 +16,7 @@ from nn_models.encoder import (
     Encoder_MiniGrid,
     Encoder_MiniGrid_PartialObs,
     EncoderRes,
+    Encoder_MinAtar,
 )
 from nn_models.random_encoder import RandomEncoder, RandomEncoderMiniGrid
 from nn_models.vae import VAE
