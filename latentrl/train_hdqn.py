@@ -210,8 +210,15 @@ def make_env_minigrid(config, env_id):
             # max_steps=2000,
             # render_mode="human",
         )
+    if env_id == "MiniGrid-Custom":
+        env = envs.CollectFlags(
+            maze_name=config.maze_name,
+            max_steps=8000,
+            # render_mode="human",
+        )
 
-    env = common.wrappers.LimitNumberActionsWrapper(env, limit=3)
+    if env_id != "MiniGrid-Custom":
+        env = common.wrappers.LimitNumberActionsWrapper(env, limit=3)
     # env = TimeLimit(env, max_episode_steps=3000, new_step_api=True)
     # env = minigrid.wrappers.StateBonus(env)
     if config.input_format == "partial_obs":
@@ -250,7 +257,7 @@ def make_env_minatar(config, env_id):
         env_id,
         # frameskip=1,
     )
-    env = common.wrappers.FrameStack(env, 4)
+    # env = common.wrappers.FrameStack(env, 4)
     return env
 
 
@@ -881,9 +888,10 @@ def train_adaptive_absT_grdTN():
 
     # cfg_key = "MiniGrid-Empty-RGB"
     # cfg_key = "MiniGrid-Empty-v0"
-    cfg_key = "MiniGrid-FourRooms-v0"
+    # cfg_key = "MiniGrid-FourRooms-v0"
     # cfg_key = "MiniGrid-Crossing-v0"
     # cfg_key = "MiniGrid-DistShift-v0"
+    cfg_key = "MiniGrid-Custom"
     # load hyperparameters from yaml config file
     with open(
         "/workspace/repos_dev/VQVAE_RL/hyperparams/minigrid/adaptive_abstraction_vq.yaml"
@@ -897,15 +905,15 @@ def train_adaptive_absT_grdTN():
         # 🐝 initialise a wandb run
         run = wandb.init(
             # project="HDQN_AbsTable_GrdNN_Empty",
-            project="HDQN_AbsTable_GrdNN_4Rooms",
-            # project=f"HDQN_{cfg_key}",
-            # mode="disabled",
+            # project="HDQN_AbsTable_GrdNN_4Rooms",
+            project=f"HDQN_{cfg_key}",
+            mode="disabled",
             group=cfg["wandb_group"],
             tags=[
-                "tbl",
+                # "tbl",
                 "shp" if cfg["use_shaping"] else "no_shp",
-                f"omg{cfg['omega']}",
-                f"env{cfg['env_size']}x{cfg['env_size']}",
+                # f"omg{cfg['omega']}",
+                # f"env{cfg['env_size']}x{cfg['env_size']}",
                 # f"start({cfg['agent_start_pos'][0]}, {cfg['agent_start_pos'][1]})",
             ],
             notes=cfg["wandb_notes"],
@@ -1118,7 +1126,7 @@ def train_adaptive_absT_grdTN():
                             len(agent.memory), sys.getsizeof(agent.memory) / (1024 * 1024)
                         )
                     )
-                    print(f"wandb run name: {wandb.run.name}")
+                    print(f"wandb run name: {wandb.run.project}/{wandb.run.name}")
                     # End this episode
                     break
             # if agent.episodes_done > 0 and agent.episodes_done % 3 == 0:
@@ -1193,16 +1201,22 @@ def train_atari_absT_grdN():
     # cfg_key = "ALE/Breakout-v5"
     # cfg_key = "ALE/MsPacman-v5"
     # cfg_key = "ALE/SpaceInvaders-v5"
+    # cfg_key = "ALE/Asterix-v5"
+    cfg_key = "Atari"
     # cfg_key = "CarRacing-v2"
-    cfg_key = "MinAtar/Breakout-v0"
+    # cfg_key = "MinAtar/Breakout-v0"
+    # cfg_key = "MinAtar/Asterix-v0"
+    # cfg_key = "MinAtar/SpaceInvaders-v0"
+    # cfg_key = "MinAtar/Freeway-v0"
+    # cfg_key = "MinAtar/Seaquest-v0"
 
     # load hyperparameters from yaml config file
     with open("/workspace/repos_dev/VQVAE_RL/hyperparams/atari/atari_soft_vq.yaml") as f:
-        cfg = yaml.load(f, Loader=yaml.FullLoader)["Atari"]
+        cfg = yaml.load(f, Loader=yaml.FullLoader)[cfg_key]
         pprint(cfg)
-    with open("/workspace/repos_dev/VQVAE_RL/hyperparams/minatar/minatar.yaml") as f:
-        cfg = yaml.load(f, Loader=yaml.FullLoader)["MinAtar"]
-        pprint(cfg)
+    # with open("/workspace/repos_dev/VQVAE_RL/hyperparams/minatar/minatar.yaml") as f:
+    #     cfg = yaml.load(f, Loader=yaml.FullLoader)["MinAtar"]
+    #     pprint(cfg)
     # with open("/workspace/repos_dev/VQVAE_RL/hyperparams/carracing.yaml") as f:
     #     cfg = yaml.load(f, Loader=yaml.FullLoader)["CarRacing-v2"]
     #     pprint(cfg)
@@ -1213,9 +1227,10 @@ def train_atari_absT_grdN():
         # 🐝 initialise a wandb run
         run = wandb.init(
             # project="HDQN_AbsTable_GrdNN_Atari",
-            project="HDQN_MinAtar",
+            project="HDQN_Atari",
+            # project="HDQN_MinAtar",
             # project="HDQN_Neo_Carracing",
-            mode="disabled",
+            # mode="disabled",
             group=cfg["wandb_group"],
             tags=[
                 "shp" if cfg["use_shaping"] else "no_shp",
@@ -1226,7 +1241,7 @@ def train_atari_absT_grdN():
         )
         config = wandb.config
         make_env = MAKE_ENV_FUNCS[config.env_type]
-        env = make_env(config, cfg_key)
+        env = make_env(config, config.domain_name)
         # state, info = env.reset()
 
         # agent = HDQN_Pixel(config, env)
@@ -1356,7 +1371,8 @@ def train_atari_absT_grdN():
                                 "After_goal_found/steps_done_after_first_found": steps_after_goal_found,
                             }
                         )
-                    wandb.log(metrics)
+                    if agent.episodes_done % 1 == 0:
+                        wandb.log(metrics)
 
                     print(
                         f">>>>>>>>>>>>>>>>Episode{agent.episodes_done} Done| Repetition {rep}>>>>>>>>>>>>>>>>>"
@@ -1397,7 +1413,7 @@ def train_atari_absT_grdN():
                             len(agent.memory), sys.getsizeof(agent.memory) / (1024 * 1024)
                         )
                     )
-                    print(f"wandb run name: {wandb.run.name}")
+                    print(f"wandb run name: {wandb.run.project}/{wandb.run.name}")
                     # End this episode
                     break
             # if agent.episodes_done > 0 and agent.episodes_done % 3 == 0:
@@ -1428,8 +1444,8 @@ def find_gpu():
     DEVICE_ID_LIST = GPUtil.getAvailable(
         order="random",
         limit=4,
-        maxLoad=0.95,
-        maxMemory=0.75,
+        maxLoad=1.0,
+        maxMemory=0.9,
         includeNan=False,
         excludeID=[],
         excludeUUID=[],
@@ -1446,7 +1462,7 @@ if __name__ == "__main__":
     print("sys.path:", sys.path)
 
     # from utils.gpu_profile import gpu_profile
-    # find_gpu()
+    find_gpu()
     # sys.settrace(gpu_profile)
     torch.set_num_threads(1)
     # torch.autograd.set_detect_anomaly(True)
@@ -1456,8 +1472,8 @@ if __name__ == "__main__":
     # train_hdqn()
     # train_dqn_kmeans()
     # train_manual_absT_grdTN()
-    train_adaptive_absT_grdTN()
-    # train_atari_absT_grdN()
+    # train_adaptive_absT_grdTN()
+    train_atari_absT_grdN()
 
     # env = make_env_minigrid(env_id="MiniGrid-Empty-6x6-v0")
     # print(env.observation_space.shape)

@@ -156,9 +156,9 @@ class ReplayBufferNStep(object):
             gamma = self.gamma
         self.memory.append(self.Transition(obs, act, n_obs, rew, gamma, info))
 
-    def sample(self):
+    def sample(self, batch_size):
 
-        transitions = random.sample(self.memory, self.batch_size)
+        transitions = random.sample(self.memory, batch_size)
         B = self.Transition(*zip(*transitions))
 
         # obs_B = np.stack(B.obs, axis=0)

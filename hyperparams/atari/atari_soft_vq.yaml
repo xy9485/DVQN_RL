@@ -59,20 +59,21 @@ ALE/Breakout-v5:
 
 Atari:
   env_type: Atari
-  total_timesteps: 300000
-  init_steps: 1600
+  domain_name: "ALE/Asterix-v5" #Asterix-v5; Freeway-v5; MsPacman-v5; Seaquest-v5; Breakout-v5
+  total_timesteps: 100000
+  init_steps: 10000
   input_format: full_img
   grd_hidden_channels:
     - 32
     - 64
     - 64
+  grd_encoder_linear_dims: null
+  encoded_detach4abs: False
   use_shaping: True
   # cluster_embedding_dim: None
-  encoded_detach4abs: False
-  grd_embedding_dim: 128
-  num_vq_embeddings: 256
-  dim_vq_embeddings: 128
-  vq_softmin_beta: 1
+  num_vq_embeddings: 50
+  dim_vq_embeddings: 512
+  vq_softmin_beta: 10
   mlp_hidden_dim_abs: 256
   mlp_hidden_dim_grd: 256
   # lr_ground_Q: 0.0002
@@ -80,35 +81,41 @@ Atari:
   lr_ground_Q: 0.0001
   lr_abstract_V: 0.0001
   lr_vq: 0.0001
+  lr_curl: 0.0001
   # lr_encoder: 0.0005
   # lr_decoder: 0.0005
   batch_size: 32
+  batch_size_repre: 32
   size_replay_memory: 100000
   gamma: 0.99
   abstract_gamma: 0.99
-  omega: 10
-  ground_Q_encoder_tau: 1.0
-  ground_Q_critic_tau: 1.0
+  omega: 1
+  ground_Q_encoder_tau: 1
+  ground_Q_critic_tau: 1
   abstract_tau: 1
+  curl_tau: 1
   # encoder_tau: 0.2
   exploration_fraction: 0.9
-  exploration_initial_eps: 0.1
+  exploration_initial_eps: 0.2
   exploration_final_eps: 0.01
   save_model_every: 500000.0
   # tcurl_learn_every: 4
   ground_learn_every: 1
-  ground_sync_every: 1000
-  ground_gradient_steps: 1
-  abstract_learn_every: 0
-  abstract_sync_every: 8
-  abstract_gradient_steps: 0
+  ground_sync_every: 2000
+  # ground_gradient_steps: 1
+  abstract_learn_every: 1
+  abstract_sync_every: 2000
+  # abstract_gradient_steps: 1
+  curl_vq_learn_every: 1
+  curl_vq_gradient_steps: 1
+  curl_vq_sync_every: 2000
   clip_grad: True
   clip_reward: True
   # wandb_group: AE_KMeans_DQN
   # wandb_group: AE_DQN
-  wandb_group: Alien_e2e_300k_buf100k_vqbeta3_pure
+  wandb_group: ALE/Asterix-v5_10w_B10w_close17
   # wandb_group: shp_100k_lrabs0.1_tau0.1_aevery4_rrward_mod
-  wandb_notes: nothing
+  wandb_notes: HDQN;no vq; with contrastive learning; n_step_return=5
   # wandb_tags: ["shp", "omg1", "tbl", "16x16", "(1,1)"]
 
   # validate_every: 1000

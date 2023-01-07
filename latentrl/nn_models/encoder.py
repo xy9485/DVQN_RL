@@ -1,3 +1,4 @@
+import copy
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
 import gym
@@ -6,15 +7,16 @@ import torch
 import torch.nn.functional as F
 import torchvision.transforms as T
 from torch import Tensor, nn
-
+from torchsummary import summary
 from nn_models.components import ConvBlock, ResidualLayer
 
 
 class Encoder(nn.Module):
-    def __init__(self, linear_dims: int | list | None) -> None:
+    def __init__(self, linear_dims: int | list | None, output_logits: bool = True) -> None:
         super().__init__()
         self.linear_dims = linear_dims
         self.linear_out_dim = None
+        self.output_logits = output_logits
 
     def maybe_add_linear_module(self, layer_norm=False) -> None:
         self.blocks.append(nn.Flatten())
@@ -22,18 +24,24 @@ class Encoder(nn.Module):
             self.linear_out_dim = self.cnn_flatten_dim
             return
         if isinstance(self.linear_dims, int):
-            self.linear_dims = [self.linear_dims]
+            # self.linear_dims = [self.linear_dims]
+            self.blocks.append(nn.Linear(self.cnn_flatten_dim, self.linear_dims))
+            self.blocks.append(nn.LayerNorm(self.linear_dims))
+            if not self.output_logits:
+                self.blocks.append(nn.Tanh())
+            self.linear_out_dim = self.linear_dims
+            return
+
         for n_in, n_out in zip([self.cnn_flatten_dim] + self.linear_dims[:-1], self.linear_dims):
             self.blocks.extend([nn.Linear(n_in, n_out), nn.ReLU()])
-        if layer_norm:
-            self.blocks.extend(
-                [
-                    nn.Linear(self.linear_dims[-1], self.linear_dims[-1]),
-                    nn.LayerNorm(self.linear_dims[-1]),
-                    nn.Tanh(),
-                ]
-            )
+
+        self.blocks.append(nn.Linear(self.linear_dims[-1], self.linear_dims[-1]))
+        self.blocks.append(nn.LayerNorm(self.linear_dims[-1]))
+        if not self.output_logits:
+            self.blocks.append(nn.Tanh())
+
         self.linear_out_dim = self.linear_dims[-1]
+        return
 
     @property
     @torch.no_grad()
@@ -92,8 +100,8 @@ class EncoderImg(Encoder):
                 self.blocks.append(ResidualLayer(hidden_channels[-1], hidden_channels[-1]))
             self.blocks.append(nn.ReLU())
 
-        self.cnn_module = nn.Sequential(*self.blocks)
-
+        # self.cnn_module = nn.Sequential(*self.blocks)
+        self.cnn_module = self.blocks[:]
         # Compute shape by doing one forward pass
         self.example_x = observation_space.sample()
         self.example_x = torch.from_numpy(self.example_x).unsqueeze(0).float()
@@ -290,7 +298,8 @@ class Encoder_MiniGrid(Encoder):
             for _ in range(n_redisual_layers):
                 self.blocks.append(ResidualLayer(hidden_channels[-1], hidden_channels[-1]))
             self.blocks.append(nn.ReLU())
-        self.cnn_module = nn.Sequential(*self.blocks)
+        # self.cnn_module = nn.Sequential(*self.blocks)
+        self.cnn_module = self.blocks[:]
 
         self.example_x = observation_space.sample()
         self.example_x = torch.from_numpy(self.example_x).unsqueeze(0).permute(0, 3, 1, 2).float()
@@ -367,53 +376,26 @@ class Encoder_MinAtar(Encoder):
     ) -> None:
         super().__init__(linear_dims)
         # encoder architecture #1
-        self.blocks = [
-            ConvBlock(
-                input_channels,
-                hidden_channels[0],
-                kernel_size=2,
-                stride=1,
-                padding=0,
-                batch_norm=False,
-            ),
-            nn.MaxPool2d((2, 2)),
-            ConvBlock(
-                hidden_channels[0],
-                hidden_channels[1],
-                kernel_size=2,
-                stride=1,
-                padding=0,
-                batch_norm=False,
-            ),
-            # nn.MaxPool2d((2, 2)),
-            # nn.MaxPool2d((2, 2)),
-            ConvBlock(
-                hidden_channels[1],
-                hidden_channels[2],
-                kernel_size=2,
-                stride=1,
-                padding=0,
-                batch_norm=False,
-            ),
-        ]
-        # encoder architeture #2
         # self.blocks = [
         #     ConvBlock(
         #         input_channels,
         #         hidden_channels[0],
-        #         kernel_size=3,
-        #         stride=2,
+        #         kernel_size=2,
+        #         stride=1,
         #         padding=0,
         #         batch_norm=False,
         #     ),
+        #     nn.MaxPool2d((2, 2)),
         #     ConvBlock(
         #         hidden_channels[0],
         #         hidden_channels[1],
-        #         kernel_size=3,
-        #         stride=2,
+        #         kernel_size=2,
+        #         stride=1,
         #         padding=0,
         #         batch_norm=False,
         #     ),
+        #     # nn.MaxPool2d((2, 2)),
+        #     # nn.MaxPool2d((2, 2)),
         #     ConvBlock(
         #         hidden_channels[1],
         #         hidden_channels[2],
@@ -423,12 +405,23 @@ class Encoder_MinAtar(Encoder):
         #         batch_norm=False,
         #     ),
         # ]
+        # encoder architeture #2
+        if isinstance(hidden_channels, int):
+            hidden_channels = [hidden_channels]
+
+        self.blocks = []
+        for ch_in, ch_out in zip([input_channels] + hidden_channels[:-1], hidden_channels):
+            # self.blocks.append(
+            #     ConvBlock(ch_in, ch_out, kernel_size=3, stride=1, padding=0, batch_norm=False)
+            # )
+            self.blocks.append(nn.Conv2d(ch_in, ch_out, kernel_size=3, stride=1, padding=0))
+            self.blocks.append(nn.ReLU())
         if n_redisual_layers > 0:
             for _ in range(n_redisual_layers):
                 self.blocks.append(ResidualLayer(hidden_channels[-1], hidden_channels[-1]))
             self.blocks.append(nn.ReLU())
-        self.cnn_module = nn.Sequential(*self.blocks)
-
+        # self.cnn_module = nn.Sequential(*self.blocks)
+        self.cnn_module = self.blocks[:]
         self.example_x = observation_space.sample()
         self.example_x = torch.from_numpy(self.example_x).unsqueeze(0).permute(0, 3, 1, 2).float()
 

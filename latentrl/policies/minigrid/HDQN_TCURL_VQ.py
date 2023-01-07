@@ -220,6 +220,7 @@ class HDQN_TCURL_VQ(HDQN):
         self.total_timesteps = config.total_timesteps
         self.init_steps = config.init_steps  # min. experiences before training
         self.batch_size = config.batch_size
+        self.batch_size_repre = config.batch_size_repre
         self.size_replay_memory = config.size_replay_memory
         self.gamma = config.gamma
         self.abs_gamma = config.abstract_gamma
@@ -959,11 +960,27 @@ class HDQN_TCURL_VQ(HDQN):
         # self.abstract_V_optimizer = optim.RMSprop(
         #     self.ground_Q_net.parameters(), lr=lr_abstract_V, alpha=0.95, momentum=0.95, eps=0.01
         # )
+        # self.curl_optimizer = optim.Adam(self.curl.parameters(), lr=self.lr_curl)
+        # self.vq_optimizer = optim.Adam(self.vq.parameters(), lr=self.lr_vq)
+        # self.abs_V_MLP_optimizer = optim.Adam(self.abs_V_MLP.parameters(), lr=self.lr_abs_V)
+        # self.ground_Q_optimizer = optim.Adam(self.ground_Q.parameters(), lr=self.lr_grd_Q)
+        self.curl_optimizer = optim.RMSprop(self.curl.parameters(), lr=self.lr_curl)
+        self.vq_optimizer = optim.RMSprop(self.vq.parameters(), lr=self.lr_vq)
+        self.abs_V_MLP_optimizer = optim.RMSprop(self.abs_V_MLP.parameters(), lr=self.lr_abs_V)
+        self.ground_Q_optimizer = optim.RMSprop(self.ground_Q.parameters(), lr=self.lr_grd_Q)
+        # self.curl_optimizer = optim.RMSprop(
+        #     self.curl.parameters(), lr=self.lr_curl, alpha=0.95, centered=True, eps=0.01
+        # )
+        # self.vq_optimizer = optim.RMSprop(
+        #     self.vq.parameters(), lr=self.lr_vq, alpha=0.95, centered=True, eps=0.01
+        # )
+        # self.abs_V_MLP_optimizer = optim.RMSprop(
+        #     self.abs_V_MLP.parameters(), lr=self.lr_abs_V, alpha=0.95, centered=True, eps=0.01
+        # )
+        # self.ground_Q_optimizer = optim.RMSprop(
+        #     self.ground_Q.parameters(), lr=self.lr_grd_Q, alpha=0.95, centered=True, eps=0.01
+        # )  # created for Minatar, used by original authors
 
-        self.curl_optimizer = optim.Adam(self.curl.parameters(), lr=self.lr_curl, weight_decay=0.01)
-        self.vq_optimizer = optim.Adam(self.vq.parameters(), lr=self.lr_vq)
-        self.abs_V_MLP_optimizer = optim.Adam(self.abs_V_MLP.parameters(), lr=self.lr_abs_V)
-        self.ground_Q_optimizer = optim.Adam(self.ground_Q.parameters(), lr=self.lr_grd_Q)
         # self.moco_optimizer = optim.Adam(self.moco.parameters(), lr=self.lr_curl)
 
     def act(self, state):
@@ -1145,6 +1162,7 @@ class HDQN_TCURL_VQ(HDQN):
         n_obs,
         rew,
         gamma,
+        use_vq=True,
         use_shaping=False,
         approach_abs=False,
     ):
@@ -1159,36 +1177,36 @@ class HDQN_TCURL_VQ(HDQN):
             n_obs = self.aug(n_obs)
 
         # [Update ground Q network]
-        grd_q, encoded = self.ground_Q(obs)
+        grd_q, _ = self.ground_Q(obs)
         grd_q_reduction = torch.mean(grd_q, dim=1, keepdim=True)
         # grd_q_reduction = torch.amax(grd_q.detach(), dim=1, keepdim=True)
         # grd_q_mean_bytarget = torch.mean(self.ground_Q_target(state)[0].detach(), dim=1, keepdim=True)
         grd_q = grd_q.gather(1, act)
 
-        with torch.no_grad():
-            encoded = self.curl.encoder(obs)
-            quantized, _, _, output = self.vq(encoded)
-            # abs_v = self.abs_V_MLP(quantized)
+        encoded = self.curl.encoder(obs)
+        if use_vq:
+            encoded, _, _, output = self.vq(encoded)
+            # abs_v_hard = self.abs_V_MLP_target(output["hard_quantized_latents"])
             # abs_v_hard = self.abs_V_MLP(output["hard_quantized_latents"])
-            abs_v = self.abs_V_MLP_target(quantized)
-            abs_v_hard = self.abs_V_MLP_target(output["hard_quantized_latents"])
+        # abs_v = self.abs_V_MLP(quantized)
+        abs_v = self.abs_V_MLP_target(encoded).detach()
 
-            encoded_next = self.curl.encoder(n_obs)
-            quantized_next, _, _, n_output = self.vq(encoded_next)
-            # abs_v_next = self.abs_V_MLP(quantized_next)
+        encoded_next = self.curl.encoder(n_obs)
+        if use_vq:
+            encoded_next, _, _, n_output = self.vq(encoded_next)
+            # abs_v_next_hard = self.abs_V_MLP_target(n_output["hard_quantized_latents"])
             # abs_v_next_hard = self.abs_V_MLP(n_output["hard_quantized_latents"])
-            abs_v_next = self.abs_V_MLP_target(quantized_next)
-            abs_v_next_hard = self.abs_V_MLP_target(n_output["hard_quantized_latents"])
+        # abs_v_next = self.abs_V_MLP(quantized_next)
+        abs_v_next = self.abs_V_MLP_target(encoded_next).detach()
 
-            # Vanilla DQN
+        with torch.no_grad():
+            # [Vanilla DQN]
             grd_q_next, encoded_next = self.ground_Q_target(n_obs)
             grd_q_next_max = grd_q_next.max(1)[0].unsqueeze(1)
 
-            # Double DQN
-            # action_argmax_target = self.ground_target_Q_net(next_state_batch).argmax(
-            #     dim=1, keepdim=True
-            # )
-            # ground_next_max_Q = self.ground_Q_net(next_state_batch).gather(1, action_argmax_target)
+            # [Double DQN]
+            # action_argmax_target = self.ground_Q_target(n_obs)[0].argmax(dim=1, keepdim=True)
+            # grd_q_next_max = self.ground_Q(n_obs)[0].gather(1, action_argmax_target)
 
             grd_q_target = rew + gamma * grd_q_next_max
             if use_shaping:
@@ -1203,10 +1221,11 @@ class HDQN_TCURL_VQ(HDQN):
             # abs_v_target = reward + gamma * abs_v_next
             # abs_v_target = abs_v_target * mask + abs_v_next * (1 - mask)
 
-        # criterion = nn.SmoothL1Loss()
+        criterion = nn.SmoothL1Loss()
         # criterion = F.mse_loss
-        ground_td_error = F.mse_loss(grd_q, grd_q_target)
-
+        # ground_td_error = F.mse_loss(grd_q, grd_q_target)
+        # ground_td_error = criterion(grd_q, grd_q_target)
+        ground_td_error = criterion(grd_q, rew + gamma * abs_v_next)
         # abs_td_error = F.mse_loss(abs_v, abs_v_target)
         # abs_grd_diff = criterion(abs_v, grd_q)
         # commit_error_grd2abs = criterion(abs_v.detach(), grd_q_reduction)
@@ -1226,32 +1245,33 @@ class HDQN_TCURL_VQ(HDQN):
         # [Compute total loss]
         total_loss = ground_td_error
         if approach_abs:
-            grd_match_abs_err = F.mse_loss(grd_q_reduction, abs_v)
+            # grd_match_abs_err = F.mse_loss(grd_q, abs_v)
+            grd_match_abs_err = F.mse_loss(grd_q, rew + gamma * abs_v_next)
             total_loss += 0.1 * grd_match_abs_err
 
-        self.ground_Q_optimizer.zero_grad(set_to_none=True)
-        # self.abs_V_MLP_optimizer.zero_grad(set_to_none=True)
-        # self.vq_optimizer.zero_grad(set_to_none=True)
-        total_loss.backward()
-        # print("memory_allocated: {:.5f} MB".format(torch.cuda.memory_allocated() / (1024 * 1024)))
-        # print("run backward")
-        if self.clip_grad:
-            # 1 clamp gradients to avoid exploding gradient
-            for param in self.ground_Q.parameters():
-                if param.grad is not None:  # make sure grad is not None
-                    param.grad.data.clamp_(-1, 1)
-            # for param in self.abs_V_MLP.parameters():
-            #     if param.grad is not None:
-            #         param.grad.data.clamp_(-1, 1)
-            # for param in self.vq.parameters():
-            #     if param.grad is not None:
-            #         param.grad.data.clamp_(-1, 1)
+        # self.ground_Q_optimizer.zero_grad(set_to_none=True)
+        # # self.abs_V_MLP_optimizer.zero_grad(set_to_none=True)
+        # # self.vq_optimizer.zero_grad(set_to_none=True)
+        # total_loss.backward()
+        # # print("memory_allocated: {:.5f} MB".format(torch.cuda.memory_allocated() / (1024 * 1024)))
+        # # print("run backward")
+        # if self.clip_grad:
+        #     # 1 clamp gradients to avoid exploding gradient
+        #     for param in self.ground_Q.parameters():
+        #         if param.grad is not None:  # make sure grad is not None
+        #             param.grad.data.clamp_(-1, 1)
+        #     # for param in self.abs_V_MLP.parameters():
+        #     #     if param.grad is not None:
+        #     #         param.grad.data.clamp_(-1, 1)
+        #     # for param in self.vq.parameters():
+        #     #     if param.grad is not None:
+        #     #         param.grad.data.clamp_(-1, 1)
 
-            # 2 Clip gradient norm
-            # max_grad_norm = 10
-            # torch.nn.utils.clip_grad_norm_(self.policy_mlp_net.parameters(), max_grad_norm)
-            # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
-        self.ground_Q_optimizer.step()
+        #     # 2 Clip gradient norm
+        #     # max_grad_norm = 10
+        #     # torch.nn.utils.clip_grad_norm_(self.policy_mlp_net.parameters(), max_grad_norm)
+        #     # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
+        # self.ground_Q_optimizer.step()
         # self.abs_V_MLP_optimizer.step()
         # self.vq_optimizer.step()
 
@@ -1268,6 +1288,8 @@ class HDQN_TCURL_VQ(HDQN):
         self.training_info["absV_grdQ(rd)_l2"].append(diff_l2_abs_grd.item())
         # self.training_info["total_loss"].append(total_loss.item())
 
+        return total_loss
+
     def update_grdQ_critic(
         self,
         obs,
@@ -1275,6 +1297,8 @@ class HDQN_TCURL_VQ(HDQN):
         n_obs,
         rew,
         gamma,
+        use_vq,
+        approach_abs,
     ):
 
         if self.clip_reward:
@@ -1289,17 +1313,20 @@ class HDQN_TCURL_VQ(HDQN):
         # grd_q, encoded = self.ground_Q(obs)
         with torch.no_grad():
             encoded = self.curl.encoder(obs)
-            quantized, _, _, _ = self.vq(encoded)
-        grd_q = self.ground_Q.critic(quantized)
+            if use_vq:
+                encoded, _, _, _ = self.vq(encoded)
+        grd_q = self.ground_Q.critic(encoded)
+        grd_q_reduction = torch.mean(grd_q, dim=1, keepdim=True)
         grd_q = grd_q.gather(1, act)
 
         with torch.no_grad():
             n_encoded = self.curl.encoder(n_obs)
-            n_quantized, _, _, _ = self.vq(n_encoded)
+            if use_vq:
+                n_encoded, _, _, _ = self.vq(n_encoded)
 
             # [Vanilla DQN]
             # grd_q_next, encoded_next = self.ground_Q_target(n_obs)
-            grd_q_next = self.ground_Q_target.critic(n_quantized)
+            grd_q_next = self.ground_Q_target.critic(n_encoded)
             grd_q_next_max = grd_q_next.max(1)[0].unsqueeze(1)
 
             # [Double DQN]
@@ -1312,6 +1339,11 @@ class HDQN_TCURL_VQ(HDQN):
 
         # [Compute total loss]
         total_loss = ground_td_error
+        if approach_abs:
+            with torch.no_grad():
+                abs_v = self.abs_V_MLP_target(encoded)
+            grd_match_abs_err = F.mse_loss(grd_q_reduction, abs_v)
+            total_loss += 0.1 * grd_match_abs_err
 
         self.ground_Q_optimizer.zero_grad(set_to_none=True)
         # self.abs_V_MLP_optimizer.zero_grad(set_to_none=True)
@@ -1346,43 +1378,58 @@ class HDQN_TCURL_VQ(HDQN):
         n_obs,
         rew,
         gamma,
+        use_vq=False,
+        detach_encoder=True,
     ):
+        if self.clip_reward:
+            rew.clamp_(-1, 1)
         # [data augmentation]
         if self.input_format == "full_img":
             obs = self.aug(obs)
             n_obs = self.aug(n_obs)
-        with torch.no_grad():
-            encoded = self.curl.encoder(obs)
-            quantized, vq_loss, entrophy_vq, _ = self.vq(encoded)
-        abs_v = self.abs_V_MLP(quantized)
+
+        encoded = self.curl.encoder(obs)
+        if use_vq:
+            encoded, _, _, _ = self.vq(encoded)
+        if detach_encoder:
+            encoded = encoded.detach()
+        abs_v = self.abs_V_MLP(encoded)
+        # abs_v = self.abs_V_MLP(encoded)
 
         with torch.no_grad():
-            n_encoded = self.curl.encoder(n_obs)
-            n_quantized, vq_loss, entrophy_vq, _ = self.vq(n_encoded)
-            n_abs_v = self.abs_V_MLP_target(n_quantized)
+            # n_encoded = self.curl.encoder(n_obs)
+            n_encoded = self.curl.encoder_target(n_obs)
+            if use_vq:
+                n_encoded, _, _, _ = self.vq(n_encoded)
+            n_abs_v = self.abs_V_MLP_target(n_encoded)
             abs_v_target = rew + gamma * n_abs_v
             # mask = (quantized != n_quantized).any(dim=1).unsqueeze(1)
             # mask = mask | (rew != 0)
             # mask = mask.float()
             # abs_v_target = abs_v_target * mask + abs_v * (1 - mask)
+        # criterion = F.smooth_l1_loss
+        # criterion = F.mse_loss
+        criterion = nn.SmoothL1Loss()
+        abs_td_error = criterion(abs_v, abs_v_target)
 
-        abs_td_error = F.mse_loss(abs_v, abs_v_target)
+        # self.abs_V_MLP_optimizer.zero_grad(set_to_none=True)
+        # abs_td_error.backward()
+        # if self.clip_grad:
+        #     # 1 clamp gradients to avoid exploding gradient
+        #     for param in self.abs_V_MLP.parameters():
+        #         if param.grad is not None:
+        #             param.grad.data.clamp_(-1, 1)
 
-        self.abs_V_MLP_optimizer.zero_grad(set_to_none=True)
-        abs_td_error.backward()
-        if self.clip_grad:
-            # 1 clamp gradients to avoid exploding gradient
-            for param in self.abs_V_MLP.parameters():
-                if param.grad is not None:
-                    param.grad.data.clamp_(-1, 1)
+        #     # 2 Clip gradient norm
+        #     # max_grad_norm = 10
+        #     # torch.nn.utils.clip_grad_norm_(self.policy_mlp_net.parameters(), max_grad_norm)
+        #     # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
 
-            # 2 Clip gradient norm
-            # max_grad_norm = 10
-            # torch.nn.utils.clip_grad_norm_(self.policy_mlp_net.parameters(), max_grad_norm)
-            # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
+        # self.abs_V_MLP_optimizer.step()
 
-        self.abs_V_MLP_optimizer.step()
         self.training_info["abstract_V_error"].append((abs_v_target - abs_v).mean().item())
+
+        return abs_td_error
 
     def update_absV_immediate(
         self,
@@ -1504,12 +1551,13 @@ class HDQN_TCURL_VQ(HDQN):
         return logits, labels
 
     def curl_loss(self, anc: Tensor, pos: Tensor, temperature: float = 0.07):
-        anc = torch.cat([anc, pos], dim=0)
-        pos = torch.cat([pos, anc], dim=0)
-        # anc = F.normalize(anc, dim=1)
-        # pos = F.normalize(pos, dim=1)
-        logits = torch.matmul(anc, pos.T)
-        # logits = self.curl.compute_logits_bilinear(anc, pos)
+        # anc = torch.cat([anc, pos], dim=0)
+        # pos = torch.cat([pos, anc], dim=0)
+        anc = F.normalize(anc, dim=1)
+        pos = F.normalize(pos, dim=1)
+        # logits = torch.matmul(anc, pos.T)
+        # logits = self.curl.compute_logits(anc, pos)
+        logits = self.curl.compute_logits_bilinear(anc, pos)
         logits = logits / temperature
         labels = torch.arange(logits.shape[0]).long().to(self.device)
         # loss = F.cross_entropy(logits, labels)
@@ -1586,6 +1634,47 @@ class HDQN_TCURL_VQ(HDQN):
         self.training_info["cluster_metrics"].append(cluster_metrics)
         self.training_info["cb_diversity"].append(cb_diversity.item())
         self.training_info["neg_diversity"].append(neg_diversity.item())
+
+    def update_contrastive_novq(self, anc_obs, pos_obs):
+        anc = self.curl.encoder(anc_obs)
+        # anc = F.normalize(anc, dim=1)
+
+        pos = self.curl.encoder_target(pos_obs).detach()
+        # pos = F.normalize(pos, dim=1)
+
+        mask2 = ~torch.eye(anc.shape[0], dtype=torch.bool, device=self.device)
+        neg_diversity = (
+            torch.matmul(anc, anc.T)[mask2].mean() + torch.matmul(pos, pos.T)[mask2].mean()
+        )
+
+        # anc = anc_output_dict["cluster_assignment"]
+        # pos = pos_output_dict["cluster_assignment"]
+        # anc = anc / (anc.norm(dim=1, keepdim=True)+1e-8)
+        # pos = pos / (pos.norm(dim=1, keepdim=True)+1e-8)
+        # anc = anc / anc.norm(dim=1, keepdim=True)
+        # pos = pos / pos.norm(dim=1, keepdim=True)
+        logits, labels = self.curl_loss(anc, pos, temperature=1)
+        # logits, labels = self.simclr_loss2(anc, pos, temperature=1)
+        loss1 = F.cross_entropy(logits, labels)
+        with torch.no_grad():
+            correct = torch.argmax(logits, dim=1) == labels
+            contrast_acc = torch.mean(correct.float())
+        # loss2 = self.push_away(pos)
+
+        total_loss = loss1 * 1.0 + neg_diversity * 0.0
+        # total_loss = loss1 - vq_entropy * 0.5
+        # total_loss = loss1 + loss2 - anc_entrophy_vq * 0.5 - pos_entrophy_vq * 0.5
+
+        # self.curl_optimizer.zero_grad()
+        # total_loss.backward()
+        # self.curl_optimizer.step()
+
+        self.training_info["contrastive_loss"].append(loss1.item())
+        self.training_info["total_loss"].append(total_loss.item())
+        self.training_info["contrast_acc"].append(contrast_acc.item())
+        self.training_info["neg_diversity"].append(neg_diversity.item())
+
+        return total_loss
 
     def update_contrastive_grdEncoder(self, anc_obs, pos_obs):
         anc_encoded = self.ground_Q.encoder(anc_obs)
@@ -1677,21 +1766,19 @@ class HDQN_TCURL_VQ(HDQN):
 
         with torch.no_grad():
 
-            # Vanilla DQN
+            # [Vanilla DQN]
             grd_q_next, encoded_next = self.ground_Q_target(next_state)
             grd_q_next_max = grd_q_next.max(1)[0].unsqueeze(1)
 
-            # Double DQN
-            # action_argmax_target = self.ground_target_Q_net(next_state_batch).argmax(
-            #     dim=1, keepdim=True
-            # )
-            # ground_next_max_Q = self.ground_Q_net(next_state_batch).gather(1, action_argmax_target)
+            # [Double DQN]
+            # action_argmax_target = self.ground_Q_target(next_state)[0].argmax(dim=1, keepdim=True)
+            # grd_q_next_max = self.ground_Q(next_state)[0].gather(1, action_argmax_target)
 
             # Compute ground target Q value
             grd_q_target = reward + gamma * grd_q_next_max
 
-        # criterion = nn.SmoothL1Loss()
-        criterion = F.mse_loss
+        criterion = nn.SmoothL1Loss()
+        # criterion = F.mse_loss
         ground_td_error = criterion(grd_q, grd_q_target)
 
         self.ground_Q_optimizer.zero_grad(set_to_none=True)
@@ -1758,12 +1845,80 @@ class HDQN_TCURL_VQ(HDQN):
             # self.init_vq_codebook()
             # self.vis_abstraction()
             print("Warm up done")
-            if use_shaping:
-                for _ in tqdm(range(self.curl_vq_gradient_steps * 50)):
-                    # 1-step
-                    obs, act, n_obs, rew, gamma, info = self.memory.sample()
-                    self.update_contrastive(obs, n_obs)
-                    # n-step
+            # if use_shaping:
+            # for _ in tqdm(range(self.curl_vq_gradient_steps * 30)):
+            # [1-step]
+            # obs, act, n_obs, rew, gamma, info = self.memory.sample()
+            # self.update_contrastive(obs, n_obs)
+            # self.update_contrastive_novq(n_obs, obs)
+            # [n-step]
+            # N_Step_T: List[dict] = self.memory.sample_n_step_transits(
+            #     n_step=3, batch_size=self.batch_size
+            # )
+            # obs = []
+            # n_obs = []
+            # for transit in N_Step_T:
+            #     if transit:
+            #         obs.extend(list(transit["obs"].values()))
+            #         n_obs.extend(list(transit["n_obs"].values()))
+            # if len(obs) > 0:
+            #     obs = torch.as_tensor(np.array(obs)).to(self.device)
+            #     n_obs = torch.as_tensor(np.array(n_obs)).to(self.device)
+            #     # self.update_contrastive(obs, n_obs)
+            #     self.update_contrastive_novq(n_obs, obs)
+        # if self.timesteps_done == self.init_steps + 1:
+        #     for _ in range(3):
+        #         # self.cache_goal_transition()
+        #         pass
+
+        steps = self.timesteps_done - self.init_steps
+        if use_shaping:
+            if steps % self.abstract_learn_every == 0 or steps % self.ground_learn_every == 0:
+                obs, act, n_obs, rew, gamma, info = self.memory.sample(self.batch_size)
+                # sample n-step transitions
+                # while True:
+                #     N_Step_T: List[dict] = self.memory.sample_n_step_transits(
+                #         n_step=5, batch_size=self.batch_size
+                #     )
+                #     if N_Step_T[-1] != None:
+                #         break
+                # obs, act, n_obs, rew, gamma, info = [], [], [], [], [], []
+                # for transit in N_Step_T:
+                #     if transit:
+                #         obs.extend(list(transit["obs"].values()))
+                #         act.extend(list(transit["act"].values()))
+                #         n_obs.extend(list(transit["n_obs"].values()))
+                #         rew.extend(list(transit["rew"].values()))
+                #         gamma.extend(list(transit["gamma"].values()))
+                # if len(obs) > 0:
+                #     obs = torch.as_tensor(np.array(obs)).to(self.device)
+                #     n_obs = torch.as_tensor(np.array(n_obs)).to(self.device)
+                #     act = torch.as_tensor(act).unsqueeze(1).to(self.device)
+                #     rew = torch.as_tensor(rew).unsqueeze(1).to(self.device)
+                #     gamma = torch.as_tensor(gamma).unsqueeze(1).to(self.device)
+
+            if steps % self.abstract_learn_every == 0:
+                abs_loss = self.update_absV(
+                    obs, n_obs, rew, gamma, use_vq=False, detach_encoder=False
+                )
+                pass
+            if steps % self.ground_learn_every == 0:
+                # self.update_grdQ(obs, act, n_obs, rew, gamma, use_shaping=True, approach_abs=False)
+                grd_loss = self.update_grdQ(
+                    obs, act, n_obs, rew, gamma, use_vq=False, use_shaping=False, approach_abs=False
+                )
+                # self.update_grdQ_critic(
+                #     obs, act, n_obs, rew, gamma, use_vq=False, approach_abs=False
+                # )
+                pass
+            if steps % self.curl_vq_learn_every == 0:
+                for _ in range(self.curl_vq_gradient_steps):
+                    pass
+                    # [1-step]
+                    # obs, act, n_obs, rew, gamma, info = self.memory.sample(self.batch_size_repre)
+                    # self.update_contrastive(obs, n_obs)
+                    # ct_loss = self.update_contrastive_novq(n_obs, obs)
+                    # [n-step]
                     # N_Step_T: List[dict] = self.memory.sample_n_step_transits(
                     #     n_step=3, batch_size=self.batch_size
                     # )
@@ -1776,46 +1931,40 @@ class HDQN_TCURL_VQ(HDQN):
                     # if len(obs) > 0:
                     #     obs = torch.as_tensor(np.array(obs)).to(self.device)
                     #     n_obs = torch.as_tensor(np.array(n_obs)).to(self.device)
-                    #     self.update_contrastive(obs, n_obs)
-        # if self.timesteps_done == self.init_steps + 1:
-        #     for _ in range(3):
-        #         # self.cache_goal_transition()
-        #         pass
-
-        steps = self.timesteps_done - self.init_steps
-        if use_shaping:
-            if steps % self.abstract_learn_every == 0 or steps % self.ground_learn_every == 0:
-                obs, act, n_obs, rew, gamma, info = self.memory.sample()
-            if steps % self.abstract_learn_every == 0:
-                self.update_absV(obs, n_obs, rew, gamma)
-            if steps % self.ground_learn_every == 0:
-                # self.update_grdQ(obs, act, n_obs, rew, gamma, use_shaping=True, approach_abs=False)
-                self.update_grdQ(obs, act, n_obs, rew, gamma, use_shaping=False, approach_abs=True)
-                pass
-            if steps % self.curl_vq_learn_every == 0:
-                for _ in range(self.curl_vq_gradient_steps):
-                    N_Step_T: List[dict] = self.memory.sample_n_step_transits(
-                        n_step=3, batch_size=self.batch_size
-                    )
-                    obs = []
-                    n_obs = []
-                    for transit in N_Step_T:
-                        if transit:
-                            obs.extend(list(transit["obs"].values()))
-                            n_obs.extend(list(transit["n_obs"].values()))
-                    if len(obs) > 0:
-                        obs = torch.as_tensor(np.array(obs)).to(self.device)
-                        n_obs = torch.as_tensor(np.array(n_obs)).to(self.device)
-                        self.update_contrastive(obs, n_obs)
+                    #     # self.update_contrastive(obs, n_obs)
+                    #     self.update_contrastive_novq(n_obs, obs)
             # if steps > 30000:
             # self.update_grdQ_critic(obs, act, n_obs, rew, gamma)
             # self.update_grdQ_absV(state, action, next_state, reward, gamma, info)
             # [update ground_Q with reward shaping]
+            total_loss = abs_loss + grd_loss
+            self.abs_V_MLP_optimizer.zero_grad(set_to_none=True)
+            self.ground_Q_optimizer.zero_grad(set_to_none=True)
+            self.curl_optimizer.zero_grad(set_to_none=True)
+            total_loss.backward()
+            if self.clip_grad:
+                # 1 clamp gradients to avoid exploding gradient
+                for param in self.abs_V_MLP.parameters():
+                    if param.grad is not None:
+                        param.grad.data.clamp_(-1, 1)
+                for param in self.ground_Q.parameters():
+                    if param.grad is not None:  # make sure grad is not None
+                        param.grad.data.clamp_(-1, 1)
+                for param in self.curl.parameters():
+                    if param.grad is not None:
+                        param.grad.data.clamp_(-1, 1)
+                # 2 Clip gradient norm
+                # max_grad_norm = 10
+                # torch.nn.utils.clip_grad_norm_(self.policy_mlp_net.parameters(), max_grad_norm)
+                # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
 
+            self.abs_V_MLP_optimizer.step()
+            self.ground_Q_optimizer.step()
+            self.curl_optimizer.step()
         else:
             # [purely update ground Q]
             if steps % self.ground_learn_every == 0:
-                obs, act, n_obs, rew, gamma, info = self.memory.sample()
+                obs, act, n_obs, rew, gamma, info = self.memory.sample(self.batch_size)
                 # anc = torch.concat([obs, n_obs], dim=0)
                 # pos = torch.concat([n_obs, obs], dim=0)
                 # anc = obs
