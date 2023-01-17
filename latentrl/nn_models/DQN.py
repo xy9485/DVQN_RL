@@ -165,3 +165,28 @@ class DQN_Repara(nn.Module):
     def forward(self, x: Tensor):
         x, mu, std = self.encoder(x)
         return self.Q_linear(x), x, mu, std
+
+
+class DVN(nn.Module):
+    def __init__(
+        self,
+        encoder: Encoder,
+        mlp_hidden_dim_abs: int | list,
+    ) -> None:
+        super().__init__()
+        self.encoder = encoder
+        self.critic_input_dim = self.encoder.linear_out_dim
+
+        self.critic = MlpModel(
+            input_dim=self.critic_input_dim,
+            hidden_dims=mlp_hidden_dim_abs,
+            output_dim=1,
+            activation=nn.ReLU,
+        )
+
+    def forward(self, x: Tensor, detach_encoder: bool = False):
+        x = self.encoder(x)
+        if detach_encoder:
+            x = x.detach()
+        x = self.critic(x)
+        return x

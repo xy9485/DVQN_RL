@@ -55,36 +55,38 @@ CarRacing-v2:
   env_name: CarRacing-v2
   env_type: CarRacing
   total_timesteps: 300000
-  init_steps: 5000
+  init_steps: 10000
   input_format: full_img
   grd_hidden_channels:
     - 32
     - 64
     - 64
-  use_shaping: False
-  # cluster_embedding_dim: None
+  grd_encoder_linear_dims: 512
   encoded_detach4abs: False
-  grd_embedding_dim: 128
-  num_vq_embeddings: 500
+  use_shaping: True
+  # cluster_embedding_dim: None
+  num_vq_embeddings: 200
   dim_vq_embeddings: 128
-  vq_softmin_beta: 20
-  mlp_hidden_dim_abs: 128
-  mlp_hidden_dim_grd: 128
+  vq_softmin_beta: 10
+  mlp_hidden_dim_abs: 512
+  mlp_hidden_dim_grd: 512
   # lr_ground_Q: 0.0002
   # lr_abstract_V: 0.1
-  lr_ground_Q: 0.0005
-  lr_abstract_V: 0.0005
-  lr_vq: 0.0005
+  lr_ground_Q: lin_5.3e-4
+  lr_abstract_V: lin_5.3e-4
+  lr_vq: lin_5.3e-4
+  lr_curl: lin_5.3e-4
   # lr_encoder: 0.0005
   # lr_decoder: 0.0005
-  batch_size: 256
+  batch_size: 512
   size_replay_memory: 100000
-  gamma: 0.97
+  gamma: 0.99
   abstract_gamma: 0.99
-  omega: 10
-  ground_Q_encoder_tau: 1
-  ground_Q_critic_tau: 1
-  abstract_tau: 1
+  omega: 1
+  ground_Q_encoder_tau: 0.01
+  ground_Q_critic_tau: 0.01
+  abstract_tau: 0.01
+  curl_tau: 0.001
   # encoder_tau: 0.2
   exploration_fraction: 0.9
   exploration_initial_eps: 0.1
@@ -92,18 +94,22 @@ CarRacing-v2:
   save_model_every: 500000.0
   # tcurl_learn_every: 4
   ground_learn_every: 4
-  ground_sync_every: 1000
-  ground_gradient_steps: 1
-  abstract_learn_every: 0
+  ground_sync_every: 8
+  # ground_gradient_steps: 1
+  abstract_learn_every: 4
   abstract_sync_every: 8
-  abstract_gradient_steps: 0
-  clip_grad: True
+  # abstract_gradient_steps: 0
+  curl_vq_learn_every: 1000
+  curl_vq_gradient_steps: 100
+  curl_vq_sync_every: 64
+
+  clip_grad: False
   clip_reward: False
   # wandb_group: AE_KMeans_DQN
   # wandb_group: AE_DQN
-  wandb_group: car_e2e_300k_buf100k_pure#6
+  wandb_group: 300k_B10w_shpSoft_absrelu#2
   # wandb_group: shp_100k_lrabs0.1_tau0.1_aevery4_rrward_mod
-  wandb_notes: total_loss = ground_td_error + vq_loss - entrophy_vq + commit_error_abs2grd + commit_error_grd2abs; vq_softmin_beta 10
+  wandb_notes: nothing
 
   # wandb_tags: ["shp", "omg1", "tbl", "16x16", "(1,1)"]
 

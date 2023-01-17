@@ -59,7 +59,8 @@ ALE/Breakout-v5:
 
 Atari:
   env_type: Atari
-  domain_name: "ALE/Asterix-v5" #Asterix-v5; Freeway-v5; MsPacman-v5; Seaquest-v5; Breakout-v5
+  domain_name: "ALE/Asterix-v5"
+  #Asterix-v5; Freeway-v5; MsPacman-v5; Seaquest-v5; Breakout-v5; Boxing-v5; Riverraid-v5; Pong-v5; Frostbite-v5
   total_timesteps: 100000
   init_steps: 10000
   input_format: full_img
@@ -68,6 +69,7 @@ Atari:
     - 64
     - 64
   grd_encoder_linear_dims: null
+  abs_encoder_linear_dims: null
   encoded_detach4abs: False
   use_shaping: True
   # cluster_embedding_dim: None
@@ -82,17 +84,19 @@ Atari:
   lr_abstract_V: 0.0001
   lr_vq: 0.0001
   lr_curl: 0.0001
+  safe_ratio: lin_1.0
   # lr_encoder: 0.0005
   # lr_decoder: 0.0005
-  batch_size: 32
-  batch_size_repre: 32
+  batch_size: 128
+  batch_size_repre: 128
   size_replay_memory: 100000
   gamma: 0.99
   abstract_gamma: 0.99
   omega: 1
   ground_Q_encoder_tau: 1
   ground_Q_critic_tau: 1
-  abstract_tau: 1
+  abstract_V_encoder_tau: 1
+  abstract_V_critic_tau: 1
   curl_tau: 1
   # encoder_tau: 0.2
   exploration_fraction: 0.9
@@ -113,7 +117,8 @@ Atari:
   clip_reward: True
   # wandb_group: AE_KMeans_DQN
   # wandb_group: AE_DQN
-  wandb_group: ALE/Asterix-v5_10w_B10w_close17
+  wandb_group: 10w_B10w_safe0-1
+  # wandb_group: ALE/Asterix-v5_10w_B10w_close+ct21
   # wandb_group: shp_100k_lrabs0.1_tau0.1_aevery4_rrward_mod
   wandb_notes: HDQN;no vq; with contrastive learning; n_step_return=5
   # wandb_tags: ["shp", "omg1", "tbl", "16x16", "(1,1)"]

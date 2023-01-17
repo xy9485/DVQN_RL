@@ -538,6 +538,13 @@ def make_encoder(
             observation_space=observation_space,
             hidden_channels=hidden_channels,
         )
+    elif input_format == "full_img_small":
+        encoder = Encoder_MinAtar(
+            input_channels=input_channels,
+            linear_dims=linear_dims,
+            observation_space=observation_space,
+            hidden_channels=hidden_channels,
+        )
     else:
         raise NotImplementedError
 

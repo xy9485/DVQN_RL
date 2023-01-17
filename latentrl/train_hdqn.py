@@ -888,10 +888,10 @@ def train_adaptive_absT_grdTN():
 
     # cfg_key = "MiniGrid-Empty-RGB"
     # cfg_key = "MiniGrid-Empty-v0"
-    # cfg_key = "MiniGrid-FourRooms-v0"
+    cfg_key = "MiniGrid-FourRooms-v0"
     # cfg_key = "MiniGrid-Crossing-v0"
     # cfg_key = "MiniGrid-DistShift-v0"
-    cfg_key = "MiniGrid-Custom"
+    # cfg_key = "MiniGrid-Custom"
     # load hyperparameters from yaml config file
     with open(
         "/workspace/repos_dev/VQVAE_RL/hyperparams/minigrid/adaptive_abstraction_vq.yaml"
@@ -907,7 +907,7 @@ def train_adaptive_absT_grdTN():
             # project="HDQN_AbsTable_GrdNN_Empty",
             # project="HDQN_AbsTable_GrdNN_4Rooms",
             project=f"HDQN_{cfg_key}",
-            mode="disabled",
+            # mode="disabled",
             group=cfg["wandb_group"],
             tags=[
                 # "tbl",
@@ -927,7 +927,7 @@ def train_adaptive_absT_grdTN():
         # agent = HDQN_AdaptiveAbs_VQ(config, env)
         agent = HDQN_TCURL_VQ(config, env)
         wandb.watch(agent.vq, log="all", log_freq=100, idx=0)
-        wandb.watch(agent.abs_V_MLP, log="all", log_freq=100, idx=1)
+        wandb.watch(agent.abs_V, log="all", log_freq=100, idx=1)
         wandb.watch(agent.ground_Q, log="all", log_freq=100, idx=2)
         wandb.watch(agent.curl, log="all", log_freq=100, idx=3)
 
@@ -1047,16 +1047,16 @@ def train_adaptive_absT_grdTN():
                         plot_every = 30
 
                     if agent.episodes_done > 0 and agent.episodes_done % plot_every == 0:
-                        # agent.vis_grd_visits(norm_log=50)
+                        agent.vis_grd_visits(norm_log=50)
                         # agent.vis_grd_visits(norm_log=0)
                         pass
                         if agent.timesteps_done >= config.init_steps:
-                            # agent.vis_grd_q_values(reduction_mode="max", norm_log=50)
+                            agent.vis_grd_q_values(reduction_mode="max", norm_log=50)
                             # agent.vis_grd_q_values(reduction_mode="mean", norm_log=50)
                             # agent.vis_reward_distribution()
-                            # agent.vis_abstraction()
-                            # agent.vis_abstract_values(mode="soft")
-                            # agent.vis_abstract_values(mode="hard")
+                            agent.vis_abstraction()
+                            agent.vis_abstract_values(mode="soft")
+                            agent.vis_abstract_values(mode="hard")
                             # agent.vis_abstract_values(mode="target_soft")
                             # agent.vis_abstract_values(mode="target_hard")
                             # agent.vis_shaping_distribution(norm_log=100)
@@ -1225,9 +1225,10 @@ def train_atari_absT_grdN():
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
         current_time = current_time.strftime("%b%d_%H-%M-%S")
         # 🐝 initialise a wandb run
+        project_name = cfg["domain_name"].replace("ALE/", "")
         run = wandb.init(
             # project="HDQN_AbsTable_GrdNN_Atari",
-            project="HDQN_Atari",
+            project=f"HDQN_Atari_{project_name}",
             # project="HDQN_MinAtar",
             # project="HDQN_Neo_Carracing",
             # mode="disabled",
@@ -1247,7 +1248,7 @@ def train_atari_absT_grdN():
         # agent = HDQN_Pixel(config, env)
         agent = HDQN_TCURL_VQ(config, env)
         wandb.watch(agent.vq, log="all", log_freq=100, idx=0)
-        wandb.watch(agent.abs_V_MLP, log="all", log_freq=100, idx=1)
+        wandb.watch(agent.abs_V, log="all", log_freq=100, idx=1)
         wandb.watch(agent.ground_Q, log="all", log_freq=100, idx=2)
         wandb.watch(agent.curl, log="all", log_freq=100, idx=3)
 
@@ -1472,8 +1473,8 @@ if __name__ == "__main__":
     # train_hdqn()
     # train_dqn_kmeans()
     # train_manual_absT_grdTN()
-    # train_adaptive_absT_grdTN()
-    train_atari_absT_grdN()
+    train_adaptive_absT_grdTN()
+    # train_atari_absT_grdN()
 
     # env = make_env_minigrid(env_id="MiniGrid-Empty-6x6-v0")
     # print(env.observation_space.shape)

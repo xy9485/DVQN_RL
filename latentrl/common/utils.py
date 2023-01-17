@@ -108,7 +108,7 @@ class ProcessFrame:
         return np.array(obs)
 
 
-def linear_schedule(initial_value: float) -> Callable[[float], float]:
+def linear_schedule(initial_value: float, reduce: bool = True) -> Callable[[float], float]:
     """
     Linear learning rate schedule.
 
@@ -124,7 +124,10 @@ def linear_schedule(initial_value: float) -> Callable[[float], float]:
         :param progress_remaining:
         :return: current learning rate
         """
-        return progress_remaining * initial_value
+        if reduce:
+            return progress_remaining * initial_value
+        else:
+            return (1 - progress_remaining) * initial_value
 
     return func
 

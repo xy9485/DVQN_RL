@@ -12,13 +12,12 @@ from nn_models.components import ConvBlock, ResidualLayer
 
 
 class Encoder(nn.Module):
-    def __init__(self, linear_dims: int | list | None, output_logits: bool = True) -> None:
+    def __init__(self, linear_dims: int | list | None) -> None:
         super().__init__()
         self.linear_dims = linear_dims
         self.linear_out_dim = None
-        self.output_logits = output_logits
 
-    def maybe_add_linear_module(self, layer_norm=False) -> None:
+    def maybe_add_linear_module(self, output_logits=True) -> None:
         self.blocks.append(nn.Flatten())
         if self.linear_dims is None:
             self.linear_out_dim = self.cnn_flatten_dim
@@ -27,7 +26,7 @@ class Encoder(nn.Module):
             # self.linear_dims = [self.linear_dims]
             self.blocks.append(nn.Linear(self.cnn_flatten_dim, self.linear_dims))
             self.blocks.append(nn.LayerNorm(self.linear_dims))
-            if not self.output_logits:
+            if not output_logits:
                 self.blocks.append(nn.Tanh())
             self.linear_out_dim = self.linear_dims
             return
@@ -37,7 +36,7 @@ class Encoder(nn.Module):
 
         self.blocks.append(nn.Linear(self.linear_dims[-1], self.linear_dims[-1]))
         self.blocks.append(nn.LayerNorm(self.linear_dims[-1]))
-        if not self.output_logits:
+        if not output_logits:
             self.blocks.append(nn.Tanh())
 
         self.linear_out_dim = self.linear_dims[-1]
@@ -114,7 +113,7 @@ class EncoderImg(Encoder):
         #     self.shape_conv_output = x.shape
 
         #     self.n_flatten = nn.Flatten()(x).shape[1]
-        self.maybe_add_linear_module()
+        self.maybe_add_linear_module(output_logits=True)
         # if self.linear_dims:
         #     self.blocks.extend(
         #         [

@@ -20,23 +20,14 @@ class CURL(nn.Module):
 
         self.encoder = encoder
         self.encoder_target = encoder_target
-        self.encoder_target.load_state_dict(self.encoder.state_dict())
         z_dim = self.encoder.linear_out_dim
         if anchor_mlp_hidden_dims is not None:
             self.anchor_MLP = MlpModel(z_dim, anchor_mlp_hidden_dims, z_dim)
         else:
             self.anchor_MLP = None
 
-        # n_redisual_layers = 2
-        # residual_blocks = [nn.ReLU()]
-        # # for _ in range(n_redisual_layers):
-        # residual_blocks.append(ResidualLinearLayer(dim_in=z_dim, dim_out=z_dim))
-        # residual_blocks.append(nn.ReLU())
-        # residual_blocks.append(ResidualLinearLayer(dim_in=z_dim, dim_out=z_dim))
-        # self.residual_module = nn.Sequential(*residual_blocks)
-
         self.W = nn.Parameter(torch.rand(z_dim, z_dim))
-        # self.ln = nn.LayerNorm(z_dim)
+        self.ln = nn.LayerNorm(z_dim)
 
     def encode_anchor(self, x):
 
