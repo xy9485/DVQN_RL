@@ -161,10 +161,10 @@ MiniGrid-FourRooms-v0:
   mlp_hidden_dim_grd: [64, 64]
   # lr_ground_Q: 0.0002
   # lr_abstract_V: 0.1
-  lr_ground_Q: lin_0.0006
-  lr_abstract_V: lin_0.0006
-  lr_vq: lin_0.0006
-  lr_curl: lin_0.0006
+  lr_ground_Q: lin_0.0003
+  lr_abstract_V: lin_0.0003
+  lr_vq: lin_0.0003
+  lr_curl: lin_0.0003
   safe_ratio: 0.0
   # lr_encoder: 0.0005
   # lr_decoder: 0.0005
@@ -174,10 +174,10 @@ MiniGrid-FourRooms-v0:
   gamma: 0.99
   abstract_gamma: 0.99
   omega: 1
-  ground_Q_encoder_tau: 0.001
-  ground_Q_critic_tau: 0.001
-  abstract_V_encoder_tau: 0.001
-  abstract_V_critic_tau: 0.001
+  ground_Q_encoder_tau: 0.01
+  ground_Q_critic_tau: 0.01
+  abstract_V_encoder_tau: 1
+  abstract_V_critic_tau: 1
   curl_tau: 0.001
   # encoder_tau: 0.2
 

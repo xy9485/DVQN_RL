@@ -25,7 +25,10 @@ class Encoder(nn.Module):
         if isinstance(self.linear_dims, int):
             # self.linear_dims = [self.linear_dims]
             self.blocks.append(nn.Linear(self.cnn_flatten_dim, self.linear_dims))
-            self.blocks.append(nn.LayerNorm(self.linear_dims))
+            # self.blocks.append(nn.LayerNorm(self.linear_dims))
+            self.blocks.append(nn.ReLU())
+            # self.blocks.append(nn.Sigmoid())
+            # self.blocks.append(nn.Tanh())
             if not output_logits:
                 self.blocks.append(nn.Tanh())
             self.linear_out_dim = self.linear_dims

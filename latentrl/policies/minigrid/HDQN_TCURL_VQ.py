@@ -977,14 +977,14 @@ class HDQN_TCURL_VQ(HDQN):
         # self.abstract_V_optimizer = optim.RMSprop(
         #     self.ground_Q_net.parameters(), lr=lr_abstract_V, alpha=0.95, momentum=0.95, eps=0.01
         # )
-        # self.curl_optimizer = optim.Adam(self.curl.parameters(), lr=self.lr_curl)
-        # self.vq_optimizer = optim.Adam(self.vq.parameters(), lr=self.lr_vq)
-        # self.abs_V_optimizer = optim.Adam(self.abs_V.parameters(), lr=self.lr_abs_V)
-        # self.ground_Q_optimizer = optim.Adam(self.ground_Q.parameters(), lr=self.lr_grd_Q)
-        self.curl_optimizer = optim.RMSprop(self.curl.parameters(), lr=self.lr_curl)
-        self.vq_optimizer = optim.RMSprop(self.vq.parameters(), lr=self.lr_vq)
-        self.abs_V_optimizer = optim.RMSprop(self.abs_V.parameters(), lr=self.lr_abs_V)
-        self.ground_Q_optimizer = optim.RMSprop(self.ground_Q.parameters(), lr=self.lr_grd_Q)
+        self.curl_optimizer = optim.Adam(self.curl.parameters(), lr=self.lr_curl)
+        self.vq_optimizer = optim.Adam(self.vq.parameters(), lr=self.lr_vq)
+        self.abs_V_optimizer = optim.Adam(self.abs_V.parameters(), lr=self.lr_abs_V)
+        self.ground_Q_optimizer = optim.Adam(self.ground_Q.parameters(), lr=self.lr_grd_Q)
+        # self.curl_optimizer = optim.RMSprop(self.curl.parameters(), lr=self.lr_curl)
+        # self.vq_optimizer = optim.RMSprop(self.vq.parameters(), lr=self.lr_vq)
+        # self.abs_V_optimizer = optim.RMSprop(self.abs_V.parameters(), lr=self.lr_abs_V)
+        # self.ground_Q_optimizer = optim.RMSprop(self.ground_Q.parameters(), lr=self.lr_grd_Q)
         # self.curl_optimizer = optim.RMSprop(
         #     self.curl.parameters(), lr=self.lr_curl, alpha=0.95, centered=True, eps=0.01
         # )
@@ -1409,9 +1409,10 @@ class HDQN_TCURL_VQ(HDQN):
         #     obs = self.aug(obs)
         #     n_obs = self.aug(n_obs)
         if use_vq:
-            with torch.no_grad():
-                encoded = self.abs_V.encoder(obs)
-                encoded, _, _, _ = self.vq(encoded)
+            encoded = self.abs_V.encoder(obs)
+            encoded, _, _, _ = self.vq(encoded)
+            if detach_encoder:
+                encoded = encoded.detach()
             abs_v = self.abs_V.critic(encoded)
             with torch.no_grad():
                 n_encoded = self.abs_V.encoder(n_obs)
@@ -1604,21 +1605,36 @@ class HDQN_TCURL_VQ(HDQN):
         # pos = F.normalize(pos, dim=1)
 
         vq_entropy = anc_entrophy_vq + pos_entrophy_vq
-        # Normalize first
-        codebook = F.normalize(self.vq.embedding.weight, dim=1)
-        # or
-        # codebook = self.vq.embedding.weight
+
+        # Normalize the codebook first
+        # codebook = F.normalize(self.vq.embedding.weight, dim=1)
+        # or not
+        codebook = self.vq.embedding.weight
 
         cb_diversity = torch.matmul(codebook, codebook.T)
-        mask1 = torch.ones(cb_diversity.shape) - torch.eye(cb_diversity.shape[0])
-        mask1 = mask1.float().to(self.device)
-        # mask1 = ~torch.eye(codebook.shape[0], dtype=torch.bool, device=self.device)
-        cb_diversity = torch.norm(cb_diversity * mask1)
-
-        # cb_diversity = cb_diversity[mask1].mean()
+        # Using mean() only makes sense when the codebook is of non-negative vectors
         # cb_diversity = cb_diversity.mean()
         # cb_diversity = torch.einsum("ij,mj->im", [codebook, codebook]).mean()
 
+        # Or like below, cb_diversity=(W*W_T - I), like below:
+        I = torch.eye(cb_diversity.shape[0])
+        I = I.float().to(self.device)
+        cb_diversity = torch.sum(torch.abs((cb_diversity - I)))
+        cb_diversity = torch.linalg.norm((cb_diversity - I))
+
+        # Or a less constrained loss, cb_diversity=(W*W_T*(1-I)),like below:
+        # mask1 = torch.ones(cb_diversity.shape) - torch.eye(cb_diversity.shape[0])
+        # mask1 = mask1.float().to(self.device)
+        # cb_diversity = torch.sum(torch.abs((cb_diversity * mask1)))
+        # cb_diversity = torch.linalg.norm(cb_diversity * mask1)
+
+        # Another way to do the loss above:
+        # mask1 = ~torch.eye(codebook.shape[0], dtype=torch.bool, device=self.device)
+        # cb_diversity = cb_diversity[mask1].mean()
+        # cb_diversity = torch.sum(torch.abs(cb_diversity[mask1]))
+        # cb_diversity = torch.linalg.norm(cb_diversity[mask1])
+
+        # Compute the negative diversity
         mask2 = ~torch.eye(anc.shape[0], dtype=torch.bool, device=self.device)
         neg_diversity = (
             torch.matmul(anc, anc.T)[mask2].mean() + torch.matmul(pos, pos.T)[mask2].mean()
@@ -1638,7 +1654,14 @@ class HDQN_TCURL_VQ(HDQN):
             contrast_acc = torch.mean(correct.float())
         # loss2 = self.push_away(pos)
 
-        total_loss = loss1 * 1.0 + cb_diversity * 0.5 - vq_entropy * 0.25 + neg_diversity * 0.0
+        total_loss = (
+            loss1 * 1.0
+            + cb_diversity * 0.5
+            - vq_entropy * 0.25
+            + neg_diversity * 0.0
+            + anc_vq_loss * 0.1
+            + pos_vq_loss * 0.1
+        )
         # total_loss = loss1 - vq_entropy * 0.5
         # total_loss = loss1 + loss2 - anc_entrophy_vq * 0.5 - pos_entrophy_vq * 0.5
 
@@ -1953,23 +1976,23 @@ class HDQN_TCURL_VQ(HDQN):
                     pass
                     # [1-step]
                     # obs, act, n_obs, rew, gamma, info = self.memory.sample(self.batch_size_repre)
-                    self.update_contrastive(obs, n_obs)
+                    # self.update_contrastive(obs, n_obs)
                     # ct_loss = self.update_contrastive_novq(n_obs, obs)
                     # [n-step]
-                    # N_Step_T: List[dict] = self.memory.sample_n_step_transits(
-                    #     n_step=3, batch_size=self.batch_size
-                    # )
-                    # obs = []
-                    # n_obs = []
-                    # for transit in N_Step_T:
-                    #     if transit:
-                    #         obs.extend(list(transit["obs"].values()))
-                    #         n_obs.extend(list(transit["n_obs"].values()))
-                    # if len(obs) > 0:
-                    #     obs = torch.as_tensor(np.array(obs)).to(self.device)
-                    #     n_obs = torch.as_tensor(np.array(n_obs)).to(self.device)
-                    #     # self.update_contrastive(obs, n_obs)
-                    #     self.update_contrastive_novq(n_obs, obs)
+                    N_Step_T: List[dict] = self.memory.sample_n_step_transits(
+                        n_step=3, batch_size=self.batch_size
+                    )
+                    obs = []
+                    n_obs = []
+                    for transit in N_Step_T:
+                        if transit:
+                            obs.extend(list(transit["obs"].values()))
+                            n_obs.extend(list(transit["n_obs"].values()))
+                    if len(obs) > 0:
+                        obs = torch.as_tensor(np.array(obs)).to(self.device)
+                        n_obs = torch.as_tensor(np.array(n_obs)).to(self.device)
+                        self.update_contrastive(obs, n_obs)
+                        # self.update_contrastive_novq(n_obs, obs)
             # if steps > 30000:
             # self.update_grdQ_critic(obs, act, n_obs, rew, gamma)
             # self.update_grdQ_absV(state, action, next_state, reward, gamma, info)

@@ -919,7 +919,7 @@ def train_adaptive_absT_grdTN():
             notes=cfg["wandb_notes"],
             config=cfg,
         )
-        # wandb.run.log_code(".")
+        wandb.run.log_code(".")
         config = wandb.config
         make_env = MAKE_ENV_FUNCS[config.env_type]
         env = make_env(config, cfg_key)
@@ -1052,7 +1052,7 @@ def train_adaptive_absT_grdTN():
                         pass
                         if agent.timesteps_done >= config.init_steps:
                             agent.vis_grd_q_values(reduction_mode="max", norm_log=50)
-                            # agent.vis_grd_q_values(reduction_mode="mean", norm_log=50)
+                            agent.vis_grd_q_values(reduction_mode="mean", norm_log=50)
                             # agent.vis_reward_distribution()
                             agent.vis_abstraction()
                             agent.vis_abstract_values(mode="soft")

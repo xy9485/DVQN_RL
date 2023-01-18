@@ -182,6 +182,7 @@ class DVN(nn.Module):
             hidden_dims=mlp_hidden_dim_abs,
             output_dim=1,
             activation=nn.ReLU,
+            # activation=None,
         )
 
     def forward(self, x: Tensor, detach_encoder: bool = False):
