@@ -29,11 +29,12 @@ from common.utils import (
     update_learning_rate,
     wandb_log_image,
 )
+from common.Logger import Logger, LoggerWandb
 from minigrid import Wall
 
 
 class HDQN(nn.Module):
-    def __init__(self, config, env: gym.Env) -> None:
+    def __init__(self, config, env: gym.Env, logger: LoggerWandb) -> None:
         super().__init__()
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -54,6 +55,7 @@ class HDQN(nn.Module):
         # self.aug = RandomShiftsAug(pad=4)
 
         self.outputs = dict()
+        self.L = logger
         # self.apply(weight_init)
 
         # Initialize experience replay buffer
@@ -77,9 +79,6 @@ class HDQN(nn.Module):
         # self.train()
 
     def train(self, training=True):
-        raise NotImplementedError
-
-    def reset_training_info(self):
         raise NotImplementedError
 
     def log_training_info(self, wandb_log=True):

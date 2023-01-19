@@ -58,6 +58,8 @@ from policies.utils import (
     transition_np2torch,
     make_encoder,
 )
+from common.Logger import LoggerWandb, Logger
+
 from sklearn.cluster import KMeans
 from sympy.solvers import solve
 from torch import Tensor, nn
@@ -68,8 +70,8 @@ from minigrid import Wall
 
 
 class HDQN_TCURL_VQ(HDQN):
-    def __init__(self, config, env):
-        super().__init__(config, env)
+    def __init__(self, config, env, logger: LoggerWandb):
+        super().__init__(config, env, logger)
         # self.set_hparams(config)
         self.ground_Q = DQN(
             # observation_space=env.observation_space,
@@ -185,32 +187,11 @@ class HDQN_TCURL_VQ(HDQN):
 
         self._create_optimizers(config)
         self.train()
-        self.reset_training_info()
 
     def train(self, training=True):
         self.training = training
         self.ground_Q.train(training)
         self.abs_V.train(training)
-
-    def reset_training_info(self):
-        self.training_info = {
-            "ground_Q_error": [],
-            "abstract_V_error": [],
-            "avg_shaping": [],
-            "entrophy_vq": [],
-            "vq_loss": [],
-            "absV_grdQ(rd)_l1": [],
-            "absV_grdQ(rd)_l2": [],
-            "total_loss": [],
-            "contrastive_loss": [],
-            "contrast_acc": [],
-            "cluster_metrics": [],
-            "cb_diversity": [],
-            "neg_diversity": [],
-            "abs_v": [],
-            "grd_q": [],
-            "grd_q_mean": [],
-        }
 
     def set_hparams(self, config):
         # Hyperparameters
@@ -247,94 +228,11 @@ class HDQN_TCURL_VQ(HDQN):
         self.num_vq_embeddings = config.num_vq_embeddings
         # self.dim_vq_embeddings = config.dim_vq_embeddings
 
-        self.reset_training_info_every = config.reset_training_info_every
         self.clip_grad = config.clip_grad
         self.clip_reward = config.clip_reward
         self.encoded_detach4abs = config.encoded_detach4abs
         self.input_format = config.input_format
         self.use_shaping = config.use_shaping
-
-    def log_training_info(self, wandb_log=True):
-        if wandb_log:
-            metrics = {
-                "Info/ground_Q_error": mean(self.training_info["ground_Q_error"])
-                if len(self.training_info["ground_Q_error"]) > 0
-                else 0,
-                "Info/abstract_V_error": mean(self.training_info["abstract_V_error"])
-                if len(self.training_info["abstract_V_error"])
-                else 0,
-                "Info/avg_shaping": mean(self.training_info["avg_shaping"])
-                if len(self.training_info["avg_shaping"])
-                else 0,
-                "Info/entrophy_vq": mean(self.training_info["entrophy_vq"])
-                if len(self.training_info["entrophy_vq"])
-                else 0,
-                "Info/vq_loss": mean(self.training_info["vq_loss"])
-                if len(self.training_info["vq_loss"])
-                else 0,
-                "Info/absV_grdQ(rd)_l1": mean(self.training_info["absV_grdQ(rd)_l1"])
-                if len(self.training_info["absV_grdQ(rd)_l1"])
-                else 0,
-                "Info/absV_grdQ(rd)_l2": mean(self.training_info["absV_grdQ(rd)_l2"])
-                if len(self.training_info["absV_grdQ(rd)_l2"])
-                else 0,
-                "Info/total_loss": mean(self.training_info["total_loss"])
-                if len(self.training_info["total_loss"])
-                else 0,
-                "Info/contrastive_loss": mean(self.training_info["contrastive_loss"])
-                if len(self.training_info["contrastive_loss"])
-                else 0,
-                "Info/contrast_acc": mean(self.training_info["contrast_acc"])
-                if len(self.training_info["contrast_acc"])
-                else 0,
-                "Info/cluster_metrics": mean(self.training_info["cluster_metrics"])
-                if len(self.training_info["cluster_metrics"])
-                else 0,
-                "Info/codebook_diversity": mean(self.training_info["cb_diversity"])
-                if len(self.training_info["cb_diversity"])
-                else 0,
-                "Info/neg_diversity": mean(self.training_info["neg_diversity"])
-                if len(self.training_info["neg_diversity"])
-                else 0,
-                "Info/abs_v": mean(self.training_info["abs_v"])
-                if len(self.training_info["abs_v"])
-                else 0,
-                "Info/grd_q": mean(self.training_info["grd_q"])
-                if len(self.training_info["grd_q"])
-                else 0,
-                "Info/grd_q_mean": mean(self.training_info["grd_q_mean"])
-                if len(self.training_info["grd_q_mean"])
-                else 0,
-                # "info/timesteps_done": self.timesteps_done,
-                # "info/episodes_done": self.episodes_done,
-                "HP/exploration_rate": self.exploration_rate,
-                "HP/current_progress_remaining": self._current_progress_remaining,
-                # "lr/lr_ground_Q_optimizer": self.ground_Q_optimizer.param_groups[0]["lr"],
-                # "lr/lr_abstract_V_optimizer": self.abstract_V_optimizer.param_groups[0]["lr"],
-                "HP/lr_ground_Q": self.lr_grd_Q,
-                "HP/lr_abstract_V": self.lr_abs_V,
-                "HP/lr_vq": self.lr_vq,
-                "HP/safe_ratio": self.safe_ratio,
-                "time/timesteps_done": self.timesteps_done,
-                "time/episodes_done": self.episodes_done,
-            }
-            wandb.log(metrics)
-
-            # print("logging training info:")
-            # pp(metrics)
-
-    def reset_abs_V(
-        self,
-    ):
-        self.abs_V = V_MLP(
-            input_dim=self.curl.encoder.linear_out_dim or self.curl.encoder.n_flatten,
-            mlp_hidden_dim_abs=self.mlp_hidden_dim_abs,
-        ).to(self.device)
-        self.abs_V_target = V_MLP(
-            input_dim=self.curl.encoder_target.linear_out_dim or self.curl.encoder_target.n_flatten,
-            mlp_hidden_dim_abs=self.mlp_hidden_dim_abs,
-        ).to(self.device)
-        self.abs_V_target.load_state_dict(self.abs_V.state_dict())
 
     @torch.no_grad()
     def encode_state(self, state):
@@ -507,6 +405,7 @@ class HDQN_TCURL_VQ(HDQN):
         )
         img = Image.open(img_buffer)
         wandb.log({"Images/abstraction": wandb.Image(img)})
+        self.L.log_img("Images/abstraction", img)
         img_buffer.close()
         plt.close(fig_abs)
 
@@ -601,7 +500,8 @@ class HDQN_TCURL_VQ(HDQN):
         # wandb.define_metric("Images/time_steps_done")
         # wandb.define_metric("Images/abs_values", step_metric="Images/time_steps_done")
         img = Image.open(img_buffer)
-        wandb.log({f"Images/abs_values_{mode}": wandb.Image(img)})
+        # wandb.log({f"Images/abs_values_{mode}": wandb.Image(img)})
+        self.L.log_img(f"Images/abs_values_{mode}", img)
         img_buffer.close()
         plt.close(fig_abs_v)
 
@@ -698,7 +598,8 @@ class HDQN_TCURL_VQ(HDQN):
         # wandb.define_metric("Images/time_steps_done")
         # wandb.define_metric("Images/abs_values", step_metric="Images/time_steps_done")
         img = Image.open(img_buffer)
-        wandb.log({f"Images/grd_values_{reduction_mode}": wandb.Image(img)})
+        # wandb.log({f"Images/grd_values_{reduction_mode}": wandb.Image(img)})
+        self.L.log_img(f"Images/grd_values_{reduction_mode}", img)
         img_buffer.close()
         plt.close(fig_abs_v)
 
@@ -776,7 +677,8 @@ class HDQN_TCURL_VQ(HDQN):
         img = Image.open(img_buffer)
         # print("save visits img")
         # img.save("/workspace/repos_dev/VQVAE_RL/figures/minigrid_abstraction/grd_visits.png")
-        wandb.log({f"Images/grd_visits_log{norm_log}_{suffix}": wandb.Image(img)})
+        # wandb.log({f"Images/grd_visits_log{norm_log}_{suffix}": wandb.Image(img)})
+        self.L.log_img(f"Images/grd_visits_log{norm_log}_{suffix}", img)
         img_buffer.close()
         plt.close(fig_grd_visits)
 
@@ -1163,13 +1065,13 @@ class HDQN_TCURL_VQ(HDQN):
         #         info_i["agent_pos2"][1], info_i["agent_pos2"][0], info_i["agent_dir2"]
         #     ] += shaping[i]
 
-        self.training_info["ground_Q_error"].append(ground_td_error.item())
-        self.training_info["abstract_V_error"].append(abs_td_error.item())
-        self.training_info["entrophy_vq"].append(entrophy_vq.item())
-        self.training_info["vq_loss"].append(vq_loss.item())
-        self.training_info["absV_grdQ(rd)_l1"].append(diff_l1_abs_grd.item())
-        self.training_info["absV_grdQ(rd)_l2"].append(diff_l2_abs_grd.item())
-        self.training_info["total_loss"].append(total_loss.item())
+        # self.training_info["ground_Q_error"].append(ground_td_error.item())
+        # self.training_info["abstract_V_error"].append(abs_td_error.item())
+        # self.training_info["entrophy_vq"].append(entrophy_vq.item())
+        # self.training_info["vq_loss"].append(vq_loss.item())
+        # self.training_info["absV_grdQ(rd)_l1"].append(diff_l1_abs_grd.item())
+        # self.training_info["absV_grdQ(rd)_l2"].append(diff_l2_abs_grd.item())
+        # self.training_info["total_loss"].append(total_loss.item())
         # self.training_info["avg_shaping"].append(torch.mean(shaping).item())
 
     def update_grdQ(
@@ -1225,7 +1127,7 @@ class HDQN_TCURL_VQ(HDQN):
                 # shaping = abs_v_next_hard - abs_v_hard
                 shaping = n_abs_v - abs_v
                 grd_q_target += self.omega * shaping
-                self.training_info["avg_shaping"].append(shaping.mean().item())
+                self.L.log({"avg_shaping": shaping.mean().item()})
             # mask = (quantized != quantized_next).any(dim=1).unsqueeze(1)
             # mask = mask | (reward != 0)
             # mask = mask.float()
@@ -1299,15 +1201,15 @@ class HDQN_TCURL_VQ(HDQN):
         #         info_i["agent_pos2"][1], info_i["agent_pos2"][0], info_i["agent_dir2"]
         #     ] += shaping[i]
 
-        self.training_info["ground_Q_error"].append(ground_td_error.item())
-        self.training_info["grd_q"].append(grd_q.mean().item())
-        self.training_info["grd_q_mean"].append(grd_q_reduction.mean().item())
-        # self.training_info["abstract_V_error"].append(abs_td_error.item())
-        # self.training_info["entrophy_vq"].append(entrophy_vq.item())
-        # self.training_info["vq_loss"].append(vq_loss.item())
-        self.training_info["absV_grdQ(rd)_l1"].append(diff_l1_abs_grd.item())
-        self.training_info["absV_grdQ(rd)_l2"].append(diff_l2_abs_grd.item())
-        # self.training_info["total_loss"].append(total_loss.item())
+        metric = {
+            "Training_Info/update_grdQ/ground_Q_error": ground_td_error.item(),
+            "Training_Info/update_grdQ/update_Q total_loss": total_loss.item(),
+            "Training_Info/update_grdQ/grd_q": grd_q.mean().item(),
+            "Training_Info/update_grdQ/grd_q_mean": grd_q_reduction.mean().item(),
+            "Training_Info/update_grdQ/absV_grdQ_l1": diff_l1_abs_grd.item(),
+            "Training_Info/update_grdQ/absV_grdQ_l2": diff_l2_abs_grd.item(),
+        }
+        self.L.log(metric)
 
         return total_loss
 
@@ -1388,7 +1290,7 @@ class HDQN_TCURL_VQ(HDQN):
             # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
         self.ground_Q_optimizer.step()
 
-        self.training_info["ground_Q_error"].append(ground_td_error.item())
+        # self.training_info["ground_Q_error"].append(ground_td_error.item())
         # self.training_info["abstract_V_error"].append(abs_td_error.item())
         # self.training_info["entrophy_vq"].append(entrophy_vq.item())
         # self.training_info["vq_loss"].append(vq_loss.item())
@@ -1428,8 +1330,8 @@ class HDQN_TCURL_VQ(HDQN):
         # mask = mask.float()
         # abs_v_target = abs_v_target * mask + abs_v * (1 - mask)
         # criterion = F.smooth_l1_loss
-        # criterion = F.mse_loss
-        criterion = nn.SmoothL1Loss()
+        criterion = F.mse_loss
+        # criterion = nn.SmoothL1Loss()
         abs_td_error = criterion(abs_v, abs_v_target)
 
         self.abs_V_optimizer.zero_grad(set_to_none=True)
@@ -1446,10 +1348,11 @@ class HDQN_TCURL_VQ(HDQN):
             # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
 
         self.abs_V_optimizer.step()
-
-        # self.training_info["abstract_V_error"].append((abs_v_target - abs_v).mean().item())
-        self.training_info["abstract_V_error"].append(abs_td_error.item())
-        self.training_info["abs_v"].append(abs_v.mean().item())
+        metric = {
+            "Training_Info/update_absV/abstract_V_error": abs_td_error.item(),
+            "Training_Info/update_absV/abs_v": abs_v.mean().item(),
+        }
+        self.L.log(metric)
 
         return abs_td_error
 
@@ -1490,8 +1393,6 @@ class HDQN_TCURL_VQ(HDQN):
                 # else:
                 self.abs_V_array[abs_idx] += self.lr_abs_V * delta
                 delta_l.append(delta)
-
-        self.training_info["abstract_V_error"].append(mean(delta_l))
 
         return mean(delta_l)
 
@@ -1617,10 +1518,10 @@ class HDQN_TCURL_VQ(HDQN):
         # cb_diversity = torch.einsum("ij,mj->im", [codebook, codebook]).mean()
 
         # Or like below, cb_diversity=(W*W_T - I), like below:
-        I = torch.eye(cb_diversity.shape[0])
-        I = I.float().to(self.device)
-        cb_diversity = torch.sum(torch.abs((cb_diversity - I)))
-        cb_diversity = torch.linalg.norm((cb_diversity - I))
+        # I = torch.eye(cb_diversity.shape[0])
+        # I = I.float().to(self.device)
+        # cb_diversity = torch.sum(torch.abs((cb_diversity - I)))
+        # cb_diversity = torch.linalg.norm((cb_diversity - I))
 
         # Or a less constrained loss, cb_diversity=(W*W_T*(1-I)),like below:
         # mask1 = torch.ones(cb_diversity.shape) - torch.eye(cb_diversity.shape[0])
@@ -1629,8 +1530,8 @@ class HDQN_TCURL_VQ(HDQN):
         # cb_diversity = torch.linalg.norm(cb_diversity * mask1)
 
         # Another way to do the loss above:
-        # mask1 = ~torch.eye(codebook.shape[0], dtype=torch.bool, device=self.device)
-        # cb_diversity = cb_diversity[mask1].mean()
+        mask1 = ~torch.eye(codebook.shape[0], dtype=torch.bool, device=self.device)
+        cb_diversity = cb_diversity[mask1].mean()
         # cb_diversity = torch.sum(torch.abs(cb_diversity[mask1]))
         # cb_diversity = torch.linalg.norm(cb_diversity[mask1])
 
@@ -1659,8 +1560,8 @@ class HDQN_TCURL_VQ(HDQN):
             + cb_diversity * 0.5
             - vq_entropy * 0.25
             + neg_diversity * 0.0
-            + anc_vq_loss * 0.1
-            + pos_vq_loss * 0.1
+            + anc_vq_loss * 0.0
+            + pos_vq_loss * 0.0
         )
         # total_loss = loss1 - vq_entropy * 0.5
         # total_loss = loss1 + loss2 - anc_entrophy_vq * 0.5 - pos_entrophy_vq * 0.5
@@ -1674,14 +1575,18 @@ class HDQN_TCURL_VQ(HDQN):
 
         cluster_metrics = anc_output_dict["cluster_metric"]
 
-        self.training_info["contrastive_loss"].append(loss1.item())
-        self.training_info["vq_loss"].append(anc_vq_loss.item())
-        self.training_info["entrophy_vq"].append(anc_entrophy_vq.item())
-        self.training_info["total_loss"].append(total_loss.item())
-        self.training_info["contrast_acc"].append(contrast_acc.item())
-        self.training_info["cluster_metrics"].append(cluster_metrics)
-        self.training_info["cb_diversity"].append(cb_diversity.item())
-        self.training_info["neg_diversity"].append(neg_diversity.item())
+        metric = {
+            "Training_Info/update_contrastive_vq/contrastive_loss": loss1.item(),
+            "Training_Info/update_contrastive_vq/vq_loss": 0.5 * (anc_vq_loss + pos_vq_loss).item(),
+            "Training_Info/update_contrastive_vq/entrophy_vq": 0.5
+            * (anc_entrophy_vq + pos_entrophy_vq).item(),
+            "Training_Info/update_contrastive_vq/update_contrastive total_loss": total_loss.item(),
+            "Training_Info/update_contrastive_vq/contrast_acc": contrast_acc.item(),
+            "Training_Info/update_contrastive_vq/cluster_metrics": cluster_metrics,
+            "Training_Info/update_contrastive_vq/vq_codebook_diversity": cb_diversity.item(),
+            "Training_Info/update_contrastive_vq/neg_diversity": neg_diversity.item(),
+        }
+        self.L.log(metric)
 
     def update_contrastive_novq(self, anc_obs, pos_obs):
         # # [data augmentation]
@@ -1721,11 +1626,13 @@ class HDQN_TCURL_VQ(HDQN):
         self.curl_optimizer.zero_grad()
         total_loss.backward()
         self.curl_optimizer.step()
-
-        self.training_info["contrastive_loss"].append(loss1.item())
-        self.training_info["total_loss"].append(total_loss.item())
-        self.training_info["contrast_acc"].append(contrast_acc.item())
-        self.training_info["neg_diversity"].append(neg_diversity.item())
+        metric = {
+            "Training_Info/update_contrastive/contrastive_loss": loss1.item(),
+            "Training_Info/update_contrastive/update_contrastive total_loss": total_loss.item(),
+            "Training_Info/update_contrastive/contrast_acc": contrast_acc.item(),
+            "Training_Info/update_contrastive/neg_diversity": neg_diversity.item(),
+        }
+        self.L.log(metric)
 
         return total_loss
 
@@ -1771,12 +1678,12 @@ class HDQN_TCURL_VQ(HDQN):
 
         cluster_metrics = anc_output_dict["cluster_metric"]
 
-        self.training_info["contrastive_loss"].append(loss1.item())
-        self.training_info["vq_loss"].append(anc_vq_loss.item())
-        self.training_info["entrophy_vq"].append(anc_entrophy_vq.item())
-        self.training_info["total_loss"].append(total_loss.item())
-        self.training_info["contrast_acc"].append(contrast_acc.item())
-        self.training_info["cluster_metrics"].append(cluster_metrics)
+        # self.training_info["contrastive_loss"].append(loss1.item())
+        # self.training_info["vq_loss"].append(anc_vq_loss.item())
+        # self.training_info["entrophy_vq"].append(anc_entrophy_vq.item())
+        # self.training_info["total_loss"].append(total_loss.item())
+        # self.training_info["contrast_acc"].append(contrast_acc.item())
+        # self.training_info["cluster_metrics"].append(cluster_metrics)
 
     def update_curl_vq2(self, anc_obs, pos_obs):
         anc_grd_q, anc_encoded = self.ground_Q(anc_obs)
@@ -1799,9 +1706,9 @@ class HDQN_TCURL_VQ(HDQN):
         self.ground_Q_optimizer.step()
         self.vq_optimizer.step()
 
-        self.training_info["vq_loss"].append(anc_vq_loss.item())
-        self.training_info["entrophy_vq"].append(anc_entrophy_vq.item())
-        self.training_info["total_loss"].append(total_loss.item())
+        # self.training_info["vq_loss"].append(anc_vq_loss.item())
+        # self.training_info["entrophy_vq"].append(anc_entrophy_vq.item())
+        # self.training_info["total_loss"].append(total_loss.item())
 
     def update_grdQ_pure(self, state, action, next_state, reward, gamma):
 
@@ -1848,7 +1755,7 @@ class HDQN_TCURL_VQ(HDQN):
             # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
         self.ground_Q_optimizer.step()
 
-        self.training_info["ground_Q_error"].append(ground_td_error.item())
+        self.L.log({"ground_Q_error", ground_td_error.item()})
 
     def init_vq_codebook(
         self,
@@ -1867,7 +1774,7 @@ class HDQN_TCURL_VQ(HDQN):
         # self.vq_codebook = self.kmeans.cluster_centers_
         self.vq.embedding.weight = torch.as_tensor(self.kmeans.cluster_centers_).to(self.device)
 
-    def update_lr(self):
+    def update_hp(self):
         if hasattr(self, "lr_scheduler_curl"):
             self.lr_curl = self.lr_scheduler_curl(self._current_progress_remaining)
             update_learning_rate(self.curl_optimizer, self.lr_curl)
@@ -1887,11 +1794,22 @@ class HDQN_TCURL_VQ(HDQN):
             self.lr_abs_V = self.lr_scheduler_abstract_V(self._current_progress_remaining)
             update_learning_rate(self.abs_V_optimizer, self.lr_abs_V)
 
+        metric = {
+            "HP/lr_ground_Q": self.lr_grd_Q,
+            "HP/lr_abstract_V": self.lr_abs_V,
+            "HP/lr_vq": self.lr_vq,
+            "HP/lr_curl": self.lr_curl,
+            "HP/safe_ratio": self.safe_ratio,
+            "HP/exploration_rate": self.exploration_rate,
+            "HP/current_progress_remaining": self._current_progress_remaining,
+        }
+        self.L.log(metric)
+
     def update(self, use_shaping: bool):
         """
         update with adaptive abstraction
         """
-        self.update_lr()
+        self.update_hp()
         if hasattr(self, "safe_ratio_scheduler"):
             self.safe_ratio = self.safe_ratio_scheduler(self._current_progress_remaining)
 
@@ -2086,7 +2004,4 @@ class HDQN_TCURL_VQ(HDQN):
         #         self.curl.encoder_target.parameters(),
         #         self.curl_tau,
         #     )
-
-        if steps % self.reset_training_info_every == 0:
-            self.log_training_info(wandb_log=True)
-            self.reset_training_info()
+        self.L.dump2wandb(agent=self)

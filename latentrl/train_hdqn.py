@@ -40,6 +40,7 @@ import wandb
 # from common.learning_scheduler import EarlyStopping, ReduceLROnPlateau
 import common
 import common.wrappers
+from common.Logger import LoggerWandb
 
 # from common.transforms import transform_dict
 # from common.utils import (
@@ -921,17 +922,18 @@ def train_adaptive_absT_grdTN():
         )
         wandb.run.log_code(".")
         config = wandb.config
+        L = LoggerWandb()
         make_env = MAKE_ENV_FUNCS[config.env_type]
         env = make_env(config, cfg_key)
 
         # agent = HDQN_AdaptiveAbs_VQ(config, env)
-        agent = HDQN_TCURL_VQ(config, env)
+        agent = HDQN_TCURL_VQ(config, env, logger=L)
         wandb.watch(agent.vq, log="all", log_freq=100, idx=0)
         wandb.watch(agent.abs_V, log="all", log_freq=100, idx=1)
         wandb.watch(agent.ground_Q, log="all", log_freq=100, idx=2)
         wandb.watch(agent.curl, log="all", log_freq=100, idx=3)
 
-        goal_found = False
+        first_goal_found = False
         steps_after_goal_found = 0
         episodes_since_goal_found = 0
         interval4SemiMDP = 0
@@ -956,7 +958,7 @@ def train_adaptive_absT_grdTN():
                 # action = agent.act_table(info)
                 with utils.eval_mode(agent):
                     action = agent.act(state)
-                if goal_found:
+                if first_goal_found:
                     steps_after_goal_found += 1
                 # [Step]
                 next_state, reward, terminated, truncated, info = env.step(action)
@@ -1029,13 +1031,6 @@ def train_adaptive_absT_grdTN():
                 # action = action_prime
 
                 if terminated or truncated:
-                    if terminated:
-                        goal_found = True
-                        print("!!Goal Found!!")
-                        agent.goal_found = True
-                    # print("sys.getsizeof(agent.memory)", sys.getsizeof(agent.memory))
-                    # print(torch.cuda.memory_reserved()/(1024*1024), "MB")
-                    # print(torch.cuda.memory_allocated()/(1024*1024), "MB")
                     agent.episodes_done += 1
                     if agent._current_progress_remaining > 0.8:
                         plot_every = 1
@@ -1064,77 +1059,46 @@ def train_adaptive_absT_grdTN():
                             pass
 
                     metrics = {
-                        "reward/episodic_reward": episodic_reward,
-                        "reward/episodic_negative_reward": episodic_negative_reward,
-                        "reward/episodic_non_negative_reward": episodic_non_negative_reward,
-                        "reward/episodic_shaped_reward": episodic_shaped_reward,
-                        "time/timesteps_done": agent.timesteps_done,
-                        "time/time_elapsed": (time.time() - time_start_training) / 3600,
-                        "time/episode_length": t + 1,
-                        "time/episodes_done": agent.episodes_done,
-                        "time/fps_per_episode": int((t + 1) / (time.time() - time_start_episode)),
+                        "Episodic/episodic_reward": episodic_reward,
+                        "Episodic/episodic_negative_reward": episodic_negative_reward,
+                        "Episodic/episodic_non_negative_reward": episodic_non_negative_reward,
+                        "Episodic/episodic_shaped_reward": episodic_shaped_reward,
+                        "Episodic/fps_per_episode": int(
+                            (t + 1) / (time.time() - time_start_episode)
+                        ),
+                        "Episodic/episode_length": t + 1,
+                        "General/total_time_elapsed": (time.time() - time_start_training) / 3600,
                     }
-                    if goal_found:
-                        episodes_since_goal_found += 1
-                        metrics.update(
-                            {
-                                "After_goal_found/episode_length_after_first_found": t + 1,
-                                "After_goal_found/episodic_reward": episodic_reward,
-                                "After_goal_found/episodic_shaped_reward": episodic_shaped_reward,
-                                "After_goal_found/episodes_done_after_first_found": episodes_since_goal_found,
-                                "After_goal_found/steps_done_after_first_found": steps_after_goal_found,
-                            }
-                        )
-                    wandb.log(metrics)
+                    if terminated:
+                        first_goal_found = True
+                        print("!!Goal Found!!")
+                        agent.goal_found = True
+                    # if goal_found:
+                    #     episodes_since_goal_found += 1
+                    #     metrics.update(
+                    #         {
+                    #             "After_1stTerminated/episode_length": t + 1,
+                    #             "After_1stTerminated/episodic_reward": episodic_reward,
+                    #             "After_1stTerminated/episodic_shaped_reward": episodic_shaped_reward,
+                    #             "After_1stTerminated/episodes_done": episodes_since_goal_found,
+                    #             "After_1stTerminated/timesteps_done": steps_after_goal_found,
+                    #         }
+                    #     )
+                    L.log(metrics)
+                    L.dump2wandb(agent=agent, force=True)
 
-                    print(
-                        f">>>>>>>>>>>>>>>>Episode{agent.episodes_done} Done| Repetition {rep}>>>>>>>>>>>>>>>>>"
-                    )
-                    print("terminal, trauncated:", terminated, truncated)
-                    print(
-                        "time cost so far: {:.3f} h".format(
-                            (time.time() - time_start_training) / 3600
-                        )
-                    )
-                    print("episodic time cost: {:.1f} s".format(time.time() - time_start_episode))
-                    print("Total_steps_done:", agent.timesteps_done)
-                    print("Episodic_fps:", int((t + 1) / (time.time() - time_start_episode)))
-                    print("Episode finished after {} timesteps".format(t + 1))
-                    print(f"++++++Episode: {agent.episodes_done} reward: {episodic_reward}++++++")
-                    print(f"agent.goal_found: {agent.goal_found}")
+                    print(f"===========Episode{agent.episodes_done} Done| Repetition {rep}=====")
+                    print("[Total_steps_done]:", agent.timesteps_done)
+                    print(f"[Episode{agent.episodes_done} Reward]: {episodic_reward}")
+                    print("[Exploration_rate]:", agent.exploration_rate)
+                    print("[Episodic_fps]:", int((t + 1) / (time.time() - time_start_episode)))
+                    print("[Episodic time cost]: {:.1f} s".format(time.time() - time_start_episode))
+                    print("[Episodic timesteps] {} ".format(t + 1))
+                    print(f"[Terminal:{terminated} | Trauncated: {truncated}]")
+                    print("[Current_progress_remaining]:", agent._current_progress_remaining)
+                    print(f"[wandb run name]: {wandb.run.project}/{wandb.run.name}")
 
-                    print(
-                        "memory_allocated: {:.1f} MB".format(
-                            torch.cuda.memory_allocated() / (1024 * 1024)
-                        )
-                    )
-                    print(
-                        "memory_reserved: {:.1f} MB".format(
-                            torch.cuda.memory_reserved() / (1024 * 1024)
-                        )
-                    )
-
-                    # print(
-                    #     "mean losses(recon, vq, abstract_td_error, ground_td_error):",
-                    #     np.around(mean_losses, decimals=6),
-                    # )
-                    print("_current_progress_remaining:", agent._current_progress_remaining)
-                    print("train/exploration_rate:", agent.exploration_rate)
-                    # print("number of vqvae model forward passes:", agent.decoder.n_forward_call)
-                    print(
-                        "size of agent.memory: {} entries and {} mb".format(
-                            len(agent.memory), sys.getsizeof(agent.memory) / (1024 * 1024)
-                        )
-                    )
-                    print(f"wandb run name: {wandb.run.project}/{wandb.run.name}")
-                    # End this episode
                     break
-            # if agent.episodes_done > 0 and agent.episodes_done % 3 == 0:
-            #     agent.vis_abstract_values()
-            #     print("Evaluate the agent by visualizing grd visits")
-            #     # evaluate_agent(env, agent, exploit_only=True)
-            #     # evaluate_agent(env, agent, exploit_only=False)
-            #     evaluate_dqn_agent(env, agent)
         wandb.finish()
 
         # if goal_found:
@@ -1240,22 +1204,19 @@ def train_atari_absT_grdN():
             notes=cfg["wandb_notes"],
             config=cfg,
         )
+        wandb.run.log_code(".")
         config = wandb.config
+        L = LoggerWandb()
         make_env = MAKE_ENV_FUNCS[config.env_type]
         env = make_env(config, config.domain_name)
-        # state, info = env.reset()
 
         # agent = HDQN_Pixel(config, env)
-        agent = HDQN_TCURL_VQ(config, env)
+        agent = HDQN_TCURL_VQ(config, env, logger=L)
         wandb.watch(agent.vq, log="all", log_freq=100, idx=0)
         wandb.watch(agent.abs_V, log="all", log_freq=100, idx=1)
         wandb.watch(agent.ground_Q, log="all", log_freq=100, idx=2)
         wandb.watch(agent.curl, log="all", log_freq=100, idx=3)
 
-        goal_found = False
-        steps_after_goal_found = 0
-        episodes_since_goal_found = 0
-        interval4SemiMDP = 0
         time_start_training = time.time()
         # gym.reset(seed=int(time.time()))
         total_steps = int(config.total_timesteps + config.init_steps)
@@ -1272,8 +1233,6 @@ def train_atari_absT_grdN():
                 # [Select and perform an action]
                 with utils.eval_mode(agent):
                     action = agent.act(state)
-                if goal_found:
-                    steps_after_goal_found += 1
                 # [Step]
                 next_state, reward, terminated, truncated, info = env.step(action)
                 agent.timesteps_done += 1
@@ -1332,13 +1291,6 @@ def train_atari_absT_grdN():
                 # action = action_prime
 
                 if terminated or truncated:
-                    if terminated:
-                        goal_found = True
-                        print("!!Goal Found!!")
-                        agent.goal_found = True
-                    # print("sys.getsizeof(agent.memory)", sys.getsizeof(agent.memory))
-                    # print(torch.cuda.memory_reserved()/(1024*1024), "MB")
-                    # print(torch.cuda.memory_allocated()/(1024*1024), "MB")
                     agent.episodes_done += 1
                     if agent.episodes_done > 0 and agent.episodes_done % 1 == 0:
                         if agent.timesteps_done > config.init_steps:
@@ -1351,78 +1303,31 @@ def train_atari_absT_grdN():
                             pass
 
                     metrics = {
-                        "reward/episodic_reward": episodic_reward,
-                        "reward/episodic_negative_reward": episodic_negative_reward,
-                        "reward/episodic_non_negative_reward": episodic_non_negative_reward,
-                        "reward/episodic_shaped_reward": episodic_shaped_reward,
-                        "time/timesteps_done": agent.timesteps_done,
-                        "time/time_elapsed": (time.time() - time_start_training) / 3600,
-                        "time/episode_length": t + 1,
-                        "time/episodes_done": agent.episodes_done,
-                        "time/fps_per_episode": int((t + 1) / (time.time() - time_start_episode)),
+                        "Episodic/episodic_reward": episodic_reward,
+                        "Episodic/episodic_negative_reward": episodic_negative_reward,
+                        "Episodic/episodic_non_negative_reward": episodic_non_negative_reward,
+                        "Episodic/episodic_shaped_reward": episodic_shaped_reward,
+                        "Episodic/fps_per_episode": int(
+                            (t + 1) / (time.time() - time_start_episode)
+                        ),
+                        "Episodic/episode_length": t + 1,
+                        "General/total_time_elapsed": (time.time() - time_start_training) / 3600,
                     }
-                    if goal_found:
-                        episodes_since_goal_found += 1
-                        metrics.update(
-                            {
-                                "After_goal_found/episode_length_after_first_found": t + 1,
-                                "After_goal_found/episodic_reward": episodic_reward,
-                                "After_goal_found/episodic_shaped_reward": episodic_shaped_reward,
-                                "After_goal_found/episodes_done_after_first_found": episodes_since_goal_found,
-                                "After_goal_found/steps_done_after_first_found": steps_after_goal_found,
-                            }
-                        )
-                    if agent.episodes_done % 1 == 0:
-                        wandb.log(metrics)
 
-                    print(
-                        f">>>>>>>>>>>>>>>>Episode{agent.episodes_done} Done| Repetition {rep}>>>>>>>>>>>>>>>>>"
-                    )
-                    print("terminal, trauncated:", terminated, truncated)
-                    print(
-                        "time cost so far: {:.3f} h".format(
-                            (time.time() - time_start_training) / 3600
-                        )
-                    )
-                    print("episodic time cost: {:.1f} s".format(time.time() - time_start_episode))
-                    print("Total_steps_done:", agent.timesteps_done)
-                    print("Episodic_fps:", int((t + 1) / (time.time() - time_start_episode)))
-                    print("Episode finished after {} timesteps".format(t + 1))
-                    print(f"++++++Episode: {agent.episodes_done} reward: {episodic_reward}++++++")
-                    print(f"agent.goal_found: {agent.goal_found}")
+                    L.log(metrics)
+                    L.dump2wandb(agent=agent, force=True)
 
-                    print(
-                        "memory_allocated: {:.1f} MB".format(
-                            torch.cuda.memory_allocated() / (1024 * 1024)
-                        )
-                    )
-                    print(
-                        "memory_reserved: {:.1f} MB".format(
-                            torch.cuda.memory_reserved() / (1024 * 1024)
-                        )
-                    )
-
-                    # print(
-                    #     "mean losses(recon, vq, abstract_td_error, ground_td_error):",
-                    #     np.around(mean_losses, decimals=6),
-                    # )
-                    print("_current_progress_remaining:", agent._current_progress_remaining)
-                    print("train/exploration_rate:", agent.exploration_rate)
-                    # print("number of vqvae model forward passes:", agent.decoder.n_forward_call)
-                    print(
-                        "size of agent.memory: {} entries and {} mb".format(
-                            len(agent.memory), sys.getsizeof(agent.memory) / (1024 * 1024)
-                        )
-                    )
-                    print(f"wandb run name: {wandb.run.project}/{wandb.run.name}")
-                    # End this episode
+                    print(f"===========Episode{agent.episodes_done} Done| Repetition {rep}=====")
+                    print("[Total_steps_done]:", agent.timesteps_done)
+                    print(f"[Episode{agent.episodes_done} Reward]: {episodic_reward}")
+                    print("[Exploration_rate]:", agent.exploration_rate)
+                    print("[Episodic_fps]:", int((t + 1) / (time.time() - time_start_episode)))
+                    print("[Episodic time cost]: {:.1f} s".format(time.time() - time_start_episode))
+                    print("[Episodic timesteps] {} ".format(t + 1))
+                    print(f"[Terminal:{terminated} | Trauncated: {truncated}]")
+                    print("[Current_progress_remaining]:", agent._current_progress_remaining)
+                    print(f"[wandb run name]: {wandb.run.project}/{wandb.run.name}")
                     break
-            # if agent.episodes_done > 0 and agent.episodes_done % 3 == 0:
-            #     agent.vis_abstract_values()
-            #     print("Evaluate the agent by visualizing grd visits")
-            #     # evaluate_agent(env, agent, exploit_only=True)
-            #     # evaluate_agent(env, agent, exploit_only=False)
-            #     evaluate_dqn_agent(env, agent)
         wandb.finish()
 
         # if goal_found:
