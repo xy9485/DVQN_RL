@@ -1042,16 +1042,16 @@ def train_adaptive_absT_grdTN():
                         plot_every = 30
 
                     if agent.episodes_done > 0 and agent.episodes_done % plot_every == 0:
-                        agent.vis_grd_visits(norm_log=50)
+                        # agent.vis_grd_visits(norm_log=50)
                         # agent.vis_grd_visits(norm_log=0)
                         pass
                         if agent.timesteps_done >= config.init_steps:
-                            agent.vis_grd_q_values(reduction_mode="max", norm_log=50)
-                            agent.vis_grd_q_values(reduction_mode="mean", norm_log=50)
+                            # agent.vis_grd_q_values(reduction_mode="max", norm_log=50)
+                            # agent.vis_grd_q_values(reduction_mode="mean", norm_log=50)
                             # agent.vis_reward_distribution()
-                            agent.vis_abstraction()
-                            agent.vis_abstract_values(mode="soft")
-                            agent.vis_abstract_values(mode="hard")
+                            # agent.vis_abstraction()
+                            # agent.vis_abstract_values(mode="soft")
+                            # agent.vis_abstract_values(mode="hard")
                             # agent.vis_abstract_values(mode="target_soft")
                             # agent.vis_abstract_values(mode="target_hard")
                             # agent.vis_shaping_distribution(norm_log=100)
@@ -1059,20 +1059,22 @@ def train_adaptive_absT_grdTN():
                             pass
 
                     metrics = {
-                        "Episodic/episodic_reward": episodic_reward,
-                        "Episodic/episodic_negative_reward": episodic_negative_reward,
-                        "Episodic/episodic_non_negative_reward": episodic_non_negative_reward,
-                        "Episodic/episodic_shaped_reward": episodic_shaped_reward,
-                        "Episodic/fps_per_episode": int(
-                            (t + 1) / (time.time() - time_start_episode)
-                        ),
-                        "Episodic/episode_length": t + 1,
-                        "General/total_time_elapsed": (time.time() - time_start_training) / 3600,
+                        "Episodic/reward": episodic_reward,
+                        "Episodic/negative_reward": episodic_negative_reward,
+                        "Episodic/non_negative_reward": episodic_non_negative_reward,
+                        "Episodic/shaped_reward": episodic_shaped_reward,
+                        "reward/episodic_reward": episodic_reward,
+                        "reward/episodic_negative_reward": episodic_negative_reward,
+                        "reward/episodic_non_negative_reward": episodic_non_negative_reward,
+                        "time/timesteps_done": agent.timesteps_done,
+                        "Episodic/length": t + 1,
+                        "Time/total_time_elapsed": (time.time() - time_start_training) / 3600,
+                        "Time/fps_per_episode": int((t + 1) / (time.time() - time_start_episode)),
                     }
-                    if terminated:
-                        first_goal_found = True
-                        print("!!Goal Found!!")
-                        agent.goal_found = True
+                    # if terminated:
+                    #     first_goal_found = True
+                    #     print("!!Goal Found!!")
+                    #     agent.goal_found = True
                     # if goal_found:
                     #     episodes_since_goal_found += 1
                     #     metrics.update(
@@ -1084,19 +1086,18 @@ def train_adaptive_absT_grdTN():
                     #             "After_1stTerminated/timesteps_done": steps_after_goal_found,
                     #         }
                     #     )
-                    L.log(metrics)
+                    L.log(metrics, count=False)
                     L.dump2wandb(agent=agent, force=True)
 
-                    print(f"===========Episode{agent.episodes_done} Done| Repetition {rep}=====")
-                    print("[Total_steps_done]:", agent.timesteps_done)
-                    print(f"[Episode{agent.episodes_done} Reward]: {episodic_reward}")
-                    print("[Exploration_rate]:", agent.exploration_rate)
-                    print("[Episodic_fps]:", int((t + 1) / (time.time() - time_start_episode)))
-                    print("[Episodic time cost]: {:.1f} s".format(time.time() - time_start_episode))
-                    print("[Episodic timesteps] {} ".format(t + 1))
-                    print(f"[Terminal:{terminated} | Trauncated: {truncated}]")
-                    print("[Current_progress_remaining]:", agent._current_progress_remaining)
-                    print(f"[wandb run name]: {wandb.run.project}/{wandb.run.name}")
+                    print2console(
+                        agent=agent,
+                        episodic_reward=episodic_reward,
+                        terminated=terminated,
+                        truncated=truncated,
+                        t=t,
+                        time_start_episode=time_start_episode,
+                        rep=rep,
+                    )
 
                     break
         wandb.finish()
@@ -1303,30 +1304,32 @@ def train_atari_absT_grdN():
                             pass
 
                     metrics = {
-                        "Episodic/episodic_reward": episodic_reward,
-                        "Episodic/episodic_negative_reward": episodic_negative_reward,
-                        "Episodic/episodic_non_negative_reward": episodic_non_negative_reward,
-                        "Episodic/episodic_shaped_reward": episodic_shaped_reward,
-                        "Episodic/fps_per_episode": int(
-                            (t + 1) / (time.time() - time_start_episode)
-                        ),
-                        "Episodic/episode_length": t + 1,
-                        "General/total_time_elapsed": (time.time() - time_start_training) / 3600,
+                        "Episodic/reward": episodic_reward,
+                        "Episodic/negative_reward": episodic_negative_reward,
+                        "Episodic/non_negative_reward": episodic_non_negative_reward,
+                        "Episodic/shaped_reward": episodic_shaped_reward,
+                        "reward/episodic_reward": episodic_reward,
+                        "reward/episodic_negative_reward": episodic_negative_reward,
+                        "reward/episodic_non_negative_reward": episodic_non_negative_reward,
+                        "time/timesteps_done": agent.timesteps_done,
+                        "Episodic/length": t + 1,
+                        "Time/total_time_elapsed": (time.time() - time_start_training) / 3600,
+                        "Time/fps_per_episode": int((t + 1) / (time.time() - time_start_episode)),
                     }
 
-                    L.log(metrics)
+                    L.log(metrics, count=False)
                     L.dump2wandb(agent=agent, force=True)
 
-                    print(f"===========Episode{agent.episodes_done} Done| Repetition {rep}=====")
-                    print("[Total_steps_done]:", agent.timesteps_done)
-                    print(f"[Episode{agent.episodes_done} Reward]: {episodic_reward}")
-                    print("[Exploration_rate]:", agent.exploration_rate)
-                    print("[Episodic_fps]:", int((t + 1) / (time.time() - time_start_episode)))
-                    print("[Episodic time cost]: {:.1f} s".format(time.time() - time_start_episode))
-                    print("[Episodic timesteps] {} ".format(t + 1))
-                    print(f"[Terminal:{terminated} | Trauncated: {truncated}]")
-                    print("[Current_progress_remaining]:", agent._current_progress_remaining)
-                    print(f"[wandb run name]: {wandb.run.project}/{wandb.run.name}")
+                    print2console(
+                        agent=agent,
+                        episodic_reward=episodic_reward,
+                        terminated=terminated,
+                        truncated=truncated,
+                        t=t,
+                        time_start_episode=time_start_episode,
+                        rep=rep,
+                    )
+
                     break
         wandb.finish()
 
@@ -1341,6 +1344,19 @@ def train_atari_absT_grdN():
 
     print("Complete")
     env.close()
+
+
+def print2console(agent, episodic_reward, terminated, truncated, t, time_start_episode, rep):
+    print(f"===========Episode {agent.episodes_done} Done| Repetition {rep}=====")
+    print("[Total_steps_done]:", agent.timesteps_done)
+    print(f"[Episode {agent.episodes_done} Reward]: {episodic_reward}")
+    print("[Exploration_rate]:", agent.exploration_rate)
+    print("[Episodic_fps]:", int((t + 1) / (time.time() - time_start_episode)))
+    print("[Episodic time cost]: {:.1f} s".format(time.time() - time_start_episode))
+    print("[Episodic timesteps]: {} ".format(t + 1))
+    print(f"[Terminal:{terminated} | Truncated: {truncated}]")
+    print("[Current_progress_remaining]:", agent._current_progress_remaining)
+    print(f"[wandb run name]: {wandb.run.project}/{wandb.run.group}/{wandb.run.name}")
 
 
 def find_gpu():

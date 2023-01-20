@@ -297,11 +297,20 @@ class HDQN_TCURL_VQ(HDQN):
         return abstract_state_inds.squeeze().item()
 
     @torch.no_grad()
-    def get_abs_value(self, state, mode="hard"):
+    def get_abs_value(self, state, vq=True, mode="hard"):
         state = torch.from_numpy(state).unsqueeze(0).to(self.device)
         # encoded = self.ground_Q.forward_conv(state)
         # encoded = self.curl.encoder(state)
         encoded = self.abs_encoder(state)
+        if not vq:
+            if mode == "soft":
+                abs_value = self.abs_V.critic(encoded).squeeze().item()
+            elif mode == "target_soft":
+                abs_value = self.abs_V_target.critic(encoded).squeeze().item()
+            else:
+                # here raise an error, saying invalid mode
+                raise Exception("Invalid mode for non-vq abs value")
+            return abs_value
         quantized, _, _, output_dict = self.vq(encoded)
         if mode == "table":
             abstract_state_inds = output_dict["hard_encoding_inds"]
@@ -316,6 +325,9 @@ class HDQN_TCURL_VQ(HDQN):
             abs_value = self.abs_V.critic(quantized).squeeze().item()
         elif mode == "target_soft":
             abs_value = self.abs_V_target.critic(quantized).squeeze().item()
+        else:
+            # here raise an error, saying invalid mode
+            raise Exception("Invalid mode for non-vq abs value")
         return abs_value
 
     @torch.no_grad()
@@ -879,14 +891,14 @@ class HDQN_TCURL_VQ(HDQN):
         # self.abstract_V_optimizer = optim.RMSprop(
         #     self.ground_Q_net.parameters(), lr=lr_abstract_V, alpha=0.95, momentum=0.95, eps=0.01
         # )
-        self.curl_optimizer = optim.Adam(self.curl.parameters(), lr=self.lr_curl)
-        self.vq_optimizer = optim.Adam(self.vq.parameters(), lr=self.lr_vq)
-        self.abs_V_optimizer = optim.Adam(self.abs_V.parameters(), lr=self.lr_abs_V)
-        self.ground_Q_optimizer = optim.Adam(self.ground_Q.parameters(), lr=self.lr_grd_Q)
-        # self.curl_optimizer = optim.RMSprop(self.curl.parameters(), lr=self.lr_curl)
-        # self.vq_optimizer = optim.RMSprop(self.vq.parameters(), lr=self.lr_vq)
-        # self.abs_V_optimizer = optim.RMSprop(self.abs_V.parameters(), lr=self.lr_abs_V)
-        # self.ground_Q_optimizer = optim.RMSprop(self.ground_Q.parameters(), lr=self.lr_grd_Q)
+        # self.curl_optimizer = optim.Adam(self.curl.parameters(), lr=self.lr_curl)
+        # self.vq_optimizer = optim.Adam(self.vq.parameters(), lr=self.lr_vq)
+        # self.abs_V_MLP_optimizer = optim.Adam(self.abs_V_MLP.parameters(), lr=self.lr_abs_V)
+        # self.ground_Q_optimizer = optim.Adam(self.ground_Q.parameters(), lr=self.lr_grd_Q)
+        self.curl_optimizer = optim.RMSprop(self.curl.parameters(), lr=self.lr_curl)
+        self.vq_optimizer = optim.RMSprop(self.vq.parameters(), lr=self.lr_vq)
+        self.abs_V_optimizer = optim.RMSprop(self.abs_V.parameters(), lr=self.lr_abs_V)
+        self.ground_Q_optimizer = optim.RMSprop(self.ground_Q.parameters(), lr=self.lr_grd_Q)
         # self.curl_optimizer = optim.RMSprop(
         #     self.curl.parameters(), lr=self.lr_curl, alpha=0.95, centered=True, eps=0.01
         # )
@@ -1166,8 +1178,9 @@ class HDQN_TCURL_VQ(HDQN):
         # [Compute total loss]
         total_loss = ground_td_error
         if approach_abs:
+            grd_match_abs_err = F.mse_loss(grd_q_reduction, abs_v)
             # grd_match_abs_err = F.mse_loss(grd_q, abs_v)
-            grd_match_abs_err = F.mse_loss(grd_q, rew + gamma * n_abs_v)
+            # grd_match_abs_err = F.mse_loss(grd_q, rew + gamma * n_abs_v)
             total_loss += 0.1 * grd_match_abs_err
 
         self.ground_Q_optimizer.zero_grad(set_to_none=True)
@@ -1202,12 +1215,13 @@ class HDQN_TCURL_VQ(HDQN):
         #     ] += shaping[i]
 
         metric = {
-            "Training_Info/update_grdQ/ground_Q_error": ground_td_error.item(),
-            "Training_Info/update_grdQ/update_Q total_loss": total_loss.item(),
-            "Training_Info/update_grdQ/grd_q": grd_q.mean().item(),
-            "Training_Info/update_grdQ/grd_q_mean": grd_q_reduction.mean().item(),
-            "Training_Info/update_grdQ/absV_grdQ_l1": diff_l1_abs_grd.item(),
-            "Training_Info/update_grdQ/absV_grdQ_l2": diff_l2_abs_grd.item(),
+            "Info/grdQ/ground_Q_error": ground_td_error.item(),
+            "Info/grdQ/update_Q total_loss": total_loss.item(),
+            "Info/grdQ/grd_q": grd_q.mean().item(),
+            "Info/grdQ/grd_q_max": grd_q_next_max.mean().item(),
+            "Info/grdQ/grd_q_reduction": grd_q_reduction.mean().item(),
+            "Info/grdQ/absV_grdQ_l1": diff_l1_abs_grd.item(),
+            "Info/grdQ/absV_grdQ_l2": diff_l2_abs_grd.item(),
         }
         self.L.log(metric)
 
@@ -1330,8 +1344,8 @@ class HDQN_TCURL_VQ(HDQN):
         # mask = mask.float()
         # abs_v_target = abs_v_target * mask + abs_v * (1 - mask)
         # criterion = F.smooth_l1_loss
-        criterion = F.mse_loss
-        # criterion = nn.SmoothL1Loss()
+        # criterion = F.mse_loss
+        criterion = nn.SmoothL1Loss()
         abs_td_error = criterion(abs_v, abs_v_target)
 
         self.abs_V_optimizer.zero_grad(set_to_none=True)
@@ -1349,8 +1363,8 @@ class HDQN_TCURL_VQ(HDQN):
 
         self.abs_V_optimizer.step()
         metric = {
-            "Training_Info/update_absV/abstract_V_error": abs_td_error.item(),
-            "Training_Info/update_absV/abs_v": abs_v.mean().item(),
+            "Info/update_absV/abstract_V_error": abs_td_error.item(),
+            "Info/update_absV/abs_v": abs_v.mean().item(),
         }
         self.L.log(metric)
 
@@ -1514,7 +1528,7 @@ class HDQN_TCURL_VQ(HDQN):
 
         cb_diversity = torch.matmul(codebook, codebook.T)
         # Using mean() only makes sense when the codebook is of non-negative vectors
-        # cb_diversity = cb_diversity.mean()
+        cb_diversity = cb_diversity.mean()
         # cb_diversity = torch.einsum("ij,mj->im", [codebook, codebook]).mean()
 
         # Or like below, cb_diversity=(W*W_T - I), like below:
@@ -1530,8 +1544,8 @@ class HDQN_TCURL_VQ(HDQN):
         # cb_diversity = torch.linalg.norm(cb_diversity * mask1)
 
         # Another way to do the loss above:
-        mask1 = ~torch.eye(codebook.shape[0], dtype=torch.bool, device=self.device)
-        cb_diversity = cb_diversity[mask1].mean()
+        # mask1 = ~torch.eye(codebook.shape[0], dtype=torch.bool, device=self.device)
+        # cb_diversity = cb_diversity[mask1].mean()
         # cb_diversity = torch.sum(torch.abs(cb_diversity[mask1]))
         # cb_diversity = torch.linalg.norm(cb_diversity[mask1])
 
@@ -1557,9 +1571,9 @@ class HDQN_TCURL_VQ(HDQN):
 
         total_loss = (
             loss1 * 1.0
-            + cb_diversity * 0.5
-            - vq_entropy * 0.25
-            + neg_diversity * 0.0
+            + cb_diversity * 0.1
+            - vq_entropy * 0.1
+            + neg_diversity * 0.1
             + anc_vq_loss * 0.0
             + pos_vq_loss * 0.0
         )
@@ -1576,29 +1590,30 @@ class HDQN_TCURL_VQ(HDQN):
         cluster_metrics = anc_output_dict["cluster_metric"]
 
         metric = {
-            "Training_Info/update_contrastive_vq/contrastive_loss": loss1.item(),
-            "Training_Info/update_contrastive_vq/vq_loss": 0.5 * (anc_vq_loss + pos_vq_loss).item(),
-            "Training_Info/update_contrastive_vq/entrophy_vq": 0.5
-            * (anc_entrophy_vq + pos_entrophy_vq).item(),
-            "Training_Info/update_contrastive_vq/update_contrastive total_loss": total_loss.item(),
-            "Training_Info/update_contrastive_vq/contrast_acc": contrast_acc.item(),
-            "Training_Info/update_contrastive_vq/cluster_metrics": cluster_metrics,
-            "Training_Info/update_contrastive_vq/vq_codebook_diversity": cb_diversity.item(),
-            "Training_Info/update_contrastive_vq/neg_diversity": neg_diversity.item(),
+            "Info/contrastive_vq/contrastive_loss": loss1.item(),
+            "Info/contrastive_vq/vq_loss": 0.5 * (anc_vq_loss + pos_vq_loss).item(),
+            "Info/contrastive_vq/entrophy_vq": 0.5 * (anc_entrophy_vq + pos_entrophy_vq).item(),
+            "Info/contrastive_vq/update_contrastive total_loss": total_loss.item(),
+            "Info/contrastive_vq/contrast_acc": contrast_acc.item(),
+            "Info/contrastive_vq/cluster_metrics": cluster_metrics,
+            "Info/contrastive_vq/vq_codebook_diversity": cb_diversity.item(),
+            "Info/contrastive_vq/neg_diversity": neg_diversity.item(),
         }
         self.L.log(metric)
 
-    def update_contrastive_novq(self, anc_obs, pos_obs):
+    def update_contrastive_novq(self, anc_obs, pos_obs, ema=False):
         # # [data augmentation]
         # if self.input_format == "full_img":
         #     anc_obs = self.aug(anc_obs)
         #     pos_obs = self.aug(pos_obs)
-
         anc = self.curl.encoder(anc_obs)
-        # anc = F.normalize(anc, dim=1)
+        anc = F.normalize(anc, dim=1)
         with torch.no_grad():
-            pos = self.curl.encoder_target(pos_obs)
-            # pos = F.normalize(pos, dim=1)
+            if ema:
+                pos = self.curl.encoder_target(pos_obs)
+            else:
+                pos = self.curl.encoder(pos_obs)
+            pos = F.normalize(pos, dim=1)
 
         mask2 = ~torch.eye(anc.shape[0], dtype=torch.bool, device=self.device)
         neg_diversity = (
@@ -1611,8 +1626,10 @@ class HDQN_TCURL_VQ(HDQN):
         # pos = pos / (pos.norm(dim=1, keepdim=True)+1e-8)
         # anc = anc / anc.norm(dim=1, keepdim=True)
         # pos = pos / pos.norm(dim=1, keepdim=True)
-        logits, labels = self.curl_loss(anc, pos, temperature=1)
-        # logits, labels = self.simclr_loss2(anc, pos, temperature=1)
+        if ema:
+            logits, labels = self.curl_loss(anc, pos, temperature=1)
+        else:
+            logits, labels = self.simclr_loss2(anc, pos, temperature=1)
         loss1 = F.cross_entropy(logits, labels)
         with torch.no_grad():
             correct = torch.argmax(logits, dim=1) == labels
@@ -1627,10 +1644,10 @@ class HDQN_TCURL_VQ(HDQN):
         total_loss.backward()
         self.curl_optimizer.step()
         metric = {
-            "Training_Info/update_contrastive/contrastive_loss": loss1.item(),
-            "Training_Info/update_contrastive/update_contrastive total_loss": total_loss.item(),
-            "Training_Info/update_contrastive/contrast_acc": contrast_acc.item(),
-            "Training_Info/update_contrastive/neg_diversity": neg_diversity.item(),
+            "Info/contrastive/contrastive_loss": loss1.item(),
+            "Info/contrastive/update_contrastive total_loss": total_loss.item(),
+            "Info/contrastive/contrast_acc": contrast_acc.item(),
+            "Info/contrastive/neg_diversity": neg_diversity.item(),
         }
         self.L.log(metric)
 
@@ -1755,7 +1772,13 @@ class HDQN_TCURL_VQ(HDQN):
             # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
         self.ground_Q_optimizer.step()
 
-        self.L.log({"ground_Q_error", ground_td_error.item()})
+        metric = {
+            "Info/grdQ/ground_Q_error": ground_td_error.item(),
+            "Info/grdQ/grd_q": grd_q.mean().item(),
+            "Info/grdQ/grd_q_max": grd_q_next_max.mean().item(),
+        }
+
+        self.L.log(metric)
 
     def init_vq_codebook(
         self,
@@ -1826,20 +1849,21 @@ class HDQN_TCURL_VQ(HDQN):
             # self.update_contrastive(obs, n_obs)
             # self.update_contrastive_novq(n_obs, obs)
             # [n-step]
-            # N_Step_T: List[dict] = self.memory.sample_n_step_transits(
-            #     n_step=3, batch_size=self.batch_size
-            # )
-            # obs = []
-            # n_obs = []
-            # for transit in N_Step_T:
-            #     if transit:
-            #         obs.extend(list(transit["obs"].values()))
-            #         n_obs.extend(list(transit["n_obs"].values()))
-            # if len(obs) > 0:
-            #     obs = torch.as_tensor(np.array(obs)).to(self.device)
-            #     n_obs = torch.as_tensor(np.array(n_obs)).to(self.device)
-            #     # self.update_contrastive(obs, n_obs)
-            #     self.update_contrastive_novq(n_obs, obs)
+            for _ in range(500):
+                N_Step_T: List[dict] = self.memory.sample_n_step_transits(
+                    n_step=3, batch_size=self.batch_size
+                )
+                obs = []
+                n_obs = []
+                for transit in N_Step_T:
+                    if transit:
+                        obs.extend(list(transit["obs"].values()))
+                        n_obs.extend(list(transit["n_obs"].values()))
+                if len(obs) > 0:
+                    obs = torch.as_tensor(np.array(obs)).to(self.device)
+                    n_obs = torch.as_tensor(np.array(n_obs)).to(self.device)
+                    # self.update_contrastive(obs, n_obs)
+                    self.update_contrastive_novq(obs, n_obs)
         # if self.timesteps_done == self.init_steps + 1:
         #     for _ in range(3):
         #         # self.cache_goal_transition()
@@ -1877,13 +1901,13 @@ class HDQN_TCURL_VQ(HDQN):
                     n_obs = self.aug(n_obs)
             if steps % self.abstract_learn_every == 0:
                 abs_loss = self.update_absV(
-                    obs, n_obs, rew, gamma, use_vq=True, detach_encoder=True
+                    obs, n_obs, rew, gamma, use_vq=False, detach_encoder=False
                 )
                 pass
             if steps % self.ground_learn_every == 0:
                 # self.update_grdQ(obs, act, n_obs, rew, gamma, use_shaping=True, approach_abs=False)
                 grd_loss = self.update_grdQ(
-                    obs, act, n_obs, rew, gamma, use_vq=True, use_shaping=False, approach_abs=False
+                    obs, act, n_obs, rew, gamma, use_vq=False, use_shaping=False, approach_abs=True
                 )
                 # self.update_grdQ_critic(
                 #     obs, act, n_obs, rew, gamma, use_vq=False, approach_abs=False
@@ -1898,7 +1922,7 @@ class HDQN_TCURL_VQ(HDQN):
                     # ct_loss = self.update_contrastive_novq(n_obs, obs)
                     # [n-step]
                     N_Step_T: List[dict] = self.memory.sample_n_step_transits(
-                        n_step=3, batch_size=self.batch_size
+                        n_step=3, batch_size=self.batch_size_repre
                     )
                     obs = []
                     n_obs = []
@@ -1909,8 +1933,8 @@ class HDQN_TCURL_VQ(HDQN):
                     if len(obs) > 0:
                         obs = torch.as_tensor(np.array(obs)).to(self.device)
                         n_obs = torch.as_tensor(np.array(n_obs)).to(self.device)
-                        self.update_contrastive(obs, n_obs)
-                        # self.update_contrastive_novq(n_obs, obs)
+                        # self.update_contrastive(obs, n_obs)
+                        self.update_contrastive_novq(obs, n_obs)
             # if steps > 30000:
             # self.update_grdQ_critic(obs, act, n_obs, rew, gamma)
             # self.update_grdQ_absV(state, action, next_state, reward, gamma, info)
