@@ -1,0 +1,17 @@
+executable              = /bin/bash
+arguments               = -i conda_activate.sh neozoo train_hdqn.py $(args) --htcondor_procid $(Cluster).$(Process)
+transfer_input_files    = conda_activate.sh, train_hdqn.py
+should_transfer_files   = IF_NEEDED
+#initial_dir            = htcondor_args/atari/
+log                     = htcondor.log
+output                  = htcondor_stdout.txt
+error                   = htcondor_stderr.txt
+
+request_cpus   = 1
+request_gpus   = 1
+request_memory = 8 GB
+#queue args from htcondor_args/atari/absCurl_grd.txt
+queue args from htcondor_args/atari/abs_grd.txt
+#queue args from htcondor_args/atari/absVQ_grd.txt
+
+

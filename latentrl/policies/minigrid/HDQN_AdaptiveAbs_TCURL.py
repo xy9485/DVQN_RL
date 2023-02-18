@@ -42,7 +42,7 @@ from nn_models import (
 )
 from PIL import Image
 from policies.HDQN import HDQN
-from policies.utils import EncoderMaker, ReplayMemory, ReplayMemoryWithCluster
+from policies.utils import ReplayMemory, ReplayMemoryWithCluster
 from sklearn.cluster import KMeans
 from sympy.solvers import solve
 from torch import Tensor, nn

@@ -1,3 +1,4 @@
+import argparse
 import datetime
 import math
 import os
@@ -23,8 +24,11 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torchvision.transforms as T
 import yaml
-from cv2 import mean
+from statistics import mean
+
+# from cv2 import mean
 import minigrid
+
 import minigrid.envs
 
 # from minigrid import FullyObsWrapper
@@ -54,212 +58,16 @@ import envs
 # from envs.fourrooms import FourRoomsEnv
 from policies import (
     HDQN,
-    HDQN_AdaptiveAbs_TCURL,
-    HDQN_AdaptiveAbs_Coord,
-    HDQN_AdaptiveAbs_VQ,
     HDQN_TCURL_VQ,
     HDQN_KMeans_CURL,
-    HDQN_KMeans_VAE,
     HDQN_ManualAbs,
-    HDQN_Pixel,
     utils,
 )
 
+from common.make_env import make_env_atari, make_env_carracing, make_env_minatar, make_env_minigrid
+
 # from policies.hrl_dqn_agent import DuoLayerAgent, SingelLayerAgent
 # from policies.vanilla_dqn_agent import VanillaDQNAgent
-
-
-def make_env_carracing(config, env_id):
-    # env = gym.make(env_id).unwrapped
-    env = gym.make(
-        env_id,
-        continuous=True,
-        # render_mode="human",
-    )
-    # env = gym.make(
-    #     env_id,
-    #     # frameskip=(3, 7),
-    #     # repeat_action_probability=0.25,
-    #     full_action_space=False,
-    #     # render_mode="human",
-    # )
-
-    # For atari, using gym wappers or third-party wappers
-    # wrapper_class_list = [
-    #     ClipRewardEnvCustom,
-    #     EpisodicLifeEnvCustom,
-    #     GrayScaleObservation,
-    #     ResizeObservation,
-    #     FrameStackCustom,
-    # ]
-    # wrapper_kwargs_list = [
-    #     None,
-    #     None,
-    #     {"keep_dim": True},  # gym default wrapper
-    #     {"shape": 84},  # gym default wrapper
-    #     # {"num_stack": config.n_frame_stack},  # gym default wrapper
-    #     {"k": config.n_frame_stack},  # custom wrapper
-    # ]
-
-    # For atari, but using custom wrapper
-    # wrapper_class_list = [
-    #     # ActionDiscreteWrapper,
-    #     # ActionRepetitionWrapper,
-    #     # EpisodeEarlyStopWrapper,
-    #     # Monitor,
-    #     # CarRandomStartWrapper,
-    #     PreprocessObservationWrapper,
-    #     # EncodeStackWrapper,
-    #     # PunishRewardWrapper,
-    #     FrameStackWrapper,
-    # ]
-    # wrapper_kwargs_list = [
-    #     # {"action_repetition": config.action_repetition},
-    #     # {"max_neg_rewards": max_neg_rewards, "punishment": punishment},
-    #     # {'filename': monitor_dir},
-    #     # {"filename": os.path.join(monitor_dir, "train")},  # just single env in this case
-    #     # {
-    #     #     "warm_up_steps": hparams["learning_starts"],
-    #     #     "n_envs": n_envs,
-    #     #     "always_random_start": always_random_start,
-    #     #     "no_random_start": no_random_start,
-    #     # },
-    #     {
-    #         "vertical_cut_d": 84,
-    #         "shape": 84,
-    #         "num_output_channels": 1,
-    #     },
-    #     # {
-    #     #     "n_stack": n_stack,
-    #     #     "vae_f": vae_path,
-    #     #     "vae_sample": vae_sample,
-    #     #     "vae_inchannel": vae_inchannel,
-    #     #     "latent_dim": vae_latent_dim,
-    #     # },
-    #     # {'max_neg_rewards': max_neg_rewards, "punishment": punishment}
-    #     {"n_frame_stack": config.n_frame_stack},
-    # ]
-
-    # For carracing-v0
-    wrapper_class_list = [
-        common.wrappers.ActionDiscreteWrapper,
-        common.wrappers.ActionRepetitionWrapper,
-        common.wrappers.EpisodeEarlyStopWrapper,
-        # Monitor,
-        # CarRandomStartWrapper,
-        common.wrappers.PreprocessObservationWrapper,
-        # EncodeStackWrapper,
-        # PunishRewardWrapper,
-        # FrameStackWrapper,
-        # common.wrappers.FrameStack,
-        gym.wrappers.FrameStack,
-    ]
-    wrapper_kwargs_list = [
-        None,
-        {"action_repetition": 3},
-        {"max_neg_rewards": 100, "punishment": -20.0},
-        {"vertical_cut_d": 84, "shape": 84, "num_output_channels": 1, "preprocess_mode": "cv2"},
-        {"num_stack": 4},
-    ]
-
-    wrapper = common.wrappers.pack_env_wrappers(wrapper_class_list, wrapper_kwargs_list)
-    env = wrapper(env)
-    # env.seed(seed)
-
-    return env
-
-
-def make_env_minigrid(config, env_id):
-    # env = gym.make(
-    #     env_id,
-    #     # new_step_api=True,
-    #     # render_mode="human",
-    # )
-    if env_id == "MiniGrid-Empty-v0":
-        env = minigrid.envs.EmptyEnv(
-            size=config.env_size,
-            # agent_start_pos=tuple(config.agent_start_pos),
-            # render_mode="human",
-        )
-    if env_id == "MiniGrid-FourRooms-v0":
-        # use custom FourRoomsEnv because we fix positions of four doors
-        env = envs.FourRoomsEnv(
-            agent_pos=tuple(config.agent_start_pos),
-            goal_pos=tuple(config.goal_pos),
-            # render_mode="human",
-        )
-        # env = minigrid.envs.FourRoomsEnv(
-        #     agent_pos=tuple(config.agent_start_pos),
-        #     goal_pos=tuple(config.goal_pos),
-        #     # render_mode="human",
-        # )
-    if env_id == "MiniGrid-Crossing-v0":
-        env = envs.CrossingEnv(
-            size=config.env_size,
-            num_crossings=1,
-            obstacle_type=minigrid.core.world_object.Wall,
-            # max_steps=2000,
-            # render_mode="human",
-        )
-    if env_id == "MiniGrid-DistShift-v0":
-        env = envs.DistShiftEnv(
-            width=config.env_size,
-            height=config.env_size,
-            agent_start_pos=(1, 1),
-            agent_start_dir=0,
-            strip_rows=[1, 2, 3, 4, 5, 6, 7, 8, 9],
-            # max_steps=2000,
-            # render_mode="human",
-        )
-    if env_id == "MiniGrid-Custom":
-        env = envs.CollectFlags(
-            maze_name=config.maze_name,
-            max_steps=8000,
-            # render_mode="human",
-        )
-
-    if env_id != "MiniGrid-Custom":
-        env = common.wrappers.LimitNumberActionsWrapper(env, limit=3)
-    # env = TimeLimit(env, max_episode_steps=3000, new_step_api=True)
-    # env = minigrid.wrappers.StateBonus(env)
-    if config.input_format == "partial_obs":
-        pass
-    if config.input_format == "full_obs":
-        env = minigrid.wrappers.FullyObsWrapper(env)
-    elif config.input_format == "full_img":
-        env = minigrid.wrappers.RGBImgObsWrapper(env, tile_size=config.tile_size)
-    else:
-        raise NotImplementedError
-
-    env = minigrid.wrappers.ImgObsWrapper(env)
-    # env = PreprocessObservationWrapper(env, shape=84, num_output_channels=1)
-    # env = WarpFrameRGB(env)
-    # env = minigrid.wrappers.StateBonus(env)
-    # env = common.wrappers.MinigridRewardWrapper(env)
-    env = common.wrappers.MinigridInfoWrapper(env)
-    # env = common.wrappers.StateBonusCustom(env, 5000)
-    # env = FrameStack(env, n_frames=1)
-    # env.new_step_api = True
-    return env
-
-
-def make_env_atari(config, env_id):
-    env = gym.make(
-        env_id,
-        frameskip=1,
-    )
-    env = gym.wrappers.AtariPreprocessing(env)
-    env = gym.wrappers.FrameStack(env, num_stack=4)
-    return env
-
-
-def make_env_minatar(config, env_id):
-    env = gym.make(
-        env_id,
-        # frameskip=1,
-    )
-    # env = common.wrappers.FrameStack(env, 4)
-    return env
 
 
 MAKE_ENV_FUNCS = {
@@ -268,6 +76,137 @@ MAKE_ENV_FUNCS = {
     "CarRacing": make_env_carracing,
     "GymMiniGrid": make_env_minigrid,
 }
+
+
+class DotDict(dict):
+    def __init__(self, d):
+        super(DotDict, self).__init__(d)
+        for key, value in d.items():
+            if isinstance(value, dict):
+                self[key] = DotDict(value)
+
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError as k:
+            raise AttributeError(k)
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+    def __delattr__(self, key):
+        try:
+            del self[key]
+        except KeyError as k:
+            raise AttributeError(k)
+
+    def __repr__(self):
+        return "<DictX " + dict.__repr__(self) + ">"
+
+
+def parse_args():
+    cli = argparse.ArgumentParser()
+
+    # cli.add_argument("--mode", default="grd", type=str)
+    cli.add_argument("--args_from_cli", default=False, action="store_true")
+    # cli.add_argument("--use_grd_Q", default=True, action="store_true")
+    cli.add_argument("--use_abs_V", default=False, action=argparse.BooleanOptionalAction)
+    cli.add_argument("--use_curl", default=None, choices=["on_abs", "on_grd", "off"], type=str)
+    cli.add_argument("--share_encoder", default=False, action=argparse.BooleanOptionalAction)
+    cli.add_argument("--curl_pair", default="raw", choices=["raw", "temp"], type=str)
+    cli.add_argument("--use_vq", default=False, action=argparse.BooleanOptionalAction)
+    cli.add_argument(
+        "--curl_vq_cfg",
+        nargs=3,
+        default=[0.0, 0.0, 0.0],
+        type=float,
+        help="factors for cb_diversity, vq_entropy, vq_loss",
+    )
+    cli.add_argument("--use_noisynet", default=False, action=argparse.BooleanOptionalAction)
+    cli.add_argument("--use_curiosity", default=False, action=argparse.BooleanOptionalAction)
+    cli.add_argument("--clip_reward", default=False, action=argparse.BooleanOptionalAction)
+    cli.add_argument("--clip_grad", default=False, action=argparse.BooleanOptionalAction)
+    cli.add_argument("--dan", default=False, action=argparse.BooleanOptionalAction)
+
+    cli.add_argument("--domain_name", default="Breakout-v5", type=str)
+    cli.add_argument("--domain_type", default="Atari", type=str)
+    cli.add_argument("--input_format", default="full_img", type=str)
+    cli.add_argument("--env_seed", default=940805, type=int)
+
+    cli.add_argument("--total_timesteps", default=1e5, type=int)
+    cli.add_argument("--init_steps", default=1e4, type=int)
+    cli.add_argument("--batch_size", default=32, type=int)
+    cli.add_argument("--size_replay_memory", default=1e5, type=int)
+    cli.add_argument("--gamma", default=0.99, type=float)
+    cli.add_argument("--exploration", nargs=3, default=[0.99, 0.1, 0.1], type=float)
+
+    cli.add_argument("--conservative_ratio", default=0.0, type=str)
+    cli.add_argument("--approach_abs_factor", default=0.0, type=str)
+    cli.add_argument("--omega", default=0.0, type=float, help="factor of reward shaping")
+    # params for grd_Q
+    cli.add_argument("--grd_encoder_linear_dims", nargs="*", default=[-1], type=int)
+    cli.add_argument("--grd_critic_dims", nargs="*", default=[256, 256], type=int)
+    cli.add_argument("--abs_encoder_linear_dims", default=[-1], nargs="*", type=int)
+    cli.add_argument("--abs_critic_dims", default=[256, 256], nargs="*", type=int)
+    cli.add_argument("--curl_projection_dims", default=[-1], nargs="*", type=int)
+    cli.add_argument("--curl_enc_detach", default=False, action=argparse.BooleanOptionalAction)
+    cli.add_argument("--critic_upon_vq", default=False, action=argparse.BooleanOptionalAction)
+    cli.add_argument("--abs_enc_detach", default=False, action=argparse.BooleanOptionalAction)
+    cli.add_argument("--grd_enc_detach", default=False, action=argparse.BooleanOptionalAction)
+
+    cli.add_argument("--num_vq_embeddings", default=16, type=int)
+    # cli.add_argument("--dim_vq_embeddings", default=128, type=int)
+    cli.add_argument("--vq_softmin_beta", default=0.5, type=float)
+
+    cli.add_argument("--lr_grd_Q", default=1e-4, type=str, help="sometimes start with lin")
+    cli.add_argument("--lr_abs_V", default=1e-4, type=str, help="sometimes start with lin")
+    cli.add_argument("--lr_curl", default=1e-4, type=str)
+    cli.add_argument("--lr_vq", default=1e-4, type=str)
+
+    cli.add_argument("--freq_grd_learn", default=1, type=int)
+    cli.add_argument("--freq_grd_sync", default=2000, type=int)
+    cli.add_argument("--freq_abs_learn", default=1, type=int)
+    cli.add_argument("--freq_abs_sync", default=2000, type=int)
+    cli.add_argument("--freq_curl_learn", default=1, type=int)
+    cli.add_argument("--freq_curl_sync", default=1, type=int)
+
+    cli.add_argument("--tau_grd_encoder", default=1, type=float)
+    cli.add_argument("--tau_grd_critic", default=1, type=float)
+    cli.add_argument("--tau_abs_encoder", default=1, type=float)
+    cli.add_argument("--tau_abs_critic", default=1, type=float)
+    cli.add_argument("--tau_curl", default=0.001, type=float)
+    cli.add_argument("--tau_vq", default=0.001, type=float)
+
+    cli.add_argument("--optimizer", default="rmsprop", type=str)
+    cli.add_argument("--freq_eval", default=1e4, type=int)
+    cli.add_argument("--evaluation_episodes", default=10, type=int)
+    # cli.add_argument("--wandb_group_name", default=None, type=str)
+    cli.add_argument("--wandb_tags", default=None, nargs="*", type=str)
+    cli.add_argument("--wandb_mode", default="online", type=str)
+    cli.add_argument("--extra_note", default="", type=str)
+    cli.add_argument("--repetitions", default=15, type=int)
+    cli.add_argument("--htcondor_procid", default=None, type=str)
+    args = cli.parse_args()
+
+    if not args.args_from_cli:
+        find_gpu()
+        print("loading args from txt file...")
+        with open(
+            # "/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/absCurl_grd.txt",
+            # "/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/absVQ_grd.txt",
+            # "/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/abs_grdCurl.txt",
+            # "/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/abs_grd.txt",
+            "/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/temp.txt",
+            "r",
+        ) as f:
+            for args_str in f:
+                args = cli.parse_args(args_str.split())
+                break
+        # args.wandb_mode = "disabled"
+    if args.use_curl == "off":
+        args.use_curl = None
+    pprint(args)
+    return args
 
 
 def train_hdqn():
@@ -875,7 +814,7 @@ def train_manual_absT_grdTN():
     env.close()
 
 
-def train_adaptive_absT_grdTN():
+def train_adaptive_absT_grdTN(args):
     """
     abstract level using table
     ground level using table or network, by setting use_table4grd
@@ -890,48 +829,46 @@ def train_adaptive_absT_grdTN():
     # cfg_key = "MiniGrid-Empty-RGB"
     # cfg_key = "MiniGrid-Empty-v0"
     cfg_key = "MiniGrid-FourRooms-v0"
+    # cfg_key = "MiniGrid-MultiRooms-v0"
     # cfg_key = "MiniGrid-Crossing-v0"
     # cfg_key = "MiniGrid-DistShift-v0"
     # cfg_key = "MiniGrid-Custom"
     # load hyperparameters from yaml config file
-    with open(
-        "/workspace/repos_dev/VQVAE_RL/hyperparams/minigrid/adaptive_abstraction_vq.yaml"
-    ) as f:
-        cfg = yaml.load(f, Loader=yaml.FullLoader)[cfg_key]
-        pprint(cfg)
-    for rep in range(30):
+    # with open(
+    #     "/workspace/repos_dev/VQVAE_RL/hyperparams/minigrid/adaptive_abstraction_vq.yaml"
+    # ) as f:
+    #     cfg = yaml.load(f, Loader=yaml.FullLoader)[cfg_key]
+    #     pprint(cfg)
+    external_rng = np.random.default_rng(seed=args.env_seed)
+    fix_rn = external_rng.integers(1e3, 1e10, 30)
+    for rep in range(args.repetitions):
         print(f"====Starting Repetition {rep}====")
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
         current_time = current_time.strftime("%b%d_%H-%M-%S")
         # 🐝 initialise a wandb run
-        run = wandb.init(
+        project_name = args.domain_name.replace("/", "_")
+        wandb.init(
             # project="HDQN_AbsTable_GrdNN_Empty",
             # project="HDQN_AbsTable_GrdNN_4Rooms",
-            project=f"HDQN_{cfg_key}",
-            # mode="disabled",
-            group=cfg["wandb_group"],
-            tags=[
-                # "tbl",
-                "shp" if cfg["use_shaping"] else "no_shp",
-                # f"omg{cfg['omega']}",
-                # f"env{cfg['env_size']}x{cfg['env_size']}",
-                # f"start({cfg['agent_start_pos'][0]}, {cfg['agent_start_pos'][1]})",
-            ],
-            notes=cfg["wandb_notes"],
-            config=cfg,
+            project=f"HDQN_{project_name}",
+            mode=args.wandb_mode,
+            group=args.wandb_group_name,
+            tags=args.wandb_tags,
+            # notes=cfg["wandb_notes"],
+            config=vars(args),
         )
         wandb.run.log_code(".")
-        config = wandb.config
         L = LoggerWandb()
-        make_env = MAKE_ENV_FUNCS[config.env_type]
-        env = make_env(config, cfg_key)
+        env = MAKE_ENV_FUNCS[args.domain_type](args.domain_name, seed=args.env_seed)
 
         # agent = HDQN_AdaptiveAbs_VQ(config, env)
-        agent = HDQN_TCURL_VQ(config, env, logger=L)
-        wandb.watch(agent.vq, log="all", log_freq=100, idx=0)
-        wandb.watch(agent.abs_V, log="all", log_freq=100, idx=1)
-        wandb.watch(agent.ground_Q, log="all", log_freq=100, idx=2)
-        wandb.watch(agent.curl, log="all", log_freq=100, idx=3)
+        agent = HDQN_TCURL_VQ(args, env, logger=L)
+        if agent.use_vq:
+            wandb.watch(agent.vq, log="all", log_freq=100, idx=0)
+        # wandb.watch(agent.abs_V, log="all", log_freq=100, idx=1)
+        # wandb.watch(agent.ground_Q, log="all", log_freq=100, idx=2)
+        if agent.use_curl:
+            wandb.watch(agent.curl, log="all", log_freq=100, idx=3)
 
         first_goal_found = False
         steps_after_goal_found = 0
@@ -939,13 +876,15 @@ def train_adaptive_absT_grdTN():
         interval4SemiMDP = 0
         time_start_training = time.time()
         # gym.reset(seed=int(time.time()))
-        total_steps = int(config.total_timesteps + config.init_steps)
+        total_steps = int(args.total_timesteps + args.init_steps)
         # agent.cache_goal_transition()
         while agent.timesteps_done < total_steps:
             time_start_episode = time.time()
             # Initialize the environment and state
             state, info = env.reset()
             episodic_reward = 0
+            episodic_combined_reward = 0
+            episodic_intrinsic_reward = 0
             episodic_negative_reward = 0
             episodic_non_negative_reward = 0
             episodic_shaped_reward = 0
@@ -962,6 +901,23 @@ def train_adaptive_absT_grdTN():
                     steps_after_goal_found += 1
                 # [Step]
                 next_state, reward, terminated, truncated, info = env.step(action)
+                reward = info["original_reward"]
+                episodic_reward += reward
+                if reward < 0:
+                    episodic_negative_reward += reward
+                else:
+                    episodic_non_negative_reward += reward
+                if agent.use_curiosity:
+                    int_reward = (
+                        agent.rnd.compute_int_reward(state, agent.timesteps_done - args.init_steps)
+                        .clamp_(-0.1, 0.1)
+                        .item()
+                    )
+                    # int_reward = agent.vq_confidence(state)
+                    episodic_intrinsic_reward += int_reward
+                    reward += int_reward
+                    episodic_combined_reward += reward
+
                 agent.timesteps_done += 1
 
                 # abs_state1, abs_value1 = agent.get_abstract_value(info["agent_pos1"])
@@ -978,7 +934,7 @@ def train_adaptive_absT_grdTN():
                 #         info["agent_pos2"][1], info["agent_pos2"][0], info["agent_dir2"]
                 #     ] += shaping
                 agent.update_grd_visits(info)
-                agent.update_grd_rewards(info)
+                agent.update_grd_rewards(info, reward)
 
                 # for i in range(len(config.abs_ticks) - 1):
                 #     if agent.timesteps_done == (i + 1) * total_steps / len(config.abs_ticks):
@@ -995,16 +951,10 @@ def train_adaptive_absT_grdTN():
                 # agent.cache_lazy(state, action, next_state, reward, terminated)
                 episodic_shaped_reward += shaping
 
-                reward = info["original_reward"]
-                episodic_reward += reward
-                if reward < 0:
-                    episodic_negative_reward += reward
-                else:
-                    episodic_non_negative_reward += reward
                 # [update]
                 # action_prime = agent.act_table(info)
-                if agent.timesteps_done >= config.init_steps:
-                    agent.update(use_shaping=config.use_shaping)
+                if agent.timesteps_done >= args.init_steps:
+                    agent.update()
                     # here we use table to do update
                     # agent.update_table(use_shaping=config.use_shaping)
                     # agent.update_table_no_memory(
@@ -1041,17 +991,19 @@ def train_adaptive_absT_grdTN():
                     elif agent._current_progress_remaining > 0.2:
                         plot_every = 30
 
-                    if agent.episodes_done > 0 and agent.episodes_done % plot_every == 0:
-                        # agent.vis_grd_visits(norm_log=50)
+                    if agent.episodes_done > 0 and agent.episodes_done % 1 == 0:
+                        agent.vis_grd_visits(norm_log=50)
                         # agent.vis_grd_visits(norm_log=0)
                         pass
-                        if agent.timesteps_done >= config.init_steps:
-                            # agent.vis_grd_q_values(reduction_mode="max", norm_log=50)
+                        if agent.timesteps_done >= args.init_steps:
+                            agent.vis_grd_q_values(reduction_mode="max", norm_log=50)
                             # agent.vis_grd_q_values(reduction_mode="mean", norm_log=50)
                             # agent.vis_reward_distribution()
-                            # agent.vis_abstraction()
+                            agent.vis_abstraction()
+                            agent.vis_abstract_values(mode="soft_novq")
                             # agent.vis_abstract_values(mode="soft")
                             # agent.vis_abstract_values(mode="hard")
+                            # agent.vis_abstract_values(mode="target_soft_novq")
                             # agent.vis_abstract_values(mode="target_soft")
                             # agent.vis_abstract_values(mode="target_hard")
                             # agent.vis_shaping_distribution(norm_log=100)
@@ -1063,6 +1015,8 @@ def train_adaptive_absT_grdTN():
                         "Episodic/negative_reward": episodic_negative_reward,
                         "Episodic/non_negative_reward": episodic_non_negative_reward,
                         "Episodic/shaped_reward": episodic_shaped_reward,
+                        "Episodic/combined_reward": episodic_combined_reward,
+                        "Episodic/intrinsic_reward": episodic_intrinsic_reward,
                         "reward/episodic_reward": episodic_reward,
                         "reward/episodic_negative_reward": episodic_negative_reward,
                         "reward/episodic_non_negative_reward": episodic_non_negative_reward,
@@ -1086,7 +1040,7 @@ def train_adaptive_absT_grdTN():
                     #             "After_1stTerminated/timesteps_done": steps_after_goal_found,
                     #         }
                     #     )
-                    L.log(metrics, count=False)
+                    L.log(metrics)
                     L.dump2wandb(agent=agent, force=True)
 
                     print2console(
@@ -1151,24 +1105,13 @@ def evaluate_dqn_agent(env, agent: HDQN_ManualAbs):
     agent.grd_visits = np.zeros_like(agent.grd_visits)
 
 
-def train_atari_absT_grdN():
+def train_atari_absT_grdN(args):
     """
     abstract level using table
     ground level using table or network, by setting use_table4grd
 
     """
-    # env_id = "MiniGrid-Empty-Random-6x6-v0"
-    # env_id = "MiniGrid-Empty-16x16-v0"
-    # env_id = "CarRacing-v2"
-    # CarRacing-v05, ALE/Skiing-v5, Boxing-v0, ALE/Freeway-v5, ALE/Pong-v5, ALE/Breakout-v5, BreakoutNoFrameskip-v4, RiverraidNoFrameskip-v4
-    # vae_version = "vqvae_c3_embedding16x64_3_duolayer"
-
-    # cfg_key = "ALE/Breakout-v5"
-    # cfg_key = "ALE/MsPacman-v5"
-    # cfg_key = "ALE/SpaceInvaders-v5"
-    # cfg_key = "ALE/Asterix-v5"
     cfg_key = "Atari"
-    # cfg_key = "CarRacing-v2"
     # cfg_key = "MinAtar/Breakout-v0"
     # cfg_key = "MinAtar/Asterix-v0"
     # cfg_key = "MinAtar/SpaceInvaders-v0"
@@ -1176,52 +1119,58 @@ def train_atari_absT_grdN():
     # cfg_key = "MinAtar/Seaquest-v0"
 
     # load hyperparameters from yaml config file
-    with open("/workspace/repos_dev/VQVAE_RL/hyperparams/atari/atari_soft_vq.yaml") as f:
-        cfg = yaml.load(f, Loader=yaml.FullLoader)[cfg_key]
-        pprint(cfg)
+    # with open("/workspace/repos_dev/VQVAE_RL/hyperparams/atari/atari_soft_vq.yaml") as f:
+    #     cfg = yaml.load(f, Loader=yaml.FullLoader)[cfg_key]
+    #     pprint(cfg)
     # with open("/workspace/repos_dev/VQVAE_RL/hyperparams/minatar/minatar.yaml") as f:
     #     cfg = yaml.load(f, Loader=yaml.FullLoader)["MinAtar"]
     #     pprint(cfg)
     # with open("/workspace/repos_dev/VQVAE_RL/hyperparams/carracing.yaml") as f:
     #     cfg = yaml.load(f, Loader=yaml.FullLoader)["CarRacing-v2"]
     #     pprint(cfg)
-    for rep in range(30):
+    for rep in range(args.repetitions):
         print(f"====Starting Repetition {rep}====")
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
         current_time = current_time.strftime("%b%d_%H-%M-%S")
         # 🐝 initialise a wandb run
-        project_name = cfg["domain_name"].replace("ALE/", "")
+        project_name = args.domain_name
+        curl_projection = 0 if args.curl_projection_dims == [-1] else 1
+        if args.use_curl == None:
+            curl_mode = "off"
+        else:
+            curl_mode = args.use_curl.replace("on_", "")
         run = wandb.init(
             # project="HDQN_AbsTable_GrdNN_Atari",
             project=f"HDQN_Atari_{project_name}",
             # project="HDQN_MinAtar",
             # project="HDQN_Neo_Carracing",
-            # mode="disabled",
-            group=cfg["wandb_group"],
-            tags=[
-                "shp" if cfg["use_shaping"] else "no_shp",
-                f"omg{cfg['omega']}",
-            ],
-            notes=cfg["wandb_notes"],
-            config=cfg,
+            mode=args.wandb_mode,
+            group=f"A{int(args.use_abs_V)}_AEncD{int(args.abs_enc_detach)}_GEncD{int(args.grd_enc_detach)}_ShrEnc{int(args.share_encoder)}_Curl|{curl_mode},{args.curl_pair},P{curl_projection}|_VQ{int(args.use_vq)}|{args.num_vq_embeddings},{args.vq_softmin_beta},{int(args.critic_upon_vq)},{args.curl_vq_cfg}|_bs{args.batch_size}_ms{int(args.size_replay_memory/1000)}k_close{args.approach_abs_factor}|{args.extra_note}",
+            tags=args.wandb_tags,
+            # notes=cfg["wandb_notes"],
+            config=vars(args),
         )
         wandb.run.log_code(".")
-        config = wandb.config
         L = LoggerWandb()
-        make_env = MAKE_ENV_FUNCS[config.env_type]
-        env = make_env(config, config.domain_name)
+        env = MAKE_ENV_FUNCS[args.domain_type]("ALE/" + args.domain_name, seed=args.env_seed)
 
         # agent = HDQN_Pixel(config, env)
-        agent = HDQN_TCURL_VQ(config, env, logger=L)
-        wandb.watch(agent.vq, log="all", log_freq=100, idx=0)
-        wandb.watch(agent.abs_V, log="all", log_freq=100, idx=1)
-        wandb.watch(agent.ground_Q, log="all", log_freq=100, idx=2)
-        wandb.watch(agent.curl, log="all", log_freq=100, idx=3)
+        agent = HDQN_TCURL_VQ(args, env, logger=L)
+        if agent.use_vq:
+            wandb.watch(agent.vq, log="all", log_freq=100, idx=0)
+        # wandb.watch(agent.abs_V, log="all", log_freq=100, idx=1)
+        # wandb.watch(agent.ground_Q, log="all", log_freq=100, idx=2)
+        if agent.use_curl:
+            wandb.watch(agent.curl, log="all", log_freq=100, idx=3)
 
         time_start_training = time.time()
         # gym.reset(seed=int(time.time()))
-        total_steps = int(config.total_timesteps + config.init_steps)
+        total_steps = int(args.total_timesteps + args.init_steps)
         # agent.cache_goal_transition()
+        episodic_reward_window = deque(maxlen=15)
+        ema_reward_list = []
+        time_steps_list = []
+        recent_dropping_episodes = 0
         while agent.timesteps_done < total_steps:
             time_start_episode = time.time()
             # Initialize the environment and state
@@ -1232,8 +1181,8 @@ def train_atari_absT_grdN():
             episodic_shaped_reward = 0
             for t in count():
                 # [Select and perform an action]
-                with utils.eval_mode(agent):
-                    action = agent.act(state)
+                # with utils.eval_mode(agent):
+                action = agent.act(state)
                 # [Step]
                 next_state, reward, terminated, truncated, info = env.step(action)
                 agent.timesteps_done += 1
@@ -1275,8 +1224,11 @@ def train_atari_absT_grdN():
                     episodic_non_negative_reward += reward
                 # [update]
                 # action_prime = agent.act_table(info)
-                if agent.timesteps_done >= config.init_steps:
-                    agent.update(use_shaping=config.use_shaping)
+                if agent.timesteps_done >= args.init_steps:
+                    agent.update()
+
+                    if agent.timesteps_done % args.freq_eval == 0:
+                        test(agent, args, L)
                     # here we use table to do update
                     # agent.update_table(use_shaping=config.use_shaping)
                     # agent.update_table_no_memory(
@@ -1294,7 +1246,7 @@ def train_atari_absT_grdN():
                 if terminated or truncated:
                     agent.episodes_done += 1
                     if agent.episodes_done > 0 and agent.episodes_done % 1 == 0:
-                        if agent.timesteps_done > config.init_steps:
+                        if agent.timesteps_done > args.init_steps:
                             # agent.vis_abstraction()
                             # agent.vis_abstract_values()
                             # agent.vis_grd_visits(norm_log=50)
@@ -1308,6 +1260,7 @@ def train_atari_absT_grdN():
                         "Episodic/negative_reward": episodic_negative_reward,
                         "Episodic/non_negative_reward": episodic_non_negative_reward,
                         "Episodic/shaped_reward": episodic_shaped_reward,
+                        # "Episodic/ema_reward": mean(episodic_reward_window),
                         "reward/episodic_reward": episodic_reward,
                         "reward/episodic_negative_reward": episodic_negative_reward,
                         "reward/episodic_non_negative_reward": episodic_non_negative_reward,
@@ -1315,10 +1268,12 @@ def train_atari_absT_grdN():
                         "Episodic/length": t + 1,
                         "Time/total_time_elapsed": (time.time() - time_start_training) / 3600,
                         "Time/fps_per_episode": int((t + 1) / (time.time() - time_start_episode)),
+                        # "RND/beta_t": agent.rnd.beta_t,
+                        # "Episodic/ema_reward_derivative": ema_reward_derivative,
                     }
 
-                    L.log(metrics, count=False)
-                    L.dump2wandb(agent=agent, force=True)
+                    L.log_and_dump(metrics, agent)
+                    # L.dump2wandb(agent=agent, force=True)
 
                     print2console(
                         agent=agent,
@@ -1346,6 +1301,58 @@ def train_atari_absT_grdN():
     env.close()
 
 
+def test(agent, args, L: LoggerWandb):
+    env = MAKE_ENV_FUNCS[args.domain_type]("ALE/" + args.domain_name)
+    # env.eval()
+
+    episodic_rews = []
+    episodic_non_negative_rews = []
+    episodic_negative_rews = []
+
+    # Test performance over several episodes
+    terminated = True
+    for _ in range(args.evaluation_episodes):
+        while True:
+            if terminated:
+                state, info = env.reset()
+                reward_sum = 0
+                non_negative_reward_sum = 0
+                negative_reward_sum = 0
+                terminated = False
+
+            action = agent.act_e_greedy(state, epsilon=0.01)  # Choose an action ε-greedily
+            state, reward, terminated, truncated, info = env.step(action)  # Step
+            reward_sum += reward
+            if reward >= 0:
+                non_negative_reward_sum += reward
+            else:
+                negative_reward_sum += reward
+
+            if terminated:
+                episodic_rews.append(reward_sum)
+                episodic_non_negative_rews.append(non_negative_reward_sum)
+                episodic_negative_rews.append(negative_reward_sum)
+                break
+    env.close()
+    if len(episodic_non_negative_rews) == 0:
+        episodic_non_negative_rews.append(0)
+    if len(episodic_negative_rews) == 0:
+        episodic_negative_rews.append(0)
+    avg_reward = sum(episodic_rews) / len(episodic_rews)
+    avg_non_negative_reward = sum(episodic_non_negative_rews) / len(episodic_non_negative_rews)
+    avg_negative_reward = sum(episodic_negative_rews) / len(episodic_negative_rews)
+    # Return average reward and Q-value
+
+    metrics = {
+        "Evaluation/avg_episodic_reward": avg_reward,
+        "Evaluation/avg_episodic_non_negative_reward": avg_non_negative_reward,
+        "Evaluation/avg_episodic_negative_reward": avg_negative_reward,
+        "Evaluation/timesteps_done": agent.timesteps_done,
+        "Evaluation/episodes_done": agent.episodes_done,
+    }
+    L.log_and_dump(metrics, agent)
+
+
 def print2console(agent, episodic_reward, terminated, truncated, t, time_start_episode, rep):
     print(f"===========Episode {agent.episodes_done} Done| Repetition {rep}=====")
     print("[Total_steps_done]:", agent.timesteps_done)
@@ -1366,8 +1373,8 @@ def find_gpu():
     DEVICE_ID_LIST = GPUtil.getAvailable(
         order="random",
         limit=4,
-        maxLoad=1.0,
-        maxMemory=0.9,
+        maxLoad=0.8,
+        maxMemory=0.85,
         includeNan=False,
         excludeID=[],
         excludeUUID=[],
@@ -1381,21 +1388,25 @@ def find_gpu():
 
 
 if __name__ == "__main__":
-    print("sys.path:", sys.path)
+    # print("sys.path:", sys.path)
 
     # from utils.gpu_profile import gpu_profile
-    find_gpu()
+    # find_gpu()
     # sys.settrace(gpu_profile)
-    torch.set_num_threads(1)
+    # torch.set_num_threads(1)
     # torch.autograd.set_detect_anomaly(True)
     # tracemalloc.start()
     # set number of threads to 1, when using T.ToTensor() it will cause very high cpu usage and using milti-threads
-
+    args = parse_args()
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    if not torch.cuda.is_available():
+        print("No GPU available, aborting")
+        raise SystemExit
     # train_hdqn()
     # train_dqn_kmeans()
     # train_manual_absT_grdTN()
-    train_adaptive_absT_grdTN()
-    # train_atari_absT_grdN()
+    # train_adaptive_absT_grdTN(args)
+    train_atari_absT_grdN(args)
 
     # env = make_env_minigrid(env_id="MiniGrid-Empty-6x6-v0")
     # print(env.observation_space.shape)

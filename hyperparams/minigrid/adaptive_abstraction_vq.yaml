@@ -153,37 +153,40 @@ MiniGrid-FourRooms-v0:
   abs_encoder_linear_dims: 32
   encoded_detach4abs: False
   use_shaping: True
+  curiosity: True
   # cluster_embedding_dim: None
-  num_vq_embeddings: 4
+  num_vq_embeddings: 10
   dim_vq_embeddings: 32
-  vq_softmin_beta: 10
+  vq_softmin_beta: 0.5
   mlp_hidden_dim_abs: [64, 64]
   mlp_hidden_dim_grd: [64, 64]
   # lr_ground_Q: 0.0002
   # lr_abstract_V: 0.1
   lr_ground_Q: lin_0.0006
   lr_abstract_V: lin_0.0006
-  lr_vq: lin_0.0006
-  lr_curl: lin_0.0006
+  lr_vq: 0.001
+  lr_curl: 0.001
   safe_ratio: 0.0
+  close_factor: 0.0
+  optimizer: adamw
   # lr_encoder: 0.0005
   # lr_decoder: 0.0005
-  batch_size: 512
-  batch_size_repre: 32
-  size_replay_memory: 50000
+  batch_size: 256
+  batch_size_repre: 256
+  size_replay_memory: 20000
   gamma: 0.99
   abstract_gamma: 0.99
   omega: 1
-  ground_Q_encoder_tau: 0.01
-  ground_Q_critic_tau: 0.01
+  ground_Q_encoder_tau: 1
+  ground_Q_critic_tau: 1
   abstract_V_encoder_tau: 1
   abstract_V_critic_tau: 1
-  curl_tau: 0.001
+  curl_tau: 0.01
   # encoder_tau: 0.2
 
-  exploration_fraction: 0.95
-  exploration_initial_eps: 1.0
-  exploration_final_eps: 0.01
+  exploration_fraction: 0.9
+  exploration_initial_eps: 0.9
+  exploration_final_eps: 0.05
   save_model_every: 500000.0
 
   ground_learn_every: 4
@@ -192,18 +195,97 @@ MiniGrid-FourRooms-v0:
   abstract_learn_every: 4
   abstract_sync_every: 8
   # abstract_gradient_steps: 1
-  curl_vq_learn_every: 1000
-  curl_vq_gradient_steps: 100
+  curl_vq_learn_every: 4
+  curl_vq_gradient_steps: 1
   curl_vq_sync_every: 64
 
   clip_grad: False
   clip_reward: False
   # wandb_group: AE_KMeans_DQN
   # wandb_group: AE_DQN
-  wandb_group: 15w_B50k_curlvq_safe0.0
-  # wandb_group: shp_100k_lrabs0.1_tau0.1_aevery4_rrward_mod
+  # wandb_group: 10w_B50k_BS512_novq_safe0._close0.0
+  wandb_group: 10w_B50k_BS512_curlvq_safe0.0_close0.1_4test
+  # wandb_group: 10w_B50k_BS512_pure
   # wandb_notes: total_loss = 3.0 * ground_td_error - entrophy_vq + codebook_diversity + commit_error_abs2grd(abs_v, grd_q_reduction)
-  wandb_notes: contraistive_loss = loss1 * 1.0 + cb_diversity*0.2
+  wandb_notes: contraistive_loss = loss1 * 1.0 + neg_diversity*0.0; without F.normalize(); grd_match_abs_err = F.mse_loss(grd_q_reduction, abs_v); cd_diversity l2norm;abs encoder attach for abs_V loss
+
+  # wandb_tags: ["shp", "omg1", "tbl", "16x16", "(1,1)"]
+
+  # validate_every: 1000
+  reset_training_info_every: 1000
+  save_recon_every: 1000
+  # buffer_recent_states_every: 1000
+
+MiniGrid-MultiRooms-v0:
+  env_type: GymMiniGrid
+  # env_size: 19
+  # agent_start_pos: [1, 1]
+  # goal_pos: [17, 17]
+  total_timesteps: 150000
+  init_steps: 10000
+  input_format: full_obs
+  grd_hidden_channels:
+    - 8
+    - 16
+    - 32
+  grd_encoder_linear_dims: 32 # int|list|None
+  abs_encoder_linear_dims: 32
+  encoded_detach4abs: False
+  use_shaping: True
+  # cluster_embedding_dim: None
+  num_vq_embeddings: 16
+  dim_vq_embeddings: 32
+  vq_softmin_beta: 0.1
+  mlp_hidden_dim_abs: [64, 64]
+  mlp_hidden_dim_grd: [64, 64]
+  # lr_ground_Q: 0.0002
+  # lr_abstract_V: 0.1
+  lr_ground_Q: 0.0003
+  lr_abstract_V: 0.0003
+  lr_vq: 0.0003
+  lr_curl: 0.0003
+  safe_ratio: 0.0
+  close_factor: 0.5
+  optimizer: adam
+  # lr_encoder: 0.0005
+  # lr_decoder: 0.0005
+  batch_size: 512
+  batch_size_repre: 512
+  size_replay_memory: 25000
+  gamma: 0.99
+  abstract_gamma: 0.99
+  omega: 1
+  ground_Q_encoder_tau: 1
+  ground_Q_critic_tau: 1
+  abstract_V_encoder_tau: 1
+  abstract_V_critic_tau: 1
+  curl_tau: 0.01
+  # encoder_tau: 0.2
+
+  exploration_fraction: 0.9
+  exploration_initial_eps: 0.9
+  exploration_final_eps: 0.05
+  save_model_every: 500000.0
+
+  ground_learn_every: 4
+  ground_sync_every: 8
+  # ground_gradient_steps: 1
+  abstract_learn_every: 4
+  abstract_sync_every: 8
+  # abstract_gradient_steps: 1
+  curl_vq_learn_every: 4
+  curl_vq_gradient_steps: 1
+  curl_vq_sync_every: 64
+
+  clip_grad: False
+  clip_reward: False
+  # wandb_group: AE_KMeans_DQN
+  # wandb_group: AE_DQN
+  wandb_group: 10w_B50k_BS256_safe0.0_close0.5_confidence3
+  # wandb_group: 10w_B25k_BS512_curlvq_safe0.0_close0.1_4test
+  # wandb_group: 10w_B25k_BS256_rnd_pure
+  # wandb_notes: total_loss = 3.0 * ground_td_error - entrophy_vq + codebook_diversity + commit_error_abs2grd(abs_v, grd_q_reduction)
+  wandb_notes: contraistive_loss = loss1 * 1.0 + neg_diversity*0.0; without F.normalize(); grd_match_abs_err = F.mse_loss(grd_q_reduction, abs_v); cd_diversity l2norm;abs encoder attach for abs_V loss
 
   # wandb_tags: ["shp", "omg1", "tbl", "16x16", "(1,1)"]
 

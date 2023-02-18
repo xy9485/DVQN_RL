@@ -34,14 +34,14 @@ from minigrid import Wall
 
 
 class HDQN(nn.Module):
-    def __init__(self, config, env: gym.Env, logger: LoggerWandb) -> None:
+    def __init__(self, args, env: gym.Env, logger: LoggerWandb) -> None:
         super().__init__()
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         seed = int(time.time())
         # np.random.seed(seed)
         # torch.manual_seed(seed)
-        self.set_hparams(config)
+        self.set_hparams(args)
         self.env = env
         self.n_actions = env.action_space.n
         # self.n_actions = env.action_space.n
@@ -64,9 +64,9 @@ class HDQN(nn.Module):
         #     "Transition", ("state", "action", "next_state", "reward", "done")
         # )
         self.exploration_scheduler = get_linear_fn(
-            config.exploration_initial_eps,
-            config.exploration_final_eps,
-            config.exploration_fraction,
+            args.exploration[1],
+            args.exploration[2],
+            args.exploration[0],
         )
 
         self.timesteps_done = 0

@@ -215,19 +215,24 @@ class VectorQuantizerLinearSoft(nn.Module):
     """
 
     def __init__(
-        self, num_embeddings: int, embedding_dim: int, beta: float = 0.25, softmin_beta: float = 10
+        self,
+        num_embeddings: int,
+        embedding_dim: int,
+        commitment_beta: float = 0.25,
+        softmin_beta: float = 10,
     ):
         super().__init__()
         self.K = num_embeddings
         self.D = embedding_dim
-        self.beta = beta
+        self.commitment_beta = commitment_beta
         self.softmin_beta = softmin_beta
 
         self.embedding = nn.Embedding(self.K, self.D)
         # self.embedding = nn.Embedding(self.K, self.D).requires_grad_(False)
         # try detach
-        self.embedding.weight.data.uniform_(-1 / self.K, 1 / self.K)
+        # self.embedding.weight.data.uniform_(-1 / self.K, 1 / self.K)
         # self.embedding.weight.data.uniform_(-1, 1)
+        self.embedding.weight.data.uniform_(0, 1)
         # self.embedding.weight.data.orthogonal_()
         # nn.init.orthogonal_(self.embedding.weight.data)
 
@@ -245,16 +250,15 @@ class VectorQuantizerLinearSoft(nn.Module):
 
         # [Get the encoding that has the min distance]
         # encoding_inds = torch.argmin(dist, dim=1).unsqueeze(1)  # [B, 1]
-        encoding_inds = F.softmin(self.softmin_beta * dist, dim=1)
+        encoding_inds = F.softmin(dist / self.softmin_beta, dim=1)
 
         # [Quantize the latents]
         quantized_latents = torch.matmul(encoding_inds, self.embedding.weight)  # [B, D]
 
-        # [Compute the VQ Losses[]
-        commitment_loss = F.mse_loss(quantized_latents.detach(), latents)
-        embedding_loss = F.mse_loss(quantized_latents, latents.detach())
-
-        vq_loss = commitment_loss * self.beta + embedding_loss
+        # # [Compute the VQ Losses[]
+        # commitment_loss = F.mse_loss(quantized_latents.detach(), latents)
+        # embedding_loss = F.mse_loss(quantized_latents, latents.detach())
+        # vq_loss = commitment_loss * self.beta + embedding_loss
 
         # Add the residue back to the latents
         # quantized_latents = latents + (quantized_latents - latents).detach()
@@ -274,16 +278,26 @@ class VectorQuantizerLinearSoft(nn.Module):
 
         # [Get Hard Quantization]
         device = latents.device
-        hard_encoding_inds = torch.argmin(dist, dim=1).unsqueeze(1)  # [B, 1]
+        min_dist = torch.min(dist, dim=1, keepdim=True)
+        cluster_metric = min_dist.values.mean().item()
+        hard_encoding_inds = min_dist.indices  # [B, 1]
+        # hard_encoding_inds = torch.argmin(dist, dim=1, keepdim=True)  # [B, 1]
         encoding_one_hot = torch.zeros(hard_encoding_inds.size(0), self.K, device=device)
         encoding_one_hot.scatter_(1, hard_encoding_inds, 1)  # [B x K]
         hard_quantized_latents = torch.matmul(encoding_one_hot, self.embedding.weight)  # [B, D]
-        cluster_metric = dist[encoding_one_hot.bool()].mean().item()
+        # cluster_metric = dist[encoding_one_hot.bool()].mean().item()
+
+        # [Compute the VQ Losses[]
+        commitment_loss = F.mse_loss(hard_quantized_latents.detach(), latents)
+        embedding_loss = F.mse_loss(hard_quantized_latents, latents.detach())
+        vq_loss = commitment_loss * self.commitment_beta + embedding_loss
+
         output_dict = {
             "hard_encoding_inds": hard_encoding_inds,
             "hard_quantized_latents": hard_quantized_latents,
             "cluster_assignment": encoding_inds,
             "cluster_metric": cluster_metric,
+            "dist": dist,
         }
 
         return (

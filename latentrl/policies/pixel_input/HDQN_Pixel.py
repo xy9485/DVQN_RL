@@ -41,7 +41,7 @@ from nn_models import (
 )
 from PIL import Image
 from policies.HDQN import HDQN
-from policies.utils import EncoderMaker, ReplayMemory, ReplayMemoryWithCluster
+from policies.utils import ReplayMemory, ReplayMemoryWithCluster
 from sklearn.cluster import KMeans
 from sympy.solvers import solve
 from torch import Tensor, nn
@@ -60,14 +60,14 @@ class HDQN_Pixel(HDQN):
             observation_space=env.observation_space,
             action_space=env.action_space,
             encoder_maker=EncoderMaker(input_format=config.input_format, agent=self),
-            mlp_hidden_dim_grd=config.mlp_hidden_dim_grd,
+            mlp_hidden_dims=config.mlp_hidden_dim_grd,
         ).to(self.device)
 
         self.ground_Q_target = DQN(
             observation_space=env.observation_space,
             action_space=env.action_space,
             encoder_maker=EncoderMaker(input_format=config.input_format, agent=self),
-            mlp_hidden_dim_grd=config.mlp_hidden_dim_grd,
+            mlp_hidden_dims=config.mlp_hidden_dim_grd,
         ).to(self.device)
 
         self.ground_Q_target.load_state_dict(self.ground_Q.state_dict())

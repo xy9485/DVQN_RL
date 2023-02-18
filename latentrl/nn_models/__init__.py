@@ -8,7 +8,7 @@ from nn_models.components import (
     MlpModel,
 )
 from nn_models.decoder import Decoder, Decoder_MiniGrid, Decoder_VQ, DecoderRes
-from nn_models.DQN import DQN, DVN, Q_MLP, V_MLP, DQN_Repara
+from nn_models.DQN import DQN, DVN, Q_MLP, V_MLP, DQN_Repara, DuelDQN
 from nn_models.encoder import (
     Encoder,
     EncoderImg,

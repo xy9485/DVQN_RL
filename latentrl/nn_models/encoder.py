@@ -14,34 +14,36 @@ from nn_models.components import ConvBlock, ResidualLayer
 class Encoder(nn.Module):
     def __init__(self, linear_dims: int | list | None) -> None:
         super().__init__()
+        assert isinstance(linear_dims, list) and isinstance(linear_dims[0], int)
+
         self.linear_dims = linear_dims
         self.linear_out_dim = None
 
     def maybe_add_linear_module(self, output_logits=True) -> None:
         self.blocks.append(nn.Flatten())
-        if self.linear_dims is None:
+        if self.linear_dims == [-1]:
             self.linear_out_dim = self.cnn_flatten_dim
             return
-        if isinstance(self.linear_dims, int):
+        if len(self.linear_dims) == 1:
             # self.linear_dims = [self.linear_dims]
-            self.blocks.append(nn.Linear(self.cnn_flatten_dim, self.linear_dims))
+            self.blocks.append(nn.Linear(self.cnn_flatten_dim, self.linear_dims[0]))
             # self.blocks.append(nn.LayerNorm(self.linear_dims))
             self.blocks.append(nn.ReLU())
             # self.blocks.append(nn.Sigmoid())
             # self.blocks.append(nn.Tanh())
+            # self.blocks.append(nn.Linear(self.linear_dims[-1], self.linear_dims[-1]))
             if not output_logits:
                 self.blocks.append(nn.Tanh())
-            self.linear_out_dim = self.linear_dims
+            self.linear_out_dim = self.linear_dims[0]
             return
 
         for n_in, n_out in zip([self.cnn_flatten_dim] + self.linear_dims[:-1], self.linear_dims):
             self.blocks.extend([nn.Linear(n_in, n_out), nn.ReLU()])
 
         self.blocks.append(nn.Linear(self.linear_dims[-1], self.linear_dims[-1]))
-        self.blocks.append(nn.LayerNorm(self.linear_dims[-1]))
+        # self.blocks.append(nn.LayerNorm(self.linear_dims[-1]))
         if not output_logits:
             self.blocks.append(nn.Tanh())
-
         self.linear_out_dim = self.linear_dims[-1]
         return
 
@@ -63,17 +65,16 @@ class Encoder(nn.Module):
 class EncoderImg(Encoder):
     def __init__(
         self,
-        input_channels: int,
-        linear_dims: int | list | None = None,  # latent_dim
         observation_space: gym.spaces.box.Box = None,
         hidden_channels: List = [32, 64, 64],
+        linear_dims: int | list | None = None,  # latent_dim
         n_redisual_layers: int = 0,
         **kwargs,
     ) -> None:
         super().__init__(linear_dims)
         self.blocks = [
             ConvBlock(
-                input_channels,
+                min(observation_space.shape),
                 hidden_channels[0],
                 kernel_size=8,
                 stride=4,
@@ -97,6 +98,12 @@ class EncoderImg(Encoder):
                 batch_norm=False,
             ),
         ]
+        # self.blocks = [
+        #     nn.Conv2d(input_channels, 32, 5, stride=5, padding=0),
+        #     nn.ReLU(),
+        #     nn.Conv2d(32, 64, 5, stride=5, padding=0),
+        #     nn.ReLU(),
+        # ]
         if n_redisual_layers > 0:
             for _ in range(n_redisual_layers):
                 self.blocks.append(ResidualLayer(hidden_channels[-1], hidden_channels[-1]))
@@ -116,7 +123,7 @@ class EncoderImg(Encoder):
         #     self.shape_conv_output = x.shape
 
         #     self.n_flatten = nn.Flatten()(x).shape[1]
-        self.maybe_add_linear_module(output_logits=True)
+        self.maybe_add_linear_module()
         # if self.linear_dims:
         #     self.blocks.extend(
         #         [
@@ -231,10 +238,9 @@ class Encoder2(nn.Module):
 class Encoder_MiniGrid(Encoder):
     def __init__(
         self,
-        input_channels: int = 3,
-        linear_dims: int | list | None = None,  # latent_dim
         observation_space: gym.spaces.box.Box = None,
-        hidden_channels: List = [16, 32, 64],
+        hidden_channels: List = [8, 16, 32],
+        linear_dims: int | list | None = None,  # latent_dim
         n_redisual_layers: int = 0,
         **kwargs,
     ) -> None:
@@ -272,7 +278,7 @@ class Encoder_MiniGrid(Encoder):
         # encoder architeture #2
         self.blocks = [
             ConvBlock(
-                input_channels,
+                min(observation_space.shape),
                 hidden_channels[0],
                 kernel_size=3,
                 stride=2,
@@ -369,14 +375,14 @@ class Encoder_MiniGrid(Encoder):
 class Encoder_MinAtar(Encoder):
     def __init__(
         self,
-        input_channels: int = 3,
-        linear_dims: int | list | None = None,  # latent_dim
         observation_space: gym.spaces.box.Box = None,
-        hidden_channels: List = [16, 32, 64],
+        hidden_channels: List = 16,
+        linear_dims: int | list | None = None,  # latent_dim
         n_redisual_layers: int = 0,
         **kwargs,
     ) -> None:
         super().__init__(linear_dims)
+        input_channels = min(observation_space.shape)
         # encoder architecture #1
         # self.blocks = [
         #     ConvBlock(
@@ -490,16 +496,16 @@ class Encoder_MinAtar(Encoder):
 class Encoder_MiniGrid_PartialObs(nn.Module):
     def __init__(
         self,
-        in_channels: int = 3,
-        linear_out_dim: Optional[int] = None,  # latent_dim
         observation_space: gym.spaces.box.Box = None,
-        hidden_dims: List = [16, 32],
+        hidden_channels: List = [32, 64, 64],
+        linear_dims: int | None = None,  # latent_dim
+        n_redisual_layers: int = 0,
         **kwargs,
     ) -> None:
         super().__init__()
         self.forward_call = 0
         # final_channels = hidden_dims[-1]*2
-        self.linear_out_dim = linear_out_dim
+        self.linear_dims = linear_dims
         self.random_encoder = nn.Sequential(
             nn.Conv2d(3, 16, (2, 2)),
             nn.ReLU(),
@@ -521,10 +527,10 @@ class Encoder_MiniGrid_PartialObs(nn.Module):
             self.n_flatten = nn.Flatten()(x).shape[1]
 
         blocks = [self.random_encoder, nn.Flatten()]
-        if self.linear_out_dim:  # if linear_out_dim is not None than followed by a linear layer
+        if self.linear_dims:  # if linear_out_dim is not None than followed by a linear layer
             blocks.extend(
                 [
-                    nn.Linear(self.n_flatten, self.linear_out_dim),
+                    nn.Linear(self.n_flatten, self.linear_dims),
                     # nn.LayerNorm(linear_out_dim),
                     nn.Tanh(),
                     # nn.ReLU(),
@@ -619,3 +625,92 @@ class EncoderRes(nn.Module):
         result = self.convs(obs)
         # result = self.ln(result)
         return result
+
+
+_AVAILABLE_ENCODERS = {
+    "minigrid_full_obs": Encoder_MiniGrid,
+    "minigrid_partial_obs": Encoder_MiniGrid_PartialObs,
+    "full_img": EncoderImg,
+}
+
+
+def make_encoder(
+    encoder_type, obs_shape, feature_dim, num_layers, num_filters, output_logits=False
+):
+    assert encoder_type in _AVAILABLE_ENCODERS
+    return _AVAILABLE_ENCODERS[encoder_type](
+        obs_shape, feature_dim, num_layers, num_filters, output_logits
+    )
+
+
+def make_encoder(
+    input_format,
+    observation_space=None,
+    hidden_channels: int = None,
+    linear_dims: int | list = None,
+):
+    if input_format == "partial_obs":
+        encoder = Encoder_MiniGrid_PartialObs(
+            linear_out_dim=None,
+            observation_space=observation_space,
+        )
+    elif input_format == "full_obs":
+        encoder = Encoder_MiniGrid(
+            observation_space=observation_space,
+            # hidden_channels=hidden_channels,
+            linear_dims=linear_dims,
+        )
+    elif input_format == "full_img":
+        encoder = EncoderImg(
+            observation_space=observation_space,
+            # hidden_channels=hidden_channels,
+            linear_dims=linear_dims,
+        )
+    elif input_format == "full_img_small":
+        encoder = Encoder_MinAtar(
+            observation_space=observation_space,
+            # hidden_channels=hidden_channels,
+            linear_dims=linear_dims,
+        )
+    else:
+        raise NotImplementedError
+
+    return encoder
+
+
+# class EncoderMaker:
+#     def __init__(self, input_format, agent):
+#         self.input_format = input_format
+#         self.agent = agent
+
+#     def make(self):
+#         if self.input_format == "partial_obs":
+#             encoder = Encoder_MiniGrid_PartialObs(
+#                 linear_out_dim=None,
+#                 observation_space=self.agent.env.observation_space,
+#             )
+#         elif self.input_format == "full_obs":
+#             encoder = Encoder_MiniGrid(
+#                 input_channels=self.agent.env.observation_space.shape[-1],
+#                 linear_dims=self.agent.grd_encoder_linear_dims,
+#                 observation_space=self.agent.env.observation_space,
+#                 hidden_channels=self.agent.grd_hidden_channels,
+#             )
+#         elif self.input_format == "full_img":
+#             encoder = EncoderImg(
+#                 input_channels=self.agent.env.observation_space.shape[0],
+#                 linear_dims=self.agent.grd_encoder_linear_dims,
+#                 observation_space=self.agent.env.observation_space,
+#                 hidden_channels=self.agent.grd_hidden_channels,
+#             )
+#         elif self.input_format == "full_img_small":
+#             encoder = Encoder_MinAtar(
+#                 input_channels=self.agent.env.observation_space.shape[-1],
+#                 linear_dims=self.agent.grd_encoder_linear_dims,
+#                 observation_space=self.agent.env.observation_space,
+#                 hidden_channels=self.agent.grd_hidden_channels,
+#             )
+#         else:
+#             raise NotImplementedError
+
+#         return encoder

@@ -274,7 +274,7 @@ class ReplayBufferNStep(object):
                 if idx == len(self.memory):
                     continue
                 n_transit_rew[j] = n_transit_rew[j] + math.pow(self.gamma, i) * self.memory[idx].rew
-                n_step_gamma = math.pow(self.gamma, i + 1) if self.memory[idx].gamma else 0.0
+                n_step_gamma = math.pow(self.gamma, i + 1) if self.memory[idx].gamma > 0.0 else 0.0
                 obs[j] = self.memory[anchor_idx].obs
                 act[j] = self.memory[anchor_idx].act
                 n_obs[j] = self.memory[idx].n_obs
@@ -282,20 +282,17 @@ class ReplayBufferNStep(object):
                 gamma[j] = n_step_gamma
                 info[j] = self.memory[idx].info
 
-            if len(obs) == 0:
-                N_Step_T.append(None)
-            else:
-                N_Step_T.append(
-                    {
-                        "obs": obs,
-                        "act": act,
-                        "n_obs": n_obs,
-                        "rew": rew,
-                        "gamma": gamma,
-                        "info": info,
-                    }
-                )
-                pass
+            N_Step_T.append(
+                {
+                    "obs": obs,
+                    "act": act,
+                    "n_obs": n_obs,
+                    "rew": rew,
+                    "gamma": gamma,
+                    "info": info,
+                }
+            )
+            pass
         return N_Step_T
 
     def __len__(self):
@@ -472,80 +469,3 @@ class eval_mode(object):
         for model, state in zip(self.models, self.prev_states):
             model.train(state)
         return False
-
-
-class EncoderMaker:
-    def __init__(self, input_format, agent):
-        self.input_format = input_format
-        self.agent = agent
-
-    def make(self):
-        if self.input_format == "partial_obs":
-            encoder = Encoder_MiniGrid_PartialObs(
-                linear_out_dim=None,
-                observation_space=self.agent.env.observation_space,
-            )
-        elif self.input_format == "full_obs":
-            encoder = Encoder_MiniGrid(
-                input_channels=self.agent.env.observation_space.shape[-1],
-                linear_dims=self.agent.grd_encoder_linear_dims,
-                observation_space=self.agent.env.observation_space,
-                hidden_channels=self.agent.grd_hidden_channels,
-            )
-        elif self.input_format == "full_img":
-            encoder = EncoderImg(
-                input_channels=self.agent.env.observation_space.shape[0],
-                linear_dims=self.agent.grd_encoder_linear_dims,
-                observation_space=self.agent.env.observation_space,
-                hidden_channels=self.agent.grd_hidden_channels,
-            )
-        elif self.input_format == "full_img_small":
-            encoder = Encoder_MinAtar(
-                input_channels=self.agent.env.observation_space.shape[-1],
-                linear_dims=self.agent.grd_encoder_linear_dims,
-                observation_space=self.agent.env.observation_space,
-                hidden_channels=self.agent.grd_hidden_channels,
-            )
-        else:
-            raise NotImplementedError
-
-        return encoder
-
-
-def make_encoder(
-    input_format,
-    input_channels: int = 1,
-    linear_dims: int | list = None,
-    observation_space=None,
-    hidden_channels: int = 32,
-):
-    if input_format == "partial_obs":
-        encoder = Encoder_MiniGrid_PartialObs(
-            linear_out_dim=None,
-            observation_space=observation_space,
-        )
-    elif input_format == "full_obs":
-        encoder = Encoder_MiniGrid(
-            input_channels=input_channels,
-            linear_dims=linear_dims,
-            observation_space=observation_space,
-            hidden_channels=hidden_channels,
-        )
-    elif input_format == "full_img":
-        encoder = EncoderImg(
-            input_channels=input_channels,
-            linear_dims=linear_dims,
-            observation_space=observation_space,
-            hidden_channels=hidden_channels,
-        )
-    elif input_format == "full_img_small":
-        encoder = Encoder_MinAtar(
-            input_channels=input_channels,
-            linear_dims=linear_dims,
-            observation_space=observation_space,
-            hidden_channels=hidden_channels,
-        )
-    else:
-        raise NotImplementedError
-
-    return encoder

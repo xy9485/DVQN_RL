@@ -120,3 +120,10 @@ class FourRoomsEnv(MiniGridEnv):
             goal.init_pos, goal.cur_pos = self._goal_default_pos
         else:
             self.place_obj(Goal())
+
+    def _reward(self) -> float:
+        """
+        Compute the reward to be given upon success
+        """
+
+        return 100 - 50 * (self.step_count / self.max_steps)

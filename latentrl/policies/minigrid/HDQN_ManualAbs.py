@@ -42,7 +42,7 @@ from nn_models import (
     RandomShiftsAug,
 )
 from policies.HDQN import HDQN
-from policies.utils import EncoderMaker, ReplayMemory, ReplayMemoryWithCluster
+from policies.utils import ReplayMemory, ReplayMemoryWithCluster
 
 
 class HDQN_ManualAbs(HDQN):
