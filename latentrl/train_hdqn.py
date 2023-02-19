@@ -110,6 +110,8 @@ def parse_args():
     # cli.add_argument("--mode", default="grd", type=str)
     cli.add_argument("--args_from_cli", default=False, action="store_true")
     # cli.add_argument("--use_grd_Q", default=True, action="store_true")
+    cli.add_argument("--grd_mode", default="dqn", choices=["dqn", "ddqn", "cddqn"], type=str)
+    cli.add_argument("--grd_lower_bound", default=False, action=argparse.BooleanOptionalAction)
     cli.add_argument("--use_abs_V", default=False, action=argparse.BooleanOptionalAction)
     cli.add_argument("--use_curl", default=None, choices=["on_abs", "on_grd", "off"], type=str)
     cli.add_argument("--share_encoder", default=False, action=argparse.BooleanOptionalAction)
@@ -135,13 +137,13 @@ def parse_args():
 
     cli.add_argument("--total_timesteps", default=1e5, type=int)
     cli.add_argument("--init_steps", default=1e4, type=int)
-    cli.add_argument("--batch_size", default=32, type=int)
+    cli.add_argument("--batch_size", default=128, type=int)
     cli.add_argument("--size_replay_memory", default=1e5, type=int)
     cli.add_argument("--gamma", default=0.99, type=float)
     cli.add_argument("--exploration", nargs=3, default=[0.99, 0.1, 0.1], type=float)
 
-    cli.add_argument("--conservative_ratio", default=0.0, type=str)
-    cli.add_argument("--approach_abs_factor", default=0.0, type=str)
+    cli.add_argument("--conservative_ratio", default="0.0", type=str)
+    cli.add_argument("--approach_abs_factor", default="0.0", type=str)
     cli.add_argument("--omega", default=0.0, type=float, help="factor of reward shaping")
     # params for grd_Q
     cli.add_argument("--grd_encoder_linear_dims", nargs="*", default=[-1], type=int)
@@ -158,15 +160,15 @@ def parse_args():
     # cli.add_argument("--dim_vq_embeddings", default=128, type=int)
     cli.add_argument("--vq_softmin_beta", default=0.5, type=float)
 
-    cli.add_argument("--lr_grd_Q", default=1e-4, type=str, help="sometimes start with lin")
-    cli.add_argument("--lr_abs_V", default=1e-4, type=str, help="sometimes start with lin")
-    cli.add_argument("--lr_curl", default=1e-4, type=str)
-    cli.add_argument("--lr_vq", default=1e-4, type=str)
+    cli.add_argument("--lr_grd_Q", default="0.0001", type=str, help="sometimes start with lin")
+    cli.add_argument("--lr_abs_V", default="0.0001", type=str, help="sometimes start with lin")
+    cli.add_argument("--lr_curl", default="0.0001", type=str)
+    cli.add_argument("--lr_vq", default="0.0001", type=str)
 
     cli.add_argument("--freq_grd_learn", default=1, type=int)
-    cli.add_argument("--freq_grd_sync", default=2000, type=int)
+    cli.add_argument("--freq_grd_sync", default=1000, type=int)
     cli.add_argument("--freq_abs_learn", default=1, type=int)
-    cli.add_argument("--freq_abs_sync", default=2000, type=int)
+    cli.add_argument("--freq_abs_sync", default=1000, type=int)
     cli.add_argument("--freq_curl_learn", default=1, type=int)
     cli.add_argument("--freq_curl_sync", default=1, type=int)
 
@@ -192,11 +194,11 @@ def parse_args():
         find_gpu()
         print("loading args from txt file...")
         with open(
-            # "/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/absCurl_grd.txt",
-            # "/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/absVQ_grd.txt",
-            # "/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/abs_grdCurl.txt",
-            # "/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/abs_grd.txt",
-            "/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/temp.txt",
+            # "/workspace/repos_dev/Dev_VQVAE_RL/latentrl/htcondor_args/atari/absCurl_grd.txt",
+            # "/workspace/repos_dev/Dev_VQVAE_RL/latentrl/htcondor_args/atari/absVQ_grd.txt",
+            # "/workspace/repos_dev/Dev_VQVAE_RL/latentrl/htcondor_args/atari/abs_grdCurl.txt",
+            # "/workspace/repos_dev/Dev_VQVAE_RL/latentrl/htcondor_args/atari/abs_grd.txt",
+            f"/workspace/repos_dev/Dev_VQVAE_RL/latentrl/htcondor_args/atari/temp.txt",
             "r",
         ) as f:
             for args_str in f:

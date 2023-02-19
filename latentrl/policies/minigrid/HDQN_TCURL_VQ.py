@@ -104,7 +104,39 @@ class HDQN_TCURL_VQ(HDQN):
         ).to(self.device)
         self.ground_Q_target.load_state_dict(self.ground_Q.state_dict())
         self.ground_Q.train()
-        # self.ground_Q_target.train()
+        self.ground_Q_target.train()
+
+        if self.grd_mode == "cddqn":
+            self.ground_Q2 = DQN(
+                # observation_space=env.observation_space,
+                action_space=env.action_space,
+                # encoder=EncoderMaker(input_format=config.input_format, agent=self).make(),
+                encoder=make_encoder(
+                    input_format=args.input_format,
+                    observation_space=env.observation_space,
+                    # hidden_channels=args.grd_hidden_channels,
+                    linear_dims=args.grd_encoder_linear_dims,
+                ),
+                mlp_hidden_dims=args.grd_critic_dims,
+                noisy=args.use_noisynet,
+            ).to(self.device)
+
+            self.ground_Q2_target = DQN(
+                # observation_space=env.observation_space,
+                action_space=env.action_space,
+                # encoder=EncoderMaker(input_format=config.input_format, agent=self).make(),
+                encoder=make_encoder(
+                    input_format=args.input_format,
+                    observation_space=env.observation_space,
+                    # hidden_channels=args.grd_hidden_channels,
+                    linear_dims=args.grd_encoder_linear_dims,
+                ),
+                mlp_hidden_dims=args.grd_critic_dims,
+                noisy=args.use_noisynet,
+            ).to(self.device)
+            self.ground_Q2_target.load_state_dict(self.ground_Q2.state_dict())
+            self.ground_Q2.train()
+            self.ground_Q_target.train()
 
         if args.use_abs_V:
             if args.share_encoder:
@@ -140,6 +172,7 @@ class HDQN_TCURL_VQ(HDQN):
 
             self.abs_V_target.load_state_dict(self.abs_V.state_dict())
             self.abs_V.train()
+            self.abs_V_target.train()
             self.abs_encoder = self.abs_V.encoder
 
         if args.use_curl:
@@ -167,6 +200,7 @@ class HDQN_TCURL_VQ(HDQN):
             for param in self.curl_ema.parameters():
                 param.requires_grad = False
             self.curl.train()
+            self.curl_ema.train()
 
         if args.use_vq:
             self.vq = VectorQuantizerLinearSoft(
@@ -186,6 +220,7 @@ class HDQN_TCURL_VQ(HDQN):
             for param in self.vq_ema.parameters():
                 param.requires_grad = False
             self.vq.train()
+            self.vq_ema.train()
             self.abs_V_array = np.zeros((args.num_vq_embeddings))
 
         self.aug = RandomShiftsAug(pad=4)
@@ -212,6 +247,8 @@ class HDQN_TCURL_VQ(HDQN):
     def set_hparams(self, args):
         # Hyperparameters
         self.input_format = args.input_format
+        self.grd_mode = args.grd_mode
+        self.grd_lower_bound = args.grd_lower_bound
         self.dan = args.dan
         self.use_curiosity = args.use_curiosity
         self.use_abs_V = args.use_abs_V
@@ -938,6 +975,8 @@ class HDQN_TCURL_VQ(HDQN):
         if args.use_abs_V:
             self.abs_V_optimizer = OPT(self.abs_V.parameters(), lr=self.lr_abs_V)
         self.ground_Q_optimizer = OPT(self.ground_Q.parameters(), lr=self.lr_grd_Q)
+        if self.grd_mode == "cddqn":
+            self.ground_Q_optimizer2 = OPT(self.ground_Q2.parameters(), lr=self.lr_grd_Q)
         # elif args.optimizer == "sgd":
         #     OPT = optim.SGD
         #     if args.use_curl:
@@ -1166,7 +1205,7 @@ class HDQN_TCURL_VQ(HDQN):
         n_obs,
         rew,
         gamma,
-        via_vq=True,
+        via_vq,
         detach_encoder=False,
         use_shaping=False,
         approach_abs=False,
@@ -1204,10 +1243,6 @@ class HDQN_TCURL_VQ(HDQN):
             # [Vanilla DQN]
             grd_q_next, encoded_next = self.ground_Q_target(n_obs)
             grd_q_next_max = grd_q_next.max(1)[0].unsqueeze(1)
-
-            # [Double DQN]
-            # action_argmax_target = self.ground_Q_target(n_obs)[0].argmax(dim=1, keepdim=True)
-            # grd_q_next_max = self.ground_Q(n_obs)[0].gather(1, action_argmax_target)
 
             grd_q_target = rew + gamma * grd_q_next_max
             if use_shaping:
@@ -1315,87 +1350,248 @@ class HDQN_TCURL_VQ(HDQN):
 
         return total_loss
 
-    def update_grdQ_critic(
+    def update_grdQ_ddqn(
         self,
         obs,
         act,
         n_obs,
         rew,
         gamma,
-        use_vq,
-        approach_abs,
+        via_vq,
+        detach_encoder=False,
+        use_shaping=False,
+        approach_abs=False,
+        lower_bound=False,
     ):
-
         if self.clip_reward:
             rew.clamp_(-1, 1)
 
-        # [data augmentation]
-        if self.input_format == "full_img":
-            obs = self.aug(obs)
-            n_obs = self.aug(n_obs)
-
         # [Update ground Q network]
-        # grd_q, encoded = self.ground_Q(obs)
-        with torch.no_grad():
-            encoded = self.curl(obs)
-            if use_vq:
-                encoded, _, _, _ = self.vq(encoded)
-        grd_q = self.ground_Q.critic(encoded)
+        grd_q, _ = self.ground_Q(obs, detach_encoder)
         grd_q_reduction = torch.mean(grd_q, dim=1, keepdim=True)
+        # grd_q_reduction = torch.amax(grd_q.detach(), dim=1, keepdim=True)
+        # grd_q_mean_bytarget = torch.mean(self.ground_Q_target(state)[0].detach(), dim=1, keepdim=True)
         grd_q = grd_q.gather(1, act)
 
         with torch.no_grad():
-            n_encoded = self.curl_ema(n_obs)
-            if use_vq:
+            if via_vq:
+                encoded = self.abs_V.encoder(obs)
+                encoded, _, _, _ = self.vq(encoded)
+                abs_v = self.abs_V_target.critic(encoded)
+                n_encoded = self.abs_V.encoder(n_obs)
                 n_encoded, _, _, _ = self.vq(n_encoded)
-
-            # [Vanilla DQN]
-            # grd_q_next, encoded_next = self.ground_Q_target(n_obs)
-            grd_q_next = self.ground_Q_target.critic(n_encoded)
-            grd_q_next_max = grd_q_next.max(1)[0].unsqueeze(1)
-
+                n_abs_v = self.abs_V_target.critic(n_encoded)
+            else:
+                # abs_v = self.abs_V_target(obs)
+                # n_abs_v = self.abs_V_target(n_obs)
+                abs_v = self.abs_V(obs)
+                n_abs_v = self.abs_V(n_obs)
             # [Double DQN]
-            # selected_action = self.ground_Q.critic(n_quantized).argmax(dim=1, keepdim=True)
-            # grd_q_next_max = self.ground_Q_target.critic(n_quantized).gather(1, selected_action)
+            grd_q_next_max = self.ground_Q_target(n_obs)[0].gather(
+                1, self.ground_Q(n_obs)[0].argmax(dim=1, keepdim=True)
+            )
+            if lower_bound:
+                assert approach_abs == False
+                assert self.safe_ratio == 0.0
+                grd_q_next_max = torch.maximum(grd_q_next_max, n_abs_v)
 
             grd_q_target = rew + gamma * grd_q_next_max
+            if use_shaping:
+                # shaping = self.abs_V_target(quantized_next) - self.abs_V_target(quantized)
+                # shaping = abs_v_next_hard - abs_v_hard
+                shaping = n_abs_v - abs_v
+                grd_q_target += self.omega * shaping
+                self.L.log({"avg_shaping": shaping.mean().item()})
+            # if self.safe_ratio > 0.0:
+            #     if random.random() < self.safe_ratio:
+            #         target_value = rew + gamma * n_abs_v
+            #     else:
+            #         target_value = grd_q_target
+            target_value = grd_q_target
 
-        ground_td_error = F.mse_loss(grd_q, grd_q_target)
+        criterion = nn.SmoothL1Loss()
+        ground_td_error = criterion(grd_q, target_value)
+        if self.dan:
+            ground_td_error = criterion(grd_q + abs_v, rew + gamma * (grd_q_next_max + n_abs_v))
 
         # [Compute total loss]
         total_loss = ground_td_error
         if approach_abs:
-            with torch.no_grad():
-                abs_v = self.abs_V_target(encoded)
-            grd_match_abs_err = F.mse_loss(grd_q_reduction, abs_v)
-            total_loss += 0.1 * grd_match_abs_err
+            assert lower_bound == False
+            criterion = nn.SmoothL1Loss()
+            # criterion = F.mse_loss
+            # grd_match_abs_err = criterion(grd_q_reduction, abs_v)
+            grd_match_abs_err = criterion(grd_q, abs_v)
+            if self.dan:
+                grd_match_abs_err = criterion(grd_q + abs_v, rew + gamma * n_abs_v)
+            # grd_match_abs_err = criterion(grd_q, rew + gamma * n_abs_v)
+            # total_loss += self.close_factor * grd_match_abs_err
+            total_loss = (
+                1 - self.close_factor
+            ) * total_loss + self.close_factor * grd_match_abs_err
 
         self.ground_Q_optimizer.zero_grad(set_to_none=True)
         # self.abs_V_optimizer.zero_grad(set_to_none=True)
         # self.vq_optimizer.zero_grad(set_to_none=True)
         total_loss.backward()
+        # print("memory_allocated: {:.5f} MB".format(torch.cuda.memory_allocated() / (1024 * 1024)))
+        # print("run backward")
         if self.clip_grad:
             # 1 clamp gradients to avoid exploding gradient
             for param in self.ground_Q.parameters():
                 if param.grad is not None:  # make sure grad is not None
                     param.grad.data.clamp_(-1, 1)
-            # for param in self.abs_V.parameters():
-            #     if param.grad is not None:
-            #         param.grad.data.clamp_(-1, 1)
-            # for param in self.vq.parameters():
-            #     if param.grad is not None:
-            #         param.grad.data.clamp_(-1, 1)
-
-            # 2 Clip gradient norm
-            # max_grad_norm = 10
-            # torch.nn.utils.clip_grad_norm_(self.policy_mlp_net.parameters(), max_grad_norm)
-            # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
         self.ground_Q_optimizer.step()
 
-        # self.training_info["ground_Q_error"].append(ground_td_error.item())
-        # self.training_info["abstract_V_error"].append(abs_td_error.item())
-        # self.training_info["entrophy_vq"].append(entrophy_vq.item())
-        # self.training_info["vq_loss"].append(vq_loss.item())
+        with torch.no_grad():
+            diff_l2_abs_grd = F.mse_loss(abs_v, grd_q)
+            # diff_l1_abs_grd = F.l1_loss(abs_v, grd_q_reduction)
+            diff_l1_abs_grd = (abs_v - grd_q).mean()
+
+        metric = {
+            "Info/grdQ/ground_Q_error": ground_td_error.item(),
+            "Info/grdQ/update_Q total_loss": total_loss.item(),
+            "Info/grdQ/grd_q": grd_q.mean().item(),
+            "Info/grdQ/grd_q_max": grd_q_next_max.mean().item(),
+            "Info/grdQ/grd_q_reduction": grd_q_reduction.mean().item(),
+            "Info/grdQ/absV_grdQ_l1": diff_l1_abs_grd.item(),
+            "Info/grdQ/absV_grdQ_l2": diff_l2_abs_grd.item(),
+        }
+        self.L.log(metric)
+
+        return total_loss
+
+    def update_grdQ_cddqn(
+        self,
+        obs,
+        act,
+        n_obs,
+        rew,
+        gamma,
+        via_vq,
+        detach_encoder=False,
+        use_shaping=False,
+        approach_abs=False,
+        lower_bound=False,
+    ):
+        if self.clip_reward:
+            rew.clamp_(-1, 1)
+
+        # [Update ground Q network]
+        grd_q, _ = self.ground_Q(obs, detach_encoder)
+        grd_q = grd_q.gather(1, act)
+
+        grd_q2, _ = self.ground_Q2(obs, detach_encoder)
+        grd_q2 = grd_q2.gather(1, act)
+
+        grd_q_reduction = torch.mean(grd_q, dim=1, keepdim=True)
+        # grd_q_reduction = torch.amax(grd_q.detach(), dim=1, keepdim=True)
+
+        with torch.no_grad():
+            if via_vq:
+                encoded = self.abs_V.encoder(obs)
+                encoded, _, _, _ = self.vq(encoded)
+                abs_v = self.abs_V_target.critic(encoded)
+                n_encoded = self.abs_V.encoder(n_obs)
+                n_encoded, _, _, _ = self.vq(n_encoded)
+                n_abs_v = self.abs_V_target.critic(n_encoded)
+            else:
+                # abs_v = self.abs_V_target(obs)
+                # n_abs_v = self.abs_V_target(n_obs)
+                abs_v = self.abs_V(obs)
+                n_abs_v = self.abs_V(n_obs)
+            # [Clipped Double DQN]
+            grd_q_next, encoded_next = self.ground_Q_target(n_obs)
+            grd_q_next_max1 = grd_q_next.max(1)[0].unsqueeze(1)
+
+            grd_q_next_max2 = self.ground_Q2_target(n_obs)[0].gather(
+                1, self.ground_Q_target(n_obs)[0].argmax(dim=1, keepdim=True)
+            )
+
+            grd_q_next_max = torch.minimum(grd_q_next_max1, grd_q_next_max2)
+
+            if lower_bound:
+                assert approach_abs == False
+                assert use_shaping == False
+                assert self.safe_ratio == 0.0
+                grd_q_next_max = torch.maximum(grd_q_next_max, n_abs_v)
+
+            grd_q_target = rew + gamma * grd_q_next_max
+            if use_shaping:
+                # shaping = self.abs_V_target(quantized_next) - self.abs_V_target(quantized)
+                # shaping = abs_v_next_hard - abs_v_hard
+                shaping = n_abs_v - abs_v
+                grd_q_target += self.omega * shaping
+                self.L.log({"avg_shaping": shaping.mean().item()})
+
+            # if self.safe_ratio > 0:
+            #     if random.random() < self.safe_ratio:
+            #         target_value = rew + gamma * n_abs_v
+            #     else:
+            #         target_value = grd_q_target
+            target_value = grd_q_target
+
+        criterion = nn.SmoothL1Loss()
+        ground_td_error = criterion(grd_q, target_value)
+        ground_td_error2 = criterion(grd_q2, target_value)
+        if self.dan:
+            ground_td_error = criterion(grd_q + abs_v, rew + gamma * (grd_q_next_max + n_abs_v))
+
+        # [Compute total loss]
+        total_loss = ground_td_error + ground_td_error2
+        if approach_abs:
+            assert lower_bound == False
+            criterion = nn.SmoothL1Loss()
+            # criterion = F.mse_loss
+            # grd_match_abs_err = criterion(grd_q_reduction, abs_v)
+            grd_match_abs_err = criterion(grd_q, abs_v)
+            if self.dan:
+                grd_match_abs_err = criterion(grd_q + abs_v, rew + gamma * n_abs_v)
+            # grd_match_abs_err = criterion(grd_q, rew + gamma * n_abs_v)
+            # total_loss += self.close_factor * grd_match_abs_err
+            total_loss = (
+                1 - self.close_factor
+            ) * total_loss + self.close_factor * grd_match_abs_err
+
+        self.ground_Q_optimizer.zero_grad(set_to_none=True)
+        self.ground_Q_optimizer2.zero_grad(set_to_none=True)
+        # self.abs_V_optimizer.zero_grad(set_to_none=True)
+        # self.vq_optimizer.zero_grad(set_to_none=True)
+        total_loss.backward()
+        # print("memory_allocated: {:.5f} MB".format(torch.cuda.memory_allocated() / (1024 * 1024)))
+        # print("run backward")
+        if self.clip_grad:
+            # 1 clamp gradients to avoid exploding gradient
+            for param in self.ground_Q.parameters():
+                if param.grad is not None:  # make sure grad is not None
+                    param.grad.data.clamp_(-1, 1)
+                for param in self.ground_Q2.parameters():
+                    if param.grad is not None:  # make sure grad is not None
+                        param.grad.data.clamp_(-1, 1)
+
+        self.ground_Q_optimizer.step()
+        self.ground_Q_optimizer2.step()
+
+        with torch.no_grad():
+            diff_l2_abs_grd = F.mse_loss(abs_v, grd_q)
+            # diff_l1_abs_grd = F.l1_loss(abs_v, grd_q_reduction)
+            diff_l1_abs_grd = (abs_v - grd_q).mean()
+
+        metric = {
+            "Info/grdQ/ground_Q_error": ground_td_error.item(),
+            "Info/grdQ/ground_Q_error2": ground_td_error2.item(),
+            "Info/grdQ/update_Q total_loss": total_loss.item(),
+            "Info/grdQ/grd_q": grd_q.mean().item(),
+            "Info/grdQ/grd_q2": grd_q2.mean().item(),
+            "Info/grdQ/grd_q_max": grd_q_next_max.mean().item(),
+            "Info/grdQ/grd_q_max2": grd_q_next_max2.mean().item(),
+            "Info/grdQ/grd_q_reduction": grd_q_reduction.mean().item(),
+            "Info/grdQ/absV_grdQ_l1": diff_l1_abs_grd.item(),
+            "Info/grdQ/absV_grdQ_l2": diff_l2_abs_grd.item(),
+        }
+        self.L.log(metric)
+
+        return total_loss
 
     def update_absV(
         self,
@@ -1801,32 +1997,78 @@ class HDQN_TCURL_VQ(HDQN):
         # self.training_info["entrophy_vq"].append(anc_entrophy_vq.item())
         # self.training_info["total_loss"].append(total_loss.item())
 
-    def update_grdQ_pure(self, state, action, next_state, reward, gamma):
+    def update_grdQ_pure(self, obs, act, n_obs, rew, gamma):
 
         if self.clip_reward:
-            reward.clamp_(-1, 1)
+            rew.clamp_(-1, 1)
 
-        # [data augmentation]
-        # if self.input_format == "full_img":
-        #     state = self.aug(state)
-        #     next_state = self.aug(next_state)
+        if self.grd_mode == "cddqn":
+            grd_q, encoded = self.ground_Q(obs)
+            grd_q = grd_q.gather(1, act)
+
+            grd_q2, encoded2 = self.ground_Q2(obs)
+            grd_q2 = grd_q2.gather(1, act)
+            with torch.no_grad():
+                grd_q_next, encoded_next = self.ground_Q_target(n_obs)
+                grd_q_next_max1 = grd_q_next.max(1)[0].unsqueeze(1)
+
+                grd_q_next_max2 = self.ground_Q2_target(n_obs)[0].gather(
+                    1, self.ground_Q_target(n_obs)[0].argmax(dim=1, keepdim=True)
+                )
+
+                grd_q_next_max = torch.minimum(grd_q_next_max1, grd_q_next_max2)
+                grd_q_target = rew + gamma * grd_q_next_max
+
+            criterion = nn.SmoothL1Loss()
+            ground_td_error = criterion(grd_q, grd_q_target)
+            ground_td_error2 = criterion(grd_q2, grd_q_target)
+            self.ground_Q_optimizer.zero_grad(set_to_none=True)
+            self.ground_Q_optimizer2.zero_grad(set_to_none=True)
+            (ground_td_error + ground_td_error2).backward()
+            if self.clip_grad:
+                # 1 clamp gradients to avoid exploding gradient
+                for param in self.ground_Q.parameters():
+                    if param.grad is not None:  # make sure grad is not None
+                        param.grad.data.clamp_(-1, 1)
+                for param in self.ground_Q2.parameters():
+                    if param.grad is not None:  # make sure grad is not None
+                        param.grad.data.clamp_(-1, 1)
+
+                # 2 Clip gradient norm
+                # max_grad_norm = 10
+                # torch.nn.utils.clip_grad_norm_(self.policy_mlp_net.parameters(), max_grad_norm)
+                # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
+            self.ground_Q_optimizer.step()
+            self.ground_Q_optimizer2.step()
+            metric = {
+                "Info/grdQ/ground_Q_error1": ground_td_error.item(),
+                "Info/grdQ/ground_Q_error2": ground_td_error2.item(),
+                "Info/grdQ/grd_q": grd_q.mean().item(),
+                "Info/grdQ/grd_q2": grd_q2.mean().item(),
+                "Info/grdQ/grd_q_max": grd_q_next_max.mean().item(),
+                "Info/grdQ/grd_q_max2": grd_q_next_max2.mean().item(),
+            }
+
+            self.L.log(metric)
+            return
 
         # [Update ground Q network]
-        grd_q, encoded = self.ground_Q(state)
-        grd_q = grd_q.gather(1, action)
+        grd_q, encoded = self.ground_Q(obs)
+        grd_q = grd_q.gather(1, act)
 
         with torch.no_grad():
-
             # [Vanilla DQN]
-            grd_q_next, encoded_next = self.ground_Q_target(next_state)
-            grd_q_next_max = grd_q_next.max(1)[0].unsqueeze(1)
-
-            # [Double DQN]
-            # action_argmax_target = self.ground_Q_target(next_state)[0].argmax(dim=1, keepdim=True)
-            # grd_q_next_max = self.ground_Q(next_state)[0].gather(1, action_argmax_target)
+            if self.grd_mode == "dqn":
+                grd_q_next, encoded_next = self.ground_Q_target(n_obs)
+                grd_q_next_max = grd_q_next.max(1)[0].unsqueeze(1)
+            elif self.grd_mode == "ddqn":
+                # [Double DQN]
+                grd_q_next_max = self.ground_Q_target(n_obs)[0].gather(
+                    1, self.ground_Q(n_obs)[0].argmax(dim=1, keepdim=True)
+                )
 
             # Compute ground target Q value
-            grd_q_target = reward + gamma * grd_q_next_max
+            grd_q_target = rew + gamma * grd_q_next_max
 
         criterion = nn.SmoothL1Loss()
         # criterion = F.mse_loss
@@ -2030,22 +2272,44 @@ class HDQN_TCURL_VQ(HDQN):
                 )
                 pass
             if steps % self.ground_learn_every == 0:
-                # self.update_grdQ(obs, act, n_obs, rew, gamma, use_shaping=True, approach_abs=False)
-                grd_loss = self.update_grdQ(
-                    obs,
-                    act,
-                    n_obs,
-                    rew,
-                    gamma,
-                    via_vq=self.critic_upon_vq,
-                    detach_encoder=self.grd_enc_detach,
-                    use_shaping=False,
-                    approach_abs=True,
-                )
-                # self.update_grdQ_critic(
-                #     obs, act, n_obs, rew, gamma, use_vq=False, approach_abs=False
-                # )
-                pass
+                if self.grd_mode == "dqn":
+                    self.update_grdQ(
+                        obs,
+                        act,
+                        n_obs,
+                        rew,
+                        gamma,
+                        via_vq=self.critic_upon_vq,
+                        detach_encoder=self.grd_enc_detach,
+                        use_shaping=False,
+                        approach_abs=self.close_factor > 0.0,
+                    )
+                elif self.grd_mode == "ddqn":
+                    self.update_grdQ_ddqn(
+                        obs,
+                        act,
+                        n_obs,
+                        rew,
+                        gamma,
+                        via_vq=self.critic_upon_vq,
+                        detach_encoder=self.grd_enc_detach,
+                        use_shaping=False,
+                        approach_abs=self.close_factor > 0.0,
+                        lower_bound=self.grd_lower_bound,
+                    )
+                elif self.grd_mode == "cddqn":
+                    self.update_grdQ_cddqn(
+                        obs,
+                        act,
+                        n_obs,
+                        rew,
+                        gamma,
+                        via_vq=self.critic_upon_vq,
+                        detach_encoder=self.grd_enc_detach,
+                        use_shaping=False,
+                        approach_abs=self.close_factor > 0.0,
+                        lower_bound=self.grd_lower_bound,
+                    )
             if self.use_curl and steps % self.curl_learn_every == 0:
                 for _ in range(self.curl_gradient_steps):
                     pass
@@ -2158,6 +2422,12 @@ class HDQN_TCURL_VQ(HDQN):
                 self.ground_Q_target.parameters(),
                 self.ground_Q_encoder_tau,
             )
+            if self.grd_mode == "cddqn":
+                soft_sync_params(
+                    self.ground_Q2.parameters(),
+                    self.ground_Q2_target.parameters(),
+                    self.ground_Q_encoder_tau,
+                )
             # soft_sync_params(
             #     self.ground_Q.encoder.parameters(),
             #     self.ground_Q_target.encoder.parameters(),
