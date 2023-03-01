@@ -28,7 +28,7 @@ class Encoder(nn.Module):
             # self.linear_dims = [self.linear_dims]
             self.blocks.append(nn.Linear(self.cnn_flatten_dim, self.linear_dims[0]))
             # self.blocks.append(nn.LayerNorm(self.linear_dims))
-            self.blocks.append(nn.ReLU())
+            # self.blocks.append(nn.ReLU())
             # self.blocks.append(nn.Sigmoid())
             # self.blocks.append(nn.Tanh())
             # self.blocks.append(nn.Linear(self.linear_dims[-1], self.linear_dims[-1]))

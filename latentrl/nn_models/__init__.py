@@ -21,7 +21,7 @@ from nn_models.encoder import (
 from nn_models.random_encoder import RandomEncoder, RandomEncoderMiniGrid
 from nn_models.vae import VAE
 from nn_models.vqvae import VQVAE
-from nn_models.CURL import CURL
+from nn_models.CURL import CURL, CURL_ATC
 from nn_models.MOCO import MOCO
 
 from nn_models.vector_quantization import (

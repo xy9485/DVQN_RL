@@ -43,6 +43,7 @@ from nn_models import (
     RandomEncoder,
     RandomEncoderMiniGrid,
     CURL,
+    CURL_ATC,
     MOCO,
     VectorQuantizerLinear,
     VectorQuantizerLinearSoft,
@@ -180,27 +181,41 @@ class HDQN_TCURL_VQ(HDQN):
                 curl_encoder = self.abs_V.encoder
             elif args.use_curl == "on_grd":
                 curl_encoder = self.ground_Q.encoder
+            if self.curl_pair == "atc":
+                # assert self.abs_enc_detach == True
+                # assert self.grd_enc_detach == True
+                self.curl = CURL_ATC(
+                    encoder=curl_encoder,
+                    encoder_target=make_encoder(
+                        input_format=args.input_format,
+                        observation_space=env.observation_space,
+                        # hidden_channels=args.grd_hidden_channels,
+                        linear_dims=curl_encoder.linear_dims,
+                    ),
+                    anchor_projection=True,
+                ).to(self.device)
+                self.curl.train()
+            else:
+                self.curl = CURL(
+                    encoder=curl_encoder,
+                    projection_hidden_dims=args.curl_projection_dims,
+                ).to(self.device)
 
-            self.curl = CURL(
-                encoder=curl_encoder,
-                projection_hidden_dims=args.curl_projection_dims,
-            ).to(self.device)
+                self.curl_ema = CURL(
+                    encoder=make_encoder(
+                        input_format=args.input_format,
+                        observation_space=env.observation_space,
+                        # hidden_channels=args.grd_hidden_channels,
+                        linear_dims=self.curl.encoder.linear_dims,
+                    ),
+                    projection_hidden_dims=self.curl.projection_hidden_dims,
+                ).to(self.device)
 
-            self.curl_ema = CURL(
-                encoder=make_encoder(
-                    input_format=args.input_format,
-                    observation_space=env.observation_space,
-                    # hidden_channels=args.grd_hidden_channels,
-                    linear_dims=self.curl.encoder.linear_dims,
-                ),
-                projection_hidden_dims=self.curl.projection_hidden_dims,
-            ).to(self.device)
-
-            self.curl_ema.load_state_dict(self.curl.state_dict())
-            for param in self.curl_ema.parameters():
-                param.requires_grad = False
-            self.curl.train()
-            self.curl_ema.train()
+                self.curl_ema.load_state_dict(self.curl.state_dict())
+                for param in self.curl_ema.parameters():
+                    param.requires_grad = False
+                self.curl.train()
+                self.curl_ema.train()
 
         if args.use_vq:
             self.vq = VectorQuantizerLinearSoft(
@@ -1292,7 +1307,8 @@ class HDQN_TCURL_VQ(HDQN):
             criterion = nn.SmoothL1Loss()
             # criterion = F.mse_loss
             # grd_match_abs_err = criterion(grd_q_reduction, abs_v)
-            grd_match_abs_err = criterion(grd_q, abs_v)
+            # grd_match_abs_err = criterion(grd_q, abs_v)
+            grd_match_abs_err = criterion(grd_q, rew + gamma * n_abs_v)
             if self.dan:
                 grd_match_abs_err = criterion(grd_q + abs_v, rew + gamma * n_abs_v)
             # grd_match_abs_err = criterion(grd_q, rew + gamma * n_abs_v)
@@ -1422,6 +1438,7 @@ class HDQN_TCURL_VQ(HDQN):
             # criterion = F.mse_loss
             # grd_match_abs_err = criterion(grd_q_reduction, abs_v)
             grd_match_abs_err = criterion(grd_q, abs_v)
+            # grd_match_abs_err = criterion(grd_q, rew + gamma * n_abs_v)
             if self.dan:
                 grd_match_abs_err = criterion(grd_q + abs_v, rew + gamma * n_abs_v)
             # grd_match_abs_err = criterion(grd_q, rew + gamma * n_abs_v)
@@ -1923,6 +1940,28 @@ class HDQN_TCURL_VQ(HDQN):
 
         return total_loss
 
+    def update_contrastive_atc(self, anc_obs, pos_obs):
+        # # [data augmentation]
+        # if self.input_format == "full_img":
+        #     anc_obs = self.aug(anc_obs)
+        #     pos_obs = self.aug(pos_obs)
+        logits = self.curl(anc_obs, pos_obs)
+        labels = torch.arange(logits.shape[0]).long().to(logits.device)
+        loss = F.cross_entropy(logits, labels)
+
+        with torch.no_grad():
+            correct = torch.argmax(logits, dim=1) == labels
+            contrast_acc = torch.mean(correct.float())
+
+        self.curl_optimizer.zero_grad()
+        loss.backward()
+        self.curl_optimizer.step()
+        metric = {
+            "Info/contrastive/contrastive_loss": loss.item(),
+            "Info/contrastive/contrast_acc": contrast_acc.item(),
+        }
+        self.L.log(metric)
+
     def update_contrastive_grdEncoder(self, anc_obs, pos_obs):
         anc_encoded = self.ground_Q.encoder(anc_obs)
         # anc_encoded = F.normalize(anc_encoded, dim=1)
@@ -2250,7 +2289,7 @@ class HDQN_TCURL_VQ(HDQN):
                         n_obs = self.aug(n_obs)
                         if self.curl_pair == "raw":
                             pos = self.aug(obs)
-                        elif self.curl_pair == "temp":
+                        else:
                             pos = n_obs
                 if self.use_curiosity:
                     loss = self.rnd.update(obs)
@@ -2322,6 +2361,8 @@ class HDQN_TCURL_VQ(HDQN):
                     # pos = self.aug(obs)
                     if self.use_vq:
                         self.update_contrastive(obs, pos, ema=True)
+                    elif self.curl_pair == "atc":
+                        self.update_contrastive_atc(obs, pos)
                     else:
                         self.update_contrastive_novq(obs, pos, ema=True)
                     # ct_loss = self.update_contrastive_novq(obs, pos, ema=True)
@@ -2386,7 +2427,7 @@ class HDQN_TCURL_VQ(HDQN):
                     n_obs = self.aug(n_obs)
                     if self.curl_pair == "raw":
                         pos = self.aug(obs)
-                    elif self.curl_pair == "temp":
+                    else:
                         pos = n_obs
                 self.update_grdQ_pure(obs, act, n_obs, rew, gamma)
                 if self.use_curl == "on_grd":
@@ -2458,11 +2499,18 @@ class HDQN_TCURL_VQ(HDQN):
             # )
 
         if self.use_curl and steps % self.curl_sync_every == 0:
-            soft_sync_params(
-                self.curl.parameters(),
-                self.curl_ema.parameters(),
-                self.curl_tau,
-            )
+            if self.curl_pair == "atc":
+                soft_sync_params(
+                    self.curl.encoder.parameters(),
+                    self.curl.encoder_target.parameters(),
+                    self.curl_tau,
+                )
+            else:
+                soft_sync_params(
+                    self.curl.parameters(),
+                    self.curl_ema.parameters(),
+                    self.curl_tau,
+                )
 
         if self.use_vq and steps % self.curl_sync_every == 0:
             soft_sync_params(

@@ -103,6 +103,85 @@ class CURL(nn.Module):
         return logits, labels
 
 
+class CURL_ATC(nn.Module):
+    """
+    CURL: Contrastive Unsupervised Representation Learning
+    """
+
+    def __init__(
+        self,
+        encoder: Encoder,
+        encoder_target: Encoder,
+        anchor_projection: bool,
+    ):
+        super().__init__()
+
+        self.encoder = encoder
+        self.encoder_target = encoder_target
+        self.anchor_projection = anchor_projection
+        # z_dim = self.encoder.linear_out_dim
+        self.feature_dim = self.encoder.linear_out_dim
+
+        if anchor_projection:
+            self.anchor_mlp = nn.Sequential(
+                nn.Linear(self.encoder.linear_out_dim, 256),
+                # nn.BatchNorm1d(256),
+                nn.ReLU(),
+                nn.Linear(256, 256),
+                # nn.BatchNorm1d(256),
+                # nn.ReLU(),
+                # nn.Sigmoid(),
+            )
+            self.feature_dim = 256
+        else:
+            self.anchor_mlp = None
+
+        self.W = nn.Parameter(torch.rand(self.feature_dim, self.feature_dim))
+
+    def forward(self, anc, pos):
+        z_anc = self.encoder(anc)
+        with torch.no_grad():
+            z_pos = self.encoder_target(pos)
+        if self.anchor_mlp is not None:
+            z_anc = self.anchor_mlp(z_anc) + z_anc
+        # z_anc = F.normalize(z_anc, dim=1)
+        # z_pos = F.normalize(z_pos, dim=1)
+        logits = self.compute_logits_bilinear(z_anc, z_pos)
+        return logits
+        # return F.normalize(z_out, dim=-1)
+
+    # def encode_anchor(self, x):
+
+    #     z_out = self.encoder(x)
+    #     # z_out = self.residual_module(z_out)
+    #     # z_out = self.ln(z_out)
+    #     return z_out
+
+    # def encode_positive(self, x):
+    #     with torch.no_grad():
+    #         z_out = self.encoder_target(x)
+    #     return z_out
+
+    def compute_logits_bilinear(self, z_a, z_pos):
+        """
+        Uses logits trick for CURL:
+        - compute (B,B) matrix z_a (W z_pos.T)
+        - positives are all diagonal elements
+        - negatives are all other elements
+        - to compute loss use multiclass cross entropy with identity matrix for labels
+        """
+        # if self.g is not None:
+        #     z_a = self.g(z_a)
+        Wz = torch.matmul(self.W, z_pos.T)  # (z_dim,B)
+        logits = torch.matmul(z_a, Wz)  # (B,B)
+        logits = logits - torch.max(logits, 1)[0][:, None]
+        return logits
+
+    def compute_logits(self, z_a, z_pos):
+        # if self.g is not None:
+        #     z_a = self.g(z_a)
+        return torch.matmul(z_a, z_pos.T)
+
 def simclr_loss(anc: Tensor, pos: Tensor, temperature: float = 1) -> Tensor:
     batch_size = anc.shape[0]
     out = torch.cat([anc, pos], dim=0)

@@ -115,7 +115,7 @@ def parse_args():
     cli.add_argument("--use_abs_V", default=False, action=argparse.BooleanOptionalAction)
     cli.add_argument("--use_curl", default=None, choices=["on_abs", "on_grd", "off"], type=str)
     cli.add_argument("--share_encoder", default=False, action=argparse.BooleanOptionalAction)
-    cli.add_argument("--curl_pair", default="raw", choices=["raw", "temp"], type=str)
+    cli.add_argument("--curl_pair", default="raw", choices=["raw", "temp", "atc"], type=str)
     cli.add_argument("--use_vq", default=False, action=argparse.BooleanOptionalAction)
     cli.add_argument(
         "--curl_vq_cfg",
