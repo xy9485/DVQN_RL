@@ -73,6 +73,7 @@ class HDQN(nn.Module):
         self.episodes_done = 0
         self._current_progress_remaining = 1.0
         self.to_buffer = False  # for func maybe_buffer_recent_states
+        self.exploration_rate = self.exploration_scheduler(self._current_progress_remaining)
 
         # self._create_optimizers(config)
         # self.reset_training_info()

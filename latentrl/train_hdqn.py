@@ -141,6 +141,8 @@ def parse_args():
     cli.add_argument("--size_replay_memory", default=1e5, type=int)
     cli.add_argument("--gamma", default=0.99, type=float)
     cli.add_argument("--exploration", nargs=3, default=[0.99, 0.1, 0.1], type=float)
+    cli.add_argument("--epsilon_decay", default=0.99998, type=float)
+    cli.add_argument("--epsilon_min", default=0.01, type=float)
 
     cli.add_argument("--conservative_ratio", default="0.0", type=str)
     cli.add_argument("--approach_abs_factor", default="0.0", type=str)
@@ -164,6 +166,8 @@ def parse_args():
     cli.add_argument("--lr_abs_V", default="0.0001", type=str, help="sometimes start with lin")
     cli.add_argument("--lr_curl", default="0.0001", type=str)
     cli.add_argument("--lr_vq", default="0.0001", type=str)
+    cli.add_argument("--lr_decay", default=0.9999, type=float)
+    cli.add_argument("--lr_min", default=0.01, type=float)
 
     cli.add_argument("--freq_grd_learn", default=1, type=int)
     cli.add_argument("--freq_grd_sync", default=1000, type=int)
@@ -191,14 +195,11 @@ def parse_args():
     args = cli.parse_args()
 
     if not args.args_from_cli:
-        find_gpu()
+        # find_gpu()
         print("loading args from txt file...")
         with open(
-            # "/workspace/repos_dev/Dev_VQVAE_RL/latentrl/htcondor_args/atari/absCurl_grd.txt",
-            # "/workspace/repos_dev/Dev_VQVAE_RL/latentrl/htcondor_args/atari/absVQ_grd.txt",
-            # "/workspace/repos_dev/Dev_VQVAE_RL/latentrl/htcondor_args/atari/abs_grdCurl.txt",
-            # "/workspace/repos_dev/Dev_VQVAE_RL/latentrl/htcondor_args/atari/abs_grd.txt",
-            f"/workspace/repos_dev/Dev_VQVAE_RL/latentrl/htcondor_args/atari/temp.txt",
+            # "/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/abs_grd.txt",
+            f"/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/temp.txt",
             "r",
         ) as f:
             for args_str in f:
