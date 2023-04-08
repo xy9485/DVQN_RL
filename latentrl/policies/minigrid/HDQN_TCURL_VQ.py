@@ -25,6 +25,7 @@ from common.utils import (
     soft_sync_params,
     update_learning_rate,
     wandb_log_image,
+    DotDict,
 )
 from envs import FourRoomsEnv
 from matplotlib import pyplot as plt
@@ -61,6 +62,7 @@ from policies.utils import (
     ReplayBufferNStep,
     transition_np2torch,
 )
+from PER import Memory
 from common.Logger import LoggerWandb, Logger
 from RND import RND
 
@@ -77,7 +79,11 @@ class HDQN_TCURL_VQ(HDQN):
     def __init__(self, args, env, logger: LoggerWandb):
         super().__init__(args, env, logger)
         # self.set_hparams(config)
-        self.ground_Q = DQN(
+        if args.use_dueling:
+            QNet = DuelDQN
+        else:
+            QNet = DQN
+        self.ground_Q = QNet(
             # observation_space=env.observation_space,
             action_space=env.action_space,
             # encoder=EncoderMaker(input_format=config.input_format, agent=self).make(),
@@ -88,10 +94,10 @@ class HDQN_TCURL_VQ(HDQN):
                 linear_dims=args.grd_encoder_linear_dims,
             ),
             mlp_hidden_dims=args.grd_critic_dims,
-            noisy=args.use_noisynet,
+            # noisy=args.use_noisynet,
         ).to(self.device)
 
-        self.ground_Q_target = DQN(
+        self.ground_Q_target = QNet(
             # observation_space=env.observation_space,
             action_space=env.action_space,
             # encoder=EncoderMaker(input_format=config.input_format, agent=self).make(),
@@ -102,14 +108,14 @@ class HDQN_TCURL_VQ(HDQN):
                 linear_dims=args.grd_encoder_linear_dims,
             ),
             mlp_hidden_dims=args.grd_critic_dims,
-            noisy=args.use_noisynet,
+            # noisy=args.use_noisynet,
         ).to(self.device)
         self.ground_Q_target.load_state_dict(self.ground_Q.state_dict())
         self.ground_Q.train()
         self.ground_Q_target.train()
 
         if self.grd_mode == "cddqn":
-            self.ground_Q2 = DQN(
+            self.ground_Q2 = QNet(
                 # observation_space=env.observation_space,
                 action_space=env.action_space,
                 # encoder=EncoderMaker(input_format=config.input_format, agent=self).make(),
@@ -123,7 +129,7 @@ class HDQN_TCURL_VQ(HDQN):
                 noisy=args.use_noisynet,
             ).to(self.device)
 
-            self.ground_Q2_target = DQN(
+            self.ground_Q2_target = QNet(
                 # observation_space=env.observation_space,
                 action_space=env.action_space,
                 # encoder=EncoderMaker(input_format=config.input_format, agent=self).make(),
@@ -240,12 +246,16 @@ class HDQN_TCURL_VQ(HDQN):
             self.abs_V_array = np.zeros((args.num_vq_embeddings))
 
         self.aug = RandomShiftsAug(pad=4)
-        self.memory = ReplayBufferNStep(
-            self.size_replay_memory,
-            self.device,
-            gamma=args.gamma,
-            batch_size=args.batch_size,
-        )
+
+        if self.per:
+            self.memory = Memory(self.size_replay_memory, self.total_timesteps)
+        else:
+            self.memory = ReplayBufferNStep(
+                self.size_replay_memory,
+                self.device,
+                gamma=args.gamma,
+                batch_size=args.batch_size,
+            )
         if args.use_curiosity:
             self.rnd = RND(env, args, feature_dim=32)
 
@@ -320,6 +330,8 @@ class HDQN_TCURL_VQ(HDQN):
         self.epsilon_min = args.epsilon_min
         self.lr_decay = args.lr_decay
         self.lr_min = args.lr_min
+        self.share_encoder = args.share_encoder
+        self.per = args.per
 
     @torch.no_grad()
     def encode_state(self, state):
@@ -334,7 +346,11 @@ class HDQN_TCURL_VQ(HDQN):
 
     def cache(self, state, action, next_state, reward, terminated, info):
         """Add the experience to memory"""
-        self.memory.push(state, action, next_state, reward, terminated, info)
+        if terminated:
+            gamma = 0.0
+        else:
+            gamma = self.gamma
+        self.memory.push((state, action, next_state, reward, gamma, info))
         return 0
 
     def cache_goal_transition(self):
@@ -994,10 +1010,21 @@ class HDQN_TCURL_VQ(HDQN):
             self.vq_optimizer = OPT(self.vq.parameters(), lr=self.lr_vq)
         if args.use_abs_V:
             self.abs_V_optimizer = OPT(self.abs_V.parameters(), lr=self.lr_abs_V)
+            if self.share_encoder:
+                self.whole_optimizer = OPT(
+                    chain(self.abs_V.critic.parameters(), self.ground_Q.parameters()),
+                    lr=self.lr_grd_Q,
+                )
+            else:
+                self.whole_optimizer = OPT(
+                    chain(self.abs_V.parameters(), self.ground_Q.parameters()),
+                    lr=self.lr_grd_Q,
+                )
+
         self.ground_Q_optimizer = OPT(self.ground_Q.parameters(), lr=self.lr_grd_Q)
-        self.whole_optimizer = OPT(
-            chain(self.abs_V.critic.parameters(), self.ground_Q.parameters()), lr=self.lr_grd_Q
-        )
+        # self.whole_optimizer = OPT(
+        #     chain(self.abs_V.critic.parameters(), self.ground_Q.parameters()), lr=self.lr_grd_Q
+        # )
         if self.grd_mode == "cddqn":
             self.ground_Q_optimizer2 = OPT(self.ground_Q2.parameters(), lr=self.lr_grd_Q)
         # elif args.optimizer == "sgd":
@@ -1049,9 +1076,9 @@ class HDQN_TCURL_VQ(HDQN):
 
         self._update_current_progress_remaining(self.timesteps_done, self.total_timesteps)
         # [if linear decay]
-        # self.exploration_rate = self.exploration_scheduler(self._current_progress_remaining)
+        self.exploration_rate = self.exploration_scheduler(self._current_progress_remaining)
         # [if exponential decay]
-        self.exploration_rate = max(self.exploration_rate * self.epsilon_decay, self.epsilon_min)
+        # self.exploration_rate = max(self.exploration_rate * self.epsilon_decay, self.epsilon_min)
         with torch.no_grad():
             state = state[:]  # this operation required when using LazyFrames
             # state = state.transpose(2, 0, 1)[np.newaxis, ...]
@@ -1231,7 +1258,8 @@ class HDQN_TCURL_VQ(HDQN):
         n_obs,
         rew,
         gamma,
-        via_vq,
+        weight=None,
+        via_vq=False,
         detach_encoder=False,
         use_shaping=False,
         approach_abs=False,
@@ -1265,8 +1293,8 @@ class HDQN_TCURL_VQ(HDQN):
             else:
                 abs_v = self.abs_V(obs)
                 # abs_v = self.abs_V_target(obs)
-                # n_abs_v = self.abs_V(n_obs)
-                n_abs_v = self.abs_V_target(n_obs)
+                n_abs_v = self.abs_V(n_obs)
+                # n_abs_v = self.abs_V_target(n_obs)
 
             # [Vanilla DQN]
             grd_q_next, encoded_next = self.ground_Q_target(n_obs)
@@ -1284,8 +1312,10 @@ class HDQN_TCURL_VQ(HDQN):
             # mask = mask.float()
             # abs_v_target = reward + gamma * abs_v_next
             # abs_v_target = abs_v_target * mask + abs_v_next * (1 - mask)
-
-        criterion = nn.SmoothL1Loss()
+        if self.per:
+            criterion = nn.SmoothL1Loss(reduction="none")
+        else:
+            criterion = nn.SmoothL1Loss()
         # criterion = F.mse_loss
         # ground_td_error = F.mse_loss(grd_q, grd_q_target)
         # ground_td_error = criterion(grd_q, grd_q_target)
@@ -1299,8 +1329,13 @@ class HDQN_TCURL_VQ(HDQN):
 
         if self.dan:
             ground_td_error = criterion(grd_q + abs_v, rew + gamma * (grd_q_next_max + n_abs_v))
+            td_error_per = grd_q + abs_v - rew - gamma * (grd_q_next_max + n_abs_v)
         else:
             ground_td_error = criterion(grd_q, target_value)
+            td_error_per = grd_q - target_value
+        if self.per:
+            ground_td_error = ground_td_error * weight
+            ground_td_error = ground_td_error.mean()
         # [learn advantage function]
         # ground_td_error = criterion(grd_q + abs_v, target_value)
         # abs_td_error = F.mse_loss(abs_v, abs_v_target)
@@ -1337,30 +1372,17 @@ class HDQN_TCURL_VQ(HDQN):
 
         # [gradient descent]
         self.ground_Q_optimizer.zero_grad(set_to_none=True)
-        # self.abs_V_optimizer.zero_grad(set_to_none=True)
-        # self.vq_optimizer.zero_grad(set_to_none=True)
         total_loss.backward()
-        # print("memory_allocated: {:.5f} MB".format(torch.cuda.memory_allocated() / (1024 * 1024)))
-        # print("run backward")
+
         if self.clip_grad:
             # 1 clamp gradients to avoid exploding gradient
-            # for param in self.ground_Q.parameters():
-            # if param.grad is not None:  # make sure grad is not None
-            # param.grad.data.clamp_(-1, 1)
-            # for param in self.abs_V.parameters():
-            #     if param.grad is not None:
-            #         param.grad.data.clamp_(-1, 1)
-            # for param in self.vq.parameters():
-            #     if param.grad is not None:
-            #         param.grad.data.clamp_(-1, 1)
-
-            # 2 Clip gradient norm
-            max_grad_norm = 10
-            torch.nn.utils.clip_grad_norm_(self.ground_Q.parameters(), max_grad_norm)
-            # torch.nn.utils.clip_grad_norm_(self.vqvae_model.parameters(), max_grad_norm)
+            for param in self.ground_Q.parameters():
+                if param.grad is not None:  # make sure grad is not None
+                    param.grad.data.clamp_(-1, 1)
+        #     # 2 Clip gradient norm
+        #     # max_grad_norm = 10
+        #     # torch.nn.utils.clip_grad_norm_(self.ground_Q.parameters(), max_grad_norm)
         self.ground_Q_optimizer.step()
-        # self.abs_V_optimizer.step()
-        # self.vq_optimizer.step()
 
         with torch.no_grad():
             diff_l2_abs_grd = F.mse_loss(abs_v, grd_q)
@@ -1369,7 +1391,6 @@ class HDQN_TCURL_VQ(HDQN):
 
         metric = {
             "Info/grdQ/ground_Q_error": ground_td_error.item(),
-            "Info/grdQ/grd_match_abs_err": grd_match_abs_err.item(),
             "Info/grdQ/update_Q total_loss": total_loss.item(),
             "Info/grdQ/grd_q": grd_q.mean().item(),
             "Info/grdQ/grd_q_max": grd_q_next_max.mean().item(),
@@ -1383,12 +1404,18 @@ class HDQN_TCURL_VQ(HDQN):
                 {
                     "Info/grdQ/grd_q": (grd_q + abs_v).mean().item(),
                     "Info/grdQ/grd_q_max": (grd_q_next_max + n_abs_v).mean().item(),
-                    "info/grdQ/advantage": grd_q.mean().item(),
+                    "Info/grdQ/advantage": grd_q.mean().item(),
+                }
+            )
+        if approach_abs:
+            metric.update(
+                {
+                    "Info/grdQ/grd_match_abs_err": grd_match_abs_err.item(),
                 }
             )
         self.L.log(metric)
 
-        return total_loss
+        return total_loss, td_error_per
 
     def update_grdQ_ddqn(
         self,
@@ -1690,17 +1717,17 @@ class HDQN_TCURL_VQ(HDQN):
             0.1 * (self.timesteps_done - self.init_steps) / (self.total_timesteps - self.init_steps)
         )
         loss = abs_td_error
-        self.abs_V_optimizer.zero_grad()
+        self.abs_V_optimizer.zero_grad(set_to_none=True)
         loss.backward()
         if self.clip_grad:
             # 1 clamp gradients to avoid exploding gradient
-            # for param in self.abs_V.parameters():
-            #     if param.grad is not None:
-            #         param.grad.data.clamp_(-1, 1)
+            for param in self.abs_V.parameters():
+                if param.grad is not None:
+                    param.grad.data.clamp_(-1, 1)
 
-            # 2 Clip gradient norm
-            max_grad_norm = 10
-            torch.nn.utils.clip_grad_norm_(self.abs_V.parameters(), max_grad_norm)
+        #     # 2 Clip gradient norm
+        #     # max_grad_norm = 10
+        #     # torch.nn.utils.clip_grad_norm_(self.abs_V.parameters(), max_grad_norm)
 
         self.abs_V_optimizer.step()
         metric = {
@@ -2283,7 +2310,18 @@ class HDQN_TCURL_VQ(HDQN):
         steps = self.timesteps_done - self.init_steps
         if self.use_abs_V:
             if steps % self.abstract_learn_every == 0 or steps % self.ground_learn_every == 0:
-                obs, act, n_obs, rew, gamma, info = self.memory.sample(self.batch_size)
+                if self.per:
+                    batch, idxs, weight = self.memory.sample(self.batch_size, steps)
+                    obs, act, n_obs, rew, gamma, info = zip(*batch)
+                    obs = torch.as_tensor(np.array(obs)).to(self.device)
+                    n_obs = torch.as_tensor(np.array(n_obs)).to(self.device)
+                    act = torch.as_tensor(act).unsqueeze(1).to(self.device)
+                    rew = torch.as_tensor(rew).unsqueeze(1).to(self.device)
+                    gamma = torch.as_tensor(gamma).unsqueeze(1).to(self.device)
+                    weight = torch.as_tensor(weight).unsqueeze(1).to(self.device)
+                else:
+                    obs, act, n_obs, rew, gamma, info = self.memory.sample(self.batch_size)
+                    weight = None
                 # sample n-step transitions
                 # while True:
                 #     N_Step_T: List[dict] = self.memory.sample_n_step_transits(
@@ -2336,17 +2374,23 @@ class HDQN_TCURL_VQ(HDQN):
                 pass
             if steps % self.ground_learn_every == 0:
                 if self.grd_mode == "dqn":
-                    grdQ_loss = self.update_grdQ(
+                    grdQ_loss, td_error_per = self.update_grdQ(
                         obs,
                         act,
                         n_obs,
                         rew,
                         gamma,
+                        weight=weight,
                         via_vq=self.critic_upon_vq,
                         detach_encoder=self.grd_enc_detach,
                         use_shaping=False,
                         approach_abs=self.close_factor > 0.0,
                     )
+                    if self.per:
+                        td_error_per = td_error_per.squeeze().detach().cpu().numpy()
+                        for i in range(self.batch_size):
+                            self.memory.update(idx=idxs[i], error=td_error_per[i])
+                        self.L.log({"Info/grdQ/td_error_per": td_error_per.mean()})
                 elif self.grd_mode == "ddqn":
                     grdQ_loss = self.update_grdQ_ddqn(
                         obs,
@@ -2407,19 +2451,19 @@ class HDQN_TCURL_VQ(HDQN):
                     #     self.update_contrastive_novq(obs, n_obs, ema=False)
             # [update ground_Q with reward shaping]
             # total_loss = absV_loss + grdQ_loss
-            # self.whole_optimizer.zero_grad(set_to_none=True)
+            # self.whole_optimizer.zero_grad()
             # self.abs_V_optimizer.zero_grad(set_to_none=True)
             # self.ground_Q_optimizer.zero_grad(set_to_none=True)
             # self.curl_optimizer.zero_grad(set_to_none=True)
             # total_loss.backward()
             # if self.clip_grad:
-            # 1 clamp gradients to avoid exploding gradient
-            # for param in self.abs_V.parameters():
-            #     if param.grad is not None:
-            #         param.grad.data.clamp_(-1, 1)
-            # for param in self.ground_Q.parameters():
-            #     if param.grad is not None:  # make sure grad is not None
-            #         param.grad.data.clamp_(-1, 1)
+            #     # 1 clamp gradients to avoid exploding gradient
+            #     for param in self.abs_V.parameters():
+            #         if param.grad is not None:
+            #             param.grad.data.clamp_(-1, 1)
+            #     for param in self.ground_Q.parameters():
+            #         if param.grad is not None:  # make sure grad is not None
+            #             param.grad.data.clamp_(-1, 1)
             # for param in self.curl.parameters():
             # if param.grad is not None:
             # param.grad.data.clamp_(-1, 1)

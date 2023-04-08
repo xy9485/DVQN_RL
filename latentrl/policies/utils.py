@@ -148,12 +148,12 @@ class ReplayBufferNStep(object):
         self.gamma = gamma
         self.batch_size = batch_size
 
-    def push(self, obs, act, n_obs, rew, terminated, info):
-        """Save a transition"""
-        if terminated:
-            gamma = 0.0
-        else:
-            gamma = self.gamma
+    def push(self, transition):
+        """
+        Save a transition:
+        obs, act, n_obs, rew, terminated, info
+        """
+        obs, act, n_obs, rew, gamma, info = transition
         self.memory.append(self.Transition(obs, act, n_obs, rew, gamma, info))
 
     def sample(self, batch_size):

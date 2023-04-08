@@ -11,6 +11,9 @@ from os import makedirs
 from pprint import pprint
 from tkinter import N
 from types import SimpleNamespace
+import pathlib
+
+print(pathlib.Path(__file__).parent.parent.absolute())
 
 import colored_traceback.auto
 import GPUtil
@@ -78,32 +81,6 @@ MAKE_ENV_FUNCS = {
 }
 
 
-class DotDict(dict):
-    def __init__(self, d):
-        super(DotDict, self).__init__(d)
-        for key, value in d.items():
-            if isinstance(value, dict):
-                self[key] = DotDict(value)
-
-    def __getattr__(self, key):
-        try:
-            return self[key]
-        except KeyError as k:
-            raise AttributeError(k)
-
-    def __setattr__(self, key, value):
-        self[key] = value
-
-    def __delattr__(self, key):
-        try:
-            del self[key]
-        except KeyError as k:
-            raise AttributeError(k)
-
-    def __repr__(self):
-        return "<DictX " + dict.__repr__(self) + ">"
-
-
 def parse_args():
     cli = argparse.ArgumentParser()
 
@@ -124,11 +101,18 @@ def parse_args():
         type=float,
         help="factors for cb_diversity, vq_entropy, vq_loss",
     )
+    cli.add_argument("--use_dueling", default=False, action=argparse.BooleanOptionalAction)
     cli.add_argument("--use_noisynet", default=False, action=argparse.BooleanOptionalAction)
     cli.add_argument("--use_curiosity", default=False, action=argparse.BooleanOptionalAction)
     cli.add_argument("--clip_reward", default=False, action=argparse.BooleanOptionalAction)
     cli.add_argument("--clip_grad", default=False, action=argparse.BooleanOptionalAction)
     cli.add_argument("--dan", default=False, action=argparse.BooleanOptionalAction)
+    cli.add_argument(
+        "--per",
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="prioritized experience replay",
+    )
 
     cli.add_argument("--domain_name", default="Breakout-v5", type=str)
     cli.add_argument("--domain_type", default="Atari", type=str)
@@ -190,7 +174,7 @@ def parse_args():
     cli.add_argument("--wandb_tags", default=None, nargs="*", type=str)
     cli.add_argument("--wandb_mode", default="online", type=str)
     cli.add_argument("--extra_note", default="", type=str)
-    cli.add_argument("--repetitions", default=15, type=int)
+    cli.add_argument("--repetitions", default=20, type=int)
     cli.add_argument("--htcondor_procid", default=None, type=str)
     args = cli.parse_args()
 
@@ -1153,7 +1137,7 @@ def train_atari_absT_grdN(args):
             # notes=cfg["wandb_notes"],
             config=vars(args),
         )
-        wandb.run.log_code(".")
+        # wandb.run.log_code(".")
         L = LoggerWandb()
         env = MAKE_ENV_FUNCS[args.domain_type]("ALE/" + args.domain_name, seed=args.env_seed)
 
