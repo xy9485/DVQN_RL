@@ -1027,8 +1027,7 @@ def train_adaptive_absT_grdTN(args):
                     #             "After_1stTerminated/timesteps_done": steps_after_goal_found,
                     #         }
                     #     )
-                    L.log(metrics)
-                    L.dump2wandb(agent=agent, force=True)
+                    L.log_and_dump(metrics, agent=agent)
 
                     print2console(
                         agent=agent,
@@ -1098,6 +1097,7 @@ def train_atari_absT_grdN(args):
     ground level using table or network, by setting use_table4grd
 
     """
+    # os.environ["WANDB__SERVICE_WAIT"] = "1200"
     cfg_key = "Atari"
     # cfg_key = "MinAtar/Breakout-v0"
     # cfg_key = "MinAtar/Asterix-v0"
@@ -1115,6 +1115,15 @@ def train_atari_absT_grdN(args):
     # with open("/workspace/repos_dev/VQVAE_RL/hyperparams/carracing.yaml") as f:
     #     cfg = yaml.load(f, Loader=yaml.FullLoader)["CarRacing-v2"]
     #     pprint(cfg)
+    path_best_model = None
+    if path_best_model is not None:
+        print("Evaluating the best model as the ground truth")
+        ground_truth = eval_ground_truth_q(args, path_best_model)
+    else:
+        ground_truth = None
+
+    best_eval_reward = -np.inf
+    best_train_reward = -np.inf
     for rep in range(args.repetitions):
         print(f"====Starting Repetition {rep}====")
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
@@ -1126,19 +1135,41 @@ def train_atari_absT_grdN(args):
             curl_mode = "off"
         else:
             curl_mode = args.use_curl.replace("on_", "")
+
+        group_name = f"A{int(args.use_abs_V)}_AEncD{int(args.abs_enc_detach)}_GEncD{int(args.grd_enc_detach)}_ShrEnc{int(args.share_encoder)}_Curl|{curl_mode},{args.curl_pair},P{curl_projection}|_VQ{int(args.use_vq)}|{args.num_vq_embeddings},{args.vq_softmin_beta},{int(args.critic_upon_vq)},{args.curl_vq_cfg}|_bs{args.batch_size}_ms{int(args.size_replay_memory/1000)}k_close{args.approach_abs_factor}|{args.extra_note}"
+
         run = wandb.init(
             # project="HDQN_AbsTable_GrdNN_Atari",
             project=f"HDQN_Atari_{project_name}",
             # project="HDQN_MinAtar",
             # project="HDQN_Neo_Carracing",
             mode=args.wandb_mode,
-            group=f"A{int(args.use_abs_V)}_AEncD{int(args.abs_enc_detach)}_GEncD{int(args.grd_enc_detach)}_ShrEnc{int(args.share_encoder)}_Curl|{curl_mode},{args.curl_pair},P{curl_projection}|_VQ{int(args.use_vq)}|{args.num_vq_embeddings},{args.vq_softmin_beta},{int(args.critic_upon_vq)},{args.curl_vq_cfg}|_bs{args.batch_size}_ms{int(args.size_replay_memory/1000)}k_close{args.approach_abs_factor}|{args.extra_note}",
+            group=group_name,
             tags=args.wandb_tags,
             # notes=cfg["wandb_notes"],
             config=vars(args),
         )
         # wandb.run.log_code(".")
-        L = LoggerWandb()
+        if not args.args_from_cli:
+            log_dir_root = os.path.join(
+                "/workspace/repos_dev/VQVAE_RL/results",
+                args.domain_type,
+                args.domain_name,
+                group_name,
+            )
+        else:
+            log_dir_root = os.path.join(
+                "/storage/raid/xue/rlyuan/repos_dev/VQVAE_RL/results",
+                args.domain_type,
+                args.domain_name,
+                group_name,
+            )
+        os.makedirs(os.path.join(log_dir_root, "best_models"), exist_ok=True)
+        current_time = datetime.datetime.now()
+        current_time = current_time.strftime("%b%d_%H-%M-%S")
+        log_dir = os.path.join(log_dir_root, current_time)
+        os.makedirs(log_dir, exist_ok=True)
+        L = LoggerWandb(log_dir)
         env = MAKE_ENV_FUNCS[args.domain_type]("ALE/" + args.domain_name, seed=args.env_seed)
 
         # agent = HDQN_Pixel(config, env)
@@ -1154,7 +1185,8 @@ def train_atari_absT_grdN(args):
         # gym.reset(seed=int(time.time()))
         total_steps = int(args.total_timesteps + args.init_steps)
         # agent.cache_goal_transition()
-        episodic_reward_window = deque(maxlen=15)
+        episodic_reward_window = deque(maxlen=10)
+        eval_rwd_window = deque(maxlen=6)
         ema_reward_list = []
         time_steps_list = []
         recent_dropping_episodes = 0
@@ -1215,7 +1247,10 @@ def train_atari_absT_grdN(args):
                     agent.update()
 
                     if agent.timesteps_done % args.freq_eval == 0:
-                        test(agent, args, L)
+                        print("start eval ...")
+                        avg_eval_rwd = test(agent, args, L, ground_truth)
+                        eval_rwd_window.append(avg_eval_rwd)
+                        print("eval end")
                     # here we use table to do update
                     # agent.update_table(use_shaping=config.use_shaping)
                     # agent.update_table_no_memory(
@@ -1232,6 +1267,7 @@ def train_atari_absT_grdN(args):
 
                 if terminated or truncated:
                     agent.episodes_done += 1
+                    episodic_reward_window.append(episodic_reward)
                     if agent.episodes_done > 0 and agent.episodes_done % 1 == 0:
                         if agent.timesteps_done > args.init_steps:
                             # agent.vis_abstraction()
@@ -1273,41 +1309,205 @@ def train_atari_absT_grdN(args):
                     )
 
                     break
+        if mean(eval_rwd_window) > best_eval_reward:
+            best_eval_reward = mean(eval_rwd_window)
+            torch.save(agent.ground_Q.state_dict(), f"{log_dir_root}/best_models/eval_grd_q.pt")
+            torch.save(agent.abs_V.state_dict(), f"{log_dir_root}/best_models/eval_abs_v.pt")
+        if mean(episodic_reward_window) > best_train_reward:
+            best_train_reward = mean(episodic_reward_window)
+            torch.save(agent.ground_Q.state_dict(), f"{log_dir_root}/best_models/train_grd_q.pt")
+            torch.save(agent.abs_V.state_dict(), f"{log_dir_root}/best_models/train_abs_v.pt")
         wandb.finish()
-
-        # if goal_found:
-        #     print("====Goal Found====")
-        # else:
-        #     print("====Goal Not Found in this repetition, deleting this run from wandb====")
-        # if not isinstance(run.mode, wandb.sdk.lib.disabled.RunDisabled):
-        #     api = wandb.Api()
-        #     run = api.run(f"team-yuan/HDQN_Neo/{run.id}")
-        #     run.delete()
 
     print("Complete")
     env.close()
 
 
-def test(agent, args, L: LoggerWandb):
+def eval_ground_truth_q(args, path_best_model=None):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    env = MAKE_ENV_FUNCS[args.domain_type]("ALE/" + args.domain_name)
+    # env.eval()
+    assert path_best_model is not None
+    # L = LoggerWandb()
+    best_agent = HDQN_TCURL_VQ(args, env, logger=None)
+    best_agent.ground_Q.load_state_dict(torch.load(path_best_model))
+    best_agent.ground_Q.eval()
+
+    episodic_rews = []
+    episodic_non_negative_rews = []
+    episodic_negative_rews = []
+    episodic_cum_rews = []
+    # Test performance over several episodes
+    terminated = True
+    epsilon = 0.01
+    for _ in range(args.evaluation_episodes):
+        state, info = env.reset()
+        reward_sum = 0
+        non_negative_reward_sum = 0
+        negative_reward_sum = 0
+        terminated = False
+        cum_reward = []
+        while True:
+            # select action
+            with torch.no_grad():
+                state = torch.from_numpy(state[:]).unsqueeze(0).to(device)
+                if random.random() > epsilon:
+                    action = best_agent.ground_Q(state)[0].argmax(dim=1).item()
+                else:
+                    action = random.randrange(best_agent.n_actions)
+
+            state, reward, terminated, truncated, info = env.step(action)  # Step
+            reward_sum += reward
+            cum_reward.append(reward_sum)
+            if reward >= 0:
+                non_negative_reward_sum += reward
+            else:
+                negative_reward_sum += reward
+
+            if terminated:
+                episodic_rews.append(reward_sum)
+                episodic_non_negative_rews.append(non_negative_reward_sum)
+                episodic_negative_rews.append(negative_reward_sum)
+                episodic_cum_rews.append(mean(cum_reward))
+                break
+
+    env.close()
+    if len(episodic_non_negative_rews) == 0:
+        episodic_non_negative_rews.append(0)
+    if len(episodic_negative_rews) == 0:
+        episodic_negative_rews.append(0)
+    avg_reward = sum(episodic_rews) / len(episodic_rews)
+    avg_non_negative_reward = sum(episodic_non_negative_rews) / len(episodic_non_negative_rews)
+    avg_negative_reward = sum(episodic_negative_rews) / len(episodic_negative_rews)
+    avg_cum_reward = sum(episodic_cum_rews) / len(episodic_cum_rews)
+
+    metrics = {
+        "Evaluation/avg_episodic_reward": avg_reward,
+        "Evaluation/avg_episodic_non_negative_reward": avg_non_negative_reward,
+        "Evaluation/avg_episodic_negative_reward": avg_negative_reward,
+    }
+
+    return {
+        "avg_cum_reward": avg_cum_reward,
+    }
+
+
+def eval_overestimation(agent: HDQN_TCURL_VQ, args, L: LoggerWandb, path_best_model=None):
+    env = MAKE_ENV_FUNCS[args.domain_type]("ALE/" + args.domain_name)
+    # env.eval()
+    assert path_best_model is not None
+    best_agent = HDQN_TCURL_VQ(args, env, logger=L)
+    best_agent.ground_Q.load_state_dict(torch.load(path_best_model))
+    best_agent.ground_Q.eval()
+
+    episodic_rews = []
+    episodic_non_negative_rews = []
+    episodic_negative_rews = []
+    episodic_cum_rews = []
+    episodic_max_curr_q = []
+    episodic_curr_q_a = []
+
+    # Test performance over several episodes
+    terminated = True
+    epsilon = 0.01
+    for _ in range(args.evaluation_episodes):
+        state, info = env.reset()
+        reward_sum = 0
+        non_negative_reward_sum = 0
+        negative_reward_sum = 0
+        terminated = False
+        cum_reward = []
+        max_curr_q = []
+        curr_q_a = []
+        while True:
+            # select action
+            with torch.no_grad():
+                state = torch.from_numpy(state[:]).unsqueeze(0).to(agent.device)
+                if random.random() > epsilon:
+                    action = best_agent.ground_Q(state)[0].argmax(dim=1).item()
+                else:
+                    action = random.randrange(best_agent.n_actions)
+            curr_q = agent.ground_Q(state)[0].cpu().numpy()
+            max_curr_q.append(curr_q.max())
+            curr_q_a.append(curr_q[action])
+
+            state, reward, terminated, truncated, info = env.step(action)  # Step
+            reward_sum += reward
+            cum_reward.append(reward_sum)
+            if reward >= 0:
+                non_negative_reward_sum += reward
+            else:
+                negative_reward_sum += reward
+
+            if terminated:
+                episodic_rews.append(reward_sum)
+                episodic_non_negative_rews.append(non_negative_reward_sum)
+                episodic_negative_rews.append(negative_reward_sum)
+                episodic_cum_rews.append(mean(cum_reward))
+                episodic_max_curr_q.append(mean(max_curr_q))
+                episodic_curr_q_a.append(mean(curr_q_a))
+                break
+
+    env.close()
+    if len(episodic_non_negative_rews) == 0:
+        episodic_non_negative_rews.append(0)
+    if len(episodic_negative_rews) == 0:
+        episodic_negative_rews.append(0)
+    avg_reward = sum(episodic_rews) / len(episodic_rews)
+    avg_non_negative_reward = sum(episodic_non_negative_rews) / len(episodic_non_negative_rews)
+    avg_negative_reward = sum(episodic_negative_rews) / len(episodic_negative_rews)
+    avg_cum_reward = sum(episodic_cum_rews) / len(episodic_cum_rews)
+    avg_max_curr_q = sum(episodic_max_curr_q) / len(episodic_max_curr_q)
+    avg_curr_q_a = sum(episodic_curr_q_a) / len(episodic_curr_q_a)
+    # Return average reward and Q-value
+
+    metrics = {
+        "Evaluation/avg_episodic_reward": avg_reward,
+        "Evaluation/avg_episodic_non_negative_reward": avg_non_negative_reward,
+        "Evaluation/avg_episodic_negative_reward": avg_negative_reward,
+        "Evaluation/timesteps_done": agent.timesteps_done,
+        "Evaluation/episodes_done": agent.episodes_done,
+    }
+    L.log_and_dump(metrics, agent)
+
+    return {
+        "avg_max_curr_q": avg_max_curr_q,
+        "avg_curr_q_a": avg_curr_q_a,
+        "avg_cum_reward": avg_cum_reward,
+    }
+
+
+def test(agent: HDQN_TCURL_VQ, args, L: LoggerWandb, ground_truth: dict = None):
     env = MAKE_ENV_FUNCS[args.domain_type]("ALE/" + args.domain_name)
     # env.eval()
 
     episodic_rews = []
     episodic_non_negative_rews = []
     episodic_negative_rews = []
+    episodic_cur_q_mean = []
+    episodic_cur_q_max = []
 
     # Test performance over several episodes
-    terminated = True
+    terminated = False
     for _ in range(args.evaluation_episodes):
+        state, info = env.reset()
+        reward_sum = 0
+        non_negative_reward_sum = 0
+        negative_reward_sum = 0
+        cur_q_mean = []
+        cur_q_max = []
         while True:
-            if terminated:
-                state, info = env.reset()
-                reward_sum = 0
-                non_negative_reward_sum = 0
-                negative_reward_sum = 0
-                terminated = False
+            # action = agent.act_e_greedy(state, epsilon=0.05)  # Choose an action ε-greedily
+            with torch.no_grad():
+                state = torch.from_numpy(state[:]).unsqueeze(0).to(agent.device)
+                if random.random() > 0.05:
+                    cur_q = agent.ground_Q(state)[0]
+                    cur_q_mean.append(cur_q.mean(dim=1).item())
+                    cur_q_max.append(cur_q.max(dim=1)[0].item())
+                    action = cur_q.argmax(dim=1).item()
+                else:
+                    action = random.randrange(agent.n_actions)
 
-            action = agent.act_e_greedy(state, epsilon=0.01)  # Choose an action ε-greedily
             state, reward, terminated, truncated, info = env.step(action)  # Step
             reward_sum += reward
             if reward >= 0:
@@ -1319,6 +1519,8 @@ def test(agent, args, L: LoggerWandb):
                 episodic_rews.append(reward_sum)
                 episodic_non_negative_rews.append(non_negative_reward_sum)
                 episodic_negative_rews.append(negative_reward_sum)
+                episodic_cur_q_max.append(mean(cur_q_max))
+                episodic_cur_q_mean.append(mean(cur_q_mean))
                 break
     env.close()
     if len(episodic_non_negative_rews) == 0:
@@ -1334,10 +1536,16 @@ def test(agent, args, L: LoggerWandb):
         "Evaluation/avg_episodic_reward": avg_reward,
         "Evaluation/avg_episodic_non_negative_reward": avg_non_negative_reward,
         "Evaluation/avg_episodic_negative_reward": avg_negative_reward,
+        "Evaluation/avg_episodic_cur_q_max": mean(episodic_cur_q_max),
+        "Evaluation/avg_episodic_cur_q_mean": mean(episodic_cur_q_mean),
         "Evaluation/timesteps_done": agent.timesteps_done,
         "Evaluation/episodes_done": agent.episodes_done,
     }
-    L.log_and_dump(metrics, agent)
+    if ground_truth:
+        metrics["Evaluation/avg_cum_reward_grd_truth"] = ground_truth["avg_cum_reward"]
+    L.log_and_dump(metrics, agent, mode="eval")
+
+    return avg_reward
 
 
 def print2console(agent, episodic_reward, terminated, truncated, t, time_start_episode, rep):
