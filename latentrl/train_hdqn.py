@@ -1115,6 +1115,8 @@ def train_atari_absT_grdN(args):
     # with open("/workspace/repos_dev/VQVAE_RL/hyperparams/carracing.yaml") as f:
     #     cfg = yaml.load(f, Loader=yaml.FullLoader)["CarRacing-v2"]
     #     pprint(cfg)
+    best_eval_reward = -np.inf
+    best_train_reward = -np.inf
     for rep in range(args.repetitions):
         print(f"====Starting Repetition {rep}====")
         current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
@@ -1126,19 +1128,41 @@ def train_atari_absT_grdN(args):
             curl_mode = "off"
         else:
             curl_mode = args.use_curl.replace("on_", "")
+
+        group_name = f"A{int(args.use_abs_V)}_AEncD{int(args.abs_enc_detach)}_GEncD{int(args.grd_enc_detach)}_ShrEnc{int(args.share_encoder)}_Curl|{curl_mode},{args.curl_pair},P{curl_projection}|_VQ{int(args.use_vq)}|{args.num_vq_embeddings},{args.vq_softmin_beta},{int(args.critic_upon_vq)},{args.curl_vq_cfg}|_bs{args.batch_size}_ms{int(args.size_replay_memory/1000)}k_close{args.approach_abs_factor}|{args.extra_note}"
+
         run = wandb.init(
             # project="HDQN_AbsTable_GrdNN_Atari",
             project=f"HDQN_Atari_{project_name}",
             # project="HDQN_MinAtar",
             # project="HDQN_Neo_Carracing",
             mode=args.wandb_mode,
-            group=f"A{int(args.use_abs_V)}_AEncD{int(args.abs_enc_detach)}_GEncD{int(args.grd_enc_detach)}_ShrEnc{int(args.share_encoder)}_Curl|{curl_mode},{args.curl_pair},P{curl_projection}|_VQ{int(args.use_vq)}|{args.num_vq_embeddings},{args.vq_softmin_beta},{int(args.critic_upon_vq)},{args.curl_vq_cfg}|_bs{args.batch_size}_ms{int(args.size_replay_memory/1000)}k_close{args.approach_abs_factor}|{args.extra_note}",
+            group=group_name,
             tags=args.wandb_tags,
             # notes=cfg["wandb_notes"],
             config=vars(args),
         )
         # wandb.run.log_code(".")
-        L = LoggerWandb()
+        if not args.args_from_cli:
+            log_dir_root = os.path.join(
+                "/workspace/repos_dev/VQVAE_RL/results",
+                args.domain_type,
+                args.domain_name,
+                group_name,
+            )
+        else:
+            log_dir_root = os.path.join(
+                "/storage/raid/xue/rlyuan/repos_dev/VQVAE_RL/results",
+                args.domain_type,
+                args.domain_name,
+                group_name,
+            )
+        os.makedirs(os.path.join(log_dir_root, "best_models"), exist_ok=True)
+        current_time = datetime.datetime.now()
+        current_time = current_time.strftime("%b%d_%H-%M-%S")
+        log_dir = os.path.join(log_dir_root, current_time)
+        os.makedirs(log_dir, exist_ok=True)
+        L = LoggerWandb(log_dir)
         env = MAKE_ENV_FUNCS[args.domain_type]("ALE/" + args.domain_name, seed=args.env_seed)
 
         # agent = HDQN_Pixel(config, env)
@@ -1155,6 +1179,7 @@ def train_atari_absT_grdN(args):
         total_steps = int(args.total_timesteps + args.init_steps)
         # agent.cache_goal_transition()
         episodic_reward_window = deque(maxlen=15)
+        eval_rwd_window = deque(maxlen=6)
         ema_reward_list = []
         time_steps_list = []
         recent_dropping_episodes = 0
@@ -1215,7 +1240,10 @@ def train_atari_absT_grdN(args):
                     agent.update()
 
                     if agent.timesteps_done % args.freq_eval == 0:
-                        test(agent, args, L)
+                        print("start eval ...")
+                        avg_eval_rwd = test(agent, args, L)
+                        eval_rwd_window.append(avg_eval_rwd)
+                        print("eval end")
                     # here we use table to do update
                     # agent.update_table(use_shaping=config.use_shaping)
                     # agent.update_table_no_memory(
@@ -1232,6 +1260,7 @@ def train_atari_absT_grdN(args):
 
                 if terminated or truncated:
                     agent.episodes_done += 1
+                    episodic_reward_window.append(episodic_reward)
                     if agent.episodes_done > 0 and agent.episodes_done % 1 == 0:
                         if agent.timesteps_done > args.init_steps:
                             # agent.vis_abstraction()
@@ -1273,6 +1302,14 @@ def train_atari_absT_grdN(args):
                     )
 
                     break
+        if mean(eval_rwd_window) > best_eval_reward:
+            best_eval_reward = mean(eval_rwd_window)
+            torch.save(agent.ground_Q.state_dict(), f"{log_dir_root}/best_models/eval_grd_q.pt")
+            torch.save(agent.abs_V.state_dict(), f"{log_dir_root}/best_models/eval_abs_v.pt")
+        if mean(episodic_reward_window) > best_train_reward:
+            best_train_reward = mean(episodic_reward_window)
+            torch.save(agent.ground_Q.state_dict(), f"{log_dir_root}/best_models/train_grd_q.pt")
+            torch.save(agent.abs_V.state_dict(), f"{log_dir_root}/best_models/train_abs_v.pt")
         wandb.finish()
 
         # if goal_found:
@@ -1337,7 +1374,9 @@ def test(agent, args, L: LoggerWandb):
         "Evaluation/timesteps_done": agent.timesteps_done,
         "Evaluation/episodes_done": agent.episodes_done,
     }
-    L.log_and_dump(metrics, agent)
+    L.log_and_dump(metrics, agent, mode="eval")
+
+    return avg_reward
 
 
 def print2console(agent, episodic_reward, terminated, truncated, t, time_start_episode, rep):
