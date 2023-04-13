@@ -1323,7 +1323,9 @@ def train_atari_absT_grdN(args):
     env.close()
 
 
-def eval_ground_truth_q(args, path_best_model=None):
+def eval_ground_truth_q(args, path_best_model=None, log=False):
+    import json
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     env = MAKE_ENV_FUNCS[args.domain_type]("ALE/" + args.domain_name)
     # env.eval()
@@ -1337,6 +1339,7 @@ def eval_ground_truth_q(args, path_best_model=None):
     episodic_non_negative_rews = []
     episodic_negative_rews = []
     episodic_cum_rews = []
+    episodic_length = []
     # Test performance over several episodes
     terminated = True
     epsilon = 0.01
@@ -1346,7 +1349,8 @@ def eval_ground_truth_q(args, path_best_model=None):
         non_negative_reward_sum = 0
         negative_reward_sum = 0
         terminated = False
-        cum_reward = []
+        rewards = []
+        steps = 0
         while True:
             # select action
             with torch.no_grad():
@@ -1357,18 +1361,25 @@ def eval_ground_truth_q(args, path_best_model=None):
                     action = random.randrange(best_agent.n_actions)
 
             state, reward, terminated, truncated, info = env.step(action)  # Step
+            steps += 1
             reward_sum += reward
-            cum_reward.append(reward_sum)
+            rewards.append(reward)
             if reward >= 0:
                 non_negative_reward_sum += reward
             else:
                 negative_reward_sum += reward
 
             if terminated:
+                print(rewards)
                 episodic_rews.append(reward_sum)
                 episodic_non_negative_rews.append(non_negative_reward_sum)
                 episodic_negative_rews.append(negative_reward_sum)
-                episodic_cum_rews.append(mean(cum_reward))
+                episodic_length.append(steps)
+                Gs = np.zeros(len(rewards))
+                for t, _ in enumerate(rewards):
+                    for i, r_prime in enumerate(rewards[t:]):
+                        Gs[t] += args.gamma**i * r_prime
+                episodic_cum_rews.append(Gs.mean())
                 break
 
     env.close()
@@ -1380,12 +1391,21 @@ def eval_ground_truth_q(args, path_best_model=None):
     avg_non_negative_reward = sum(episodic_non_negative_rews) / len(episodic_non_negative_rews)
     avg_negative_reward = sum(episodic_negative_rews) / len(episodic_negative_rews)
     avg_cum_reward = sum(episodic_cum_rews) / len(episodic_cum_rews)
+    avg_length = sum(episodic_length) / len(episodic_length)
 
     metrics = {
         "Evaluation/avg_episodic_reward": avg_reward,
         "Evaluation/avg_episodic_non_negative_reward": avg_non_negative_reward,
         "Evaluation/avg_episodic_negative_reward": avg_negative_reward,
+        "Evaluation/avg_episodic_cum_reward": avg_cum_reward,
+        "Evaluation/avg_episodic_length": avg_length,
     }
+
+    if log:
+        dir = os.path.dirname(path_best_model)
+        log_path = os.path.join(dir, "eval_grd_truth.json")
+        with open(log_path, "a") as f:
+            f.write(json.dumps(metrics) + "\n")
 
     return {
         "avg_cum_reward": avg_cum_reward,
@@ -1601,8 +1621,10 @@ if __name__ == "__main__":
     # train_dqn_kmeans()
     # train_manual_absT_grdTN()
     # train_adaptive_absT_grdTN(args)
-    train_atari_absT_grdN(args)
-
+    # train_atari_absT_grdN(args)
+    path_best_model = "/workspace/repos_dev/VQVAE_RL/results/Atari/Riverraid-v5/A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2/best_models/eval_grd_q.pt"
+    print("Evaluating the best model as the ground truth")
+    ground_truth = eval_ground_truth_q(args, path_best_model, log=False)
     # env = make_env_minigrid(env_id="MiniGrid-Empty-6x6-v0")
     # print(env.observation_space.shape)
 

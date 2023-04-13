@@ -1,6 +1,8 @@
+--domain_name Riverraid-v5 --no-use_dueling --grd_mode dqn --use_abs_V --share_encoder --no-per --no-dan --use_curl off --curl_pair temp --clip_reward --clip_grad --approach_abs_factor 0.5 --grd_encoder_linear_dims -1 --abs_encoder_linear_dims -1 --curl_projection_dims -1 --no-grd_enc_detach --freq_grd_sync 1000 --freq_abs_sync 1000 --tau_grd_encoder 1 --tau_grd_critic 1 --tau_abs_encoder 1 --tau_abs_critic 1 --exploration 0.99 0.1 0.1 --wandb_mode online --repetitions 0 --size_replay_memory 100000 --total_timesteps 300000 --freq_eval 10000 --evaluation_episodes 10 --init_steps 10000 --extra_note ^dvqn_Vcur_30w
+
 --domain_name Asterix-v5 --no-use_dueling --grd_mode dqn --use_abs_V --share_encoder --no-per --no-dan --use_curl off --curl_pair temp --clip_reward --clip_grad --approach_abs_factor 0.5 --grd_encoder_linear_dims -1 --abs_encoder_linear_dims -1 --curl_projection_dims -1 --no-grd_enc_detach --freq_grd_sync 1000 --freq_abs_sync 1000 --tau_grd_encoder 1 --tau_grd_critic 1 --tau_abs_encoder 1 --tau_abs_critic 1 --exploration 0.99 0.1 0.1 --wandb_mode online --repetitions 15 --size_replay_memory 100000 --total_timesteps 100000 --freq_eval 5000 --evaluation_episodes 5 --init_steps 10000 --extra_note ^dvqn_Vcur_10w_test
 
---domain_name Riverraid-v5 --no-use_dueling --grd_mode dqn --use_abs_V --share_encoder --no-per --no-dan --use_curl off --curl_pair temp --clip_reward --clip_grad --approach_abs_factor 0.5 --grd_encoder_linear_dims -1 --abs_encoder_linear_dims -1 --curl_projection_dims -1 --no-grd_enc_detach --freq_grd_sync 1000 --freq_abs_sync 1000 --tau_grd_encoder 1 --tau_grd_critic 1 --tau_abs_encoder 1 --tau_abs_critic 1 --exploration 0.99 0.1 0.1 --wandb_mode online --repetitions 20 --size_replay_memory 100000 --total_timesteps 300000 --freq_eval 10000 --evaluation_episodes 7 --init_steps 10000 --extra_note ^dvqn_Vcur_30w
+
 
 
 
