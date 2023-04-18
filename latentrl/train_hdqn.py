@@ -1340,23 +1340,29 @@ def eval_ground_truth_q(args, path_best_model=None, log=False):
     episodic_negative_rews = []
     episodic_cum_rews = []
     episodic_length = []
+    episodic_max_q = []
     # Test performance over several episodes
     terminated = True
-    epsilon = 0.01
-    for _ in range(args.evaluation_episodes):
+    epsilon = 0.00
+    n_step = 1
+    for n_eval in range(args.evaluation_episodes * 5):
         state, info = env.reset()
         reward_sum = 0
         non_negative_reward_sum = 0
         negative_reward_sum = 0
         terminated = False
         rewards = []
+        max_q = []
         steps = 0
         while True:
             # select action
             with torch.no_grad():
                 state = torch.from_numpy(state[:]).unsqueeze(0).to(device)
                 if random.random() > epsilon:
-                    action = best_agent.ground_Q(state)[0].argmax(dim=1).item()
+                    values = best_agent.ground_Q(state)[0]
+                    action = values.argmax(dim=1).item()
+                    max_q.append(values.max(1)[0].item())
+
                 else:
                     action = random.randrange(best_agent.n_actions)
 
@@ -1370,16 +1376,33 @@ def eval_ground_truth_q(args, path_best_model=None, log=False):
                 negative_reward_sum += reward
 
             if terminated:
-                print(rewards)
                 episodic_rews.append(reward_sum)
                 episodic_non_negative_rews.append(non_negative_reward_sum)
                 episodic_negative_rews.append(negative_reward_sum)
                 episodic_length.append(steps)
                 Gs = np.zeros(len(rewards))
-                for t, _ in enumerate(rewards):
-                    for i, r_prime in enumerate(rewards[t:]):
-                        Gs[t] += args.gamma**i * r_prime
+                for t, r in enumerate(rewards):
+                    if t + 1 == len(rewards):
+                        Gs[t] = r
+                    else:
+                        Gs[t] = r + args.gamma * max_q[t + 1]
+                # for t, r in enumerate(rewards):
+                #     Gs[t] = r
+                #     for i in range(1, n_step + 1):
+                #         if t + i < len(rewards):
+                #             Gs[t] += args.gamma**i * rewards[t + i]
+                #     if t + n_step + 1 < len(rewards):
+                #         Gs[t] += args.gamma ** (n_step + 1) * max_q[t + n_step + 1]
+
                 episodic_cum_rews.append(Gs.mean())
+                episodic_max_q.append(mean(max_q))
+                # for r, g in zip(rewards, Gs):
+                #     print(f"r: {r}, G: {g}")
+                # print(f"reward_sum: {reward_sum}")
+                # print(f"mean_reward: {mean(rewards)}")
+                # print(f"steps: {steps}")
+                # print(f"max_q: {mean(max_q)}")
+                print(f"eval number {n_eval} finished")
                 break
 
     env.close()
@@ -1392,6 +1415,7 @@ def eval_ground_truth_q(args, path_best_model=None, log=False):
     avg_negative_reward = sum(episodic_negative_rews) / len(episodic_negative_rews)
     avg_cum_reward = sum(episodic_cum_rews) / len(episodic_cum_rews)
     avg_length = sum(episodic_length) / len(episodic_length)
+    avg_max_q = sum(episodic_max_q) / len(episodic_max_q)
 
     metrics = {
         "Evaluation/avg_episodic_reward": avg_reward,
@@ -1399,11 +1423,13 @@ def eval_ground_truth_q(args, path_best_model=None, log=False):
         "Evaluation/avg_episodic_negative_reward": avg_negative_reward,
         "Evaluation/avg_episodic_cum_reward": avg_cum_reward,
         "Evaluation/avg_episodic_length": avg_length,
+        "Evaluation/avg_episodic_max_q": avg_max_q,
     }
-
+    print(metrics)
     if log:
         dir = os.path.dirname(path_best_model)
         log_path = os.path.join(dir, "eval_grd_truth.json")
+        print(f"Saving eval metrics to {log_path}...")
         with open(log_path, "a") as f:
             f.write(json.dumps(metrics) + "\n")
 
@@ -1622,9 +1648,9 @@ if __name__ == "__main__":
     # train_manual_absT_grdTN()
     # train_adaptive_absT_grdTN(args)
     # train_atari_absT_grdN(args)
-    path_best_model = "/workspace/repos_dev/VQVAE_RL/results/Atari/Riverraid-v5/A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2/best_models/eval_grd_q.pt"
-    print("Evaluating the best model as the ground truth")
-    ground_truth = eval_ground_truth_q(args, path_best_model, log=False)
+    path_best_model = "/workspace/repos_dev/VQVAE_RL/results/Atari/Asterix-v5/A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2/best_models/train_grd_q.pt"
+
+    ground_truth = eval_ground_truth_q(args, path_best_model, log=True)
     # env = make_env_minigrid(env_id="MiniGrid-Empty-6x6-v0")
     # print(env.observation_space.shape)
 
