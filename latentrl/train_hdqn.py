@@ -1381,11 +1381,16 @@ def eval_ground_truth_q(args, path_best_model=None, log=False):
                 episodic_negative_rews.append(negative_reward_sum)
                 episodic_length.append(steps)
                 Gs = np.zeros(len(rewards))
-                for t, r in enumerate(rewards):
-                    if t + 1 == len(rewards):
-                        Gs[t] = r
-                    else:
-                        Gs[t] = r + args.gamma * max_q[t + 1]
+                for t, _ in enumerate(rewards):
+                    for i, r in enumerate(rewards[t:]):
+                        Gs[t] += args.gamma**i * r
+
+                # for t, r in enumerate(rewards):
+                #     if t + 1 == len(rewards):
+                #         Gs[t] = r
+                #     else:
+                #         Gs[t] = r + args.gamma * max_q[t + 1]
+
                 # for t, r in enumerate(rewards):
                 #     Gs[t] = r
                 #     for i in range(1, n_step + 1):
@@ -1431,7 +1436,7 @@ def eval_ground_truth_q(args, path_best_model=None, log=False):
         log_path = os.path.join(dir, "eval_grd_truth.json")
         print(f"Saving eval metrics to {log_path}...")
         with open(log_path, "a") as f:
-            f.write(json.dumps(metrics) + "\n")
+            f.write(json.dumps(metrics) + "," + "\n")
 
     return {
         "avg_cum_reward": avg_cum_reward,

@@ -21,10 +21,12 @@ def extract_data_from_wandb(
             values = []
             for row in run.scan_history():
                 # check if "x" is in a key of row
-                if value_name in row:
+                if value_name in row and row[value_name] is not None:
                     # print(row[value_name], row[key_name])
                     keys.append(row[key_name])
                     values.append(row[value_name])
+                else:
+                    pass
             keys, values = np.array(keys), np.array(values)
             if smooth > 1 and values.shape[0] > 0:
                 K = np.ones(smooth)
@@ -113,18 +115,19 @@ def plot_data(
 
 
 if __name__ == "__main__":
-    game = "Pong-v5"
+    game = "Asterix-v5"
     smooth = 10
     wandb_path = f"team-yuan/HDQN_Atari_{game}"
     group_names = [
-        # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|^dvqn_Vcur",
-        "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+        "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|^dvqn_Vcur",
+        # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
         "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
-        "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|@ddqn",
-        "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|@cddqn2",
+        "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
+        "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
+        "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|\%duel",
     ]
-    labels = ["DVQN", "DQN", "DDQN", "CDDQN"]
-    colors = ["green", "black", "blue", "red"]
+    labels = ["DVQN", "DQN", "DDQN", "CDDQN", "Duel DQN"]
+    colors = ["green", "black", "blue", "red", "orange"]
 
     # value_name = "Info/grdQ/grd_q_max"
     # value_name_plot = "max Q(s,a)"
@@ -161,4 +164,4 @@ if __name__ == "__main__":
     prefix = "/workspace/repos_dev/VQVAE_RL/plots/"
     path = os.path.join(prefix, f"{game}")
     os.makedirs(path, exist_ok=True)
-    plt.savefig(path + f"/{value_name_plot}_smooth{smooth}.png")
+    plt.savefig(path + f"/{value_name_plot}_smooth{smooth}_#with duel.png")
