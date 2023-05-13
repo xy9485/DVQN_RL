@@ -1088,6 +1088,16 @@ def pack_wrappers2(
     return env
 
 
+class RedundantActionWrapper(gym.ActionWrapper):
+    def __init__(self, env, action_redundancy=2):
+        super().__init__(env)
+        self.action_redundancy = action_redundancy
+        self.action_space = Discrete(self.action_space.n * action_redundancy)
+
+    def action(self, action):
+        return action // self.action_redundancy  # floor division
+
+
 class ActionDiscreteWrapper(gym.ActionWrapper):
     # action space is discrete, designed for CarRacing-v0
     def __init__(self, env):

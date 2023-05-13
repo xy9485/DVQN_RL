@@ -196,6 +196,7 @@ def make_env_atari(env_id, **kwargs):
         env_id,
         frameskip=1,
     )
+    # env = common.wrappers.RedundantActionWrapper(env, action_redundancy=4)
     env = gym.wrappers.AtariPreprocessing(env)
     env = gym.wrappers.FrameStack(env, num_stack=4)
     return env

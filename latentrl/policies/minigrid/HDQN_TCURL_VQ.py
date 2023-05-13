@@ -1301,6 +1301,15 @@ class HDQN_TCURL_VQ(HDQN):
             grd_q_next_max = grd_q_next.max(1)[0].unsqueeze(1)
 
             grd_q_target = rew + gamma * grd_q_next_max
+            # # [sarsa target]
+            # mask = torch.rand(len(grd_q_next)) < self.exploration_rate
+            # q_random_action = grd_q_next[mask][
+            #     torch.randint(low=0, high=self.n_actions, size=(sum(mask), 1))
+            # ]
+            # grd_q_next_max[mask] = q_random_action
+            # grd_q_target = rew + gamma * grd_q_next_max
+            # # [expected sarsa target]
+            # grd_q_target = rew + gamma * grd_q_next.mean(1).unsqueeze(1)
             if use_shaping:
                 # shaping = self.abs_V_target(quantized_next) - self.abs_V_target(quantized)
                 # shaping = abs_v_next_hard - abs_v_hard
@@ -1488,7 +1497,8 @@ class HDQN_TCURL_VQ(HDQN):
             criterion = nn.SmoothL1Loss()
             # criterion = F.mse_loss
             # grd_match_abs_err = criterion(grd_q_reduction, abs_v)
-            grd_match_abs_err = criterion(grd_q, abs_v)
+            # grd_match_abs_err = criterion(grd_q, abs_v)
+            grd_match_abs_err = criterion(grd_q, rew + gamma * n_abs_v)
             # grd_match_abs_err = criterion(grd_q, rew + gamma * n_abs_v)
             if self.dan:
                 grd_match_abs_err = criterion(grd_q + abs_v, rew + gamma * n_abs_v)
