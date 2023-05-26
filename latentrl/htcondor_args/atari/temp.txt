@@ -1,1 +1,8 @@
---domain_name Pong-v5 --no-use_dueling --grd_mode dqn --use_abs_V --share_encoder --no-per --no-dan --use_curl off --curl_pair temp --clip_reward --clip_grad --approach_abs_factor 0.5 --grd_encoder_linear_dims -1 --abs_encoder_linear_dims -1 --curl_projection_dims -1 --no-grd_enc_detach --freq_grd_sync 1000 --freq_abs_sync 1000 --tau_grd_encoder 1 --tau_grd_critic 1 --tau_abs_encoder 1 --tau_abs_critic 1 --exploration 0.99 0.1 0.1 --wandb_mode online --repetitions 20 --size_replay_memory 100000 --total_timesteps 100000 --extra_note dvqn_r+v(s')_Ax4_10w
+--domain_name Pong-v5 --no-use_dueling --grd_mode dqn --use_abs_V --share_encoder --no-per --no-dan --use_curl on_grd --curl_pair raw --clip_reward --clip_grad --approach_abs_factor 0.5 --grd_encoder_linear_dims -1 --abs_encoder_linear_dims -1 --curl_projection_dims 256 128 --no-grd_enc_detach --freq_grd_sync 1000 --freq_abs_sync 1000 --tau_grd_encoder 1 --tau_grd_critic 1 --tau_abs_encoder 1 --tau_abs_critic 1 --exploration 0.99 0.1 0.1 --wandb_mode online --repetitions 20 --size_replay_memory 100000 --total_timesteps 100000 --extra_note dvqn_curl
+
+--domain_name Riverraid-v5 --no-use_dueling --grd_mode dqn --use_abs_V --share_encoder --no-per --no-dan --use_curl off --curl_pair temp --clip_reward --clip_grad --approach_abs_factor 0.5 --grd_encoder_linear_dims -1 --abs_encoder_linear_dims -1 --curl_projection_dims -1 --no-grd_enc_detach --freq_grd_sync 1000 --freq_abs_sync 1000 --tau_grd_encoder 1 --tau_grd_critic 1 --tau_abs_encoder 1 --tau_abs_critic 1 --exploration 0.99 0.1 0.1 --wandb_mode online --repetitions 20 --size_replay_memory 100000 --total_timesteps 100000 --extra_note dvqn_nA+10NOOP_2
+
+
+
+
+

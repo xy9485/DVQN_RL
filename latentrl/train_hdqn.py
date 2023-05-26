@@ -1305,11 +1305,13 @@ def train_atari_absT_grdN(args):
         if mean(eval_rwd_window) > best_eval_reward:
             best_eval_reward = mean(eval_rwd_window)
             torch.save(agent.ground_Q.state_dict(), f"{log_dir_root}/best_models/eval_grd_q.pt")
-            torch.save(agent.abs_V.state_dict(), f"{log_dir_root}/best_models/eval_abs_v.pt")
+            if agent.use_abs_V:
+                torch.save(agent.abs_V.state_dict(), f"{log_dir_root}/best_models/eval_abs_v.pt")
         if mean(episodic_reward_window) > best_train_reward:
             best_train_reward = mean(episodic_reward_window)
             torch.save(agent.ground_Q.state_dict(), f"{log_dir_root}/best_models/train_grd_q.pt")
-            torch.save(agent.abs_V.state_dict(), f"{log_dir_root}/best_models/train_abs_v.pt")
+            if agent.use_abs_V:
+                torch.save(agent.abs_V.state_dict(), f"{log_dir_root}/best_models/train_abs_v.pt")
         wandb.finish()
 
         # if goal_found:
@@ -1352,7 +1354,7 @@ def test(agent, args, L: LoggerWandb):
             else:
                 negative_reward_sum += reward
 
-            if terminated:
+            if terminated or truncated:
                 episodic_rews.append(reward_sum)
                 episodic_non_negative_rews.append(non_negative_reward_sum)
                 episodic_negative_rews.append(negative_reward_sum)
@@ -1428,6 +1430,7 @@ if __name__ == "__main__":
     if not torch.cuda.is_available():
         print("No GPU available, aborting")
         raise SystemExit
+    os.environ["WANDB__SERVICE_WAIT"] = "1200"
     # train_hdqn()
     # train_dqn_kmeans()
     # train_manual_absT_grdTN()

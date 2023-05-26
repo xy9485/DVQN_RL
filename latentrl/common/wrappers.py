@@ -1092,10 +1092,21 @@ class RedundantActionWrapper(gym.ActionWrapper):
     def __init__(self, env, action_redundancy=2):
         super().__init__(env)
         self.action_redundancy = action_redundancy
-        self.action_space = Discrete(self.action_space.n * action_redundancy)
+        self.origin_action_space_n = self.action_space.n
+        # [variant 1]
+        # self.action_space = Discrete(self.action_space.n * action_redundancy)
+        # [variant 2]
+        # assert action_redundancy > self.origin_action_space_n
+        # self.action_space = Discrete(action_redundancy)
+        # [variant 3]
+        self.action_space = Discrete(self.origin_action_space_n + action_redundancy)
 
     def action(self, action):
-        return action // self.action_redundancy  # floor division
+        # return action // self.action_redundancy  # floor division
+        if action < self.origin_action_space_n:
+            return action
+        else:
+            return 0
 
 
 class ActionDiscreteWrapper(gym.ActionWrapper):
