@@ -9,9 +9,6 @@ from nn_models.components import ReparameterizeModule, MlpModel, NoisyLinear
 from nn_models.encoder import (
     Encoder,
     EncoderImg,
-    Encoder_MiniGrid,
-    Encoder_MiniGrid_PartialObs,
-    EncoderRes,
 )
 
 

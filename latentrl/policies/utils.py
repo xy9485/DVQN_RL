@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import torchvision.transforms as T
 
-from nn_models import EncoderImg, Encoder_MiniGrid, Encoder_MiniGrid_PartialObs, Encoder_MinAtar
+from nn_models import EncoderImg
 from typing import Any, Deque, Dict, List, Optional, Tuple, Type, TypeVar, Union
 from torch import Tensor
 
