@@ -324,7 +324,6 @@ class HDQN_TCURL_VQ(HDQN):
         elif reduction_mode == "mean":
             return grd_q.cpu().numpy().mean()
 
-
     def _create_optimizers(self, args):
 
         if args.lr_grd_Q.startswith("lin"):
@@ -1174,7 +1173,6 @@ class HDQN_TCURL_VQ(HDQN):
         }
         self.L.log(metric)
 
-
     def update_grdQ_pure(self, obs, act, n_obs, rew, gamma):
 
         if self.clip_reward:
@@ -1571,9 +1569,13 @@ class HDQN_TCURL_VQ(HDQN):
                     else:
                         pos = n_obs
                 self.update_grdQ_pure(obs, act, n_obs, rew, gamma)
-                if self.use_curl == "on_grd":
+
+            if self.use_curl and steps % self.curl_learn_every == 0:
+                for _ in range(self.curl_gradient_steps):
                     if self.use_vq:
                         self.update_contrastive(obs, pos, ema=True)
+                    elif self.curl_pair == "atc":
+                        self.update_contrastive_atc(obs, pos)
                     else:
                         self.update_contrastive_novq(obs, pos, ema=True)
                 # self.update_contrastive(anc, pos)
