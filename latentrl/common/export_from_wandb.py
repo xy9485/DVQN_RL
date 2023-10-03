@@ -118,7 +118,8 @@ def plot_data(
     # ax.title(title)
     plt.fill_between(keys, means - half_stds, means + half_stds, alpha=0.15)
     # plt.legend(loc="lower right", prop={"size": 6}).get_frame().set_edgecolor("0.1")
-    plt.legend(loc="upper left", ncol=1)
+    # plt.legend(loc="upper left", ncol=1)
+    plt.legend(ncol=1)
     plt.xlabel(key_name)
     plt.ylabel(value_name)
     plt.ticklabel_format(axis="x", style="sci", scilimits=(0, 0))
@@ -244,7 +245,7 @@ def plot_TC(game, wandb_path, value_name, key_name, smooth=10):
     if key_name == "General/timesteps_done":
         key_name_plot = "Timesteps"
     labels = ["DVQN", "DQN", "DVQN+TC", "DQN+TC"]
-    file_name = f"/{value_name_plot}_{game}#with_TC.png"
+    file_name = f"/{value_name_plot}_{game}#with_TC_test2.png"
 
     # group_names = [
     #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2", #Boxing, Asterix
@@ -299,8 +300,8 @@ def plot_TC(game, wandb_path, value_name, key_name, smooth=10):
             "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2",
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
             "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
-            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|&dvqn_Vcur_10w",  # temp
-            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|&dvqn_Vcur_10w",  # temp
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
             "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
         ]
 
@@ -437,22 +438,24 @@ def plot_withCurl(game, wandb_path, value_name, key_name, smooth=10):
     plt.close()
 
 
-def plot_reward(
+def plot_metric(
     game,
     wandb_path,
     value_name,
     key_name,
-    suffix="",
+    file_name_suffix="",
     smooth=10,
 ):
     if value_name == "Episodic/reward":
         value_name_plot = "Reward"
+    if value_name == "Info/grdQ/grd_q_max":
+        value_name_plot = "max Q(s,a)"
     if key_name == "General/timesteps_done":
         key_name_plot = "Timesteps"
 
-    labels = ["DVQN", "DQN", "DDQN", "CDDQN", "Duel DQN"]
+    labels = [r"DVQN $\alpha=0.5$", r"DVQN $\alpha=1.0$", "DQN", "DDQN", "CDDQN", "Duel DQN"]
 
-    file_name = f"/{value_name_plot}_{game}#DUEL_new.png"
+    file_name = f"/{value_name_plot}_{game}#{file_name_suffix}.png"
 
     # group_names = [
     #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2", #Boxing, Asterix
@@ -469,6 +472,8 @@ def plot_reward(
     if game == "Boxing-v5":
         group_names = [
             "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w",  # Boxing
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
             "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
             "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
@@ -482,6 +487,8 @@ def plot_reward(
         group_names = [
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|^dvqn_Vcur",  # Riverraid
             "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
             "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
             "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
             "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
@@ -493,6 +500,8 @@ def plot_reward(
         group_names = [
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2", #Boxing, Asterix
             "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
             "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
             "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
             "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
@@ -505,26 +514,30 @@ def plot_reward(
         group_names = [
             "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2",  # Breakout
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",  # Breakout
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
             "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
-            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
-            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
-            # "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
-            "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|dqn+tc",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|dqn+tc",
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|#_*",
-            "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
         ]
 
     elif game == "Pong-v5":
         group_names = [
             "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
             "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
-            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|@ddqn",
-            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|@cddqn2",
-            # "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
-            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|&dvqn_Vcur_10w",  # temp
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|@ddqn",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|@cddqn2",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|&dvqn_Vcur_10w",  # temp
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
-            "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
         ]
 
     for i, group_name in enumerate(group_names):
@@ -570,7 +583,7 @@ if __name__ == "__main__":
     key_name_plot = "Timesteps"
 
     games = ["Breakout-v5", "Pong-v5", "Asterix-v5", "Boxing-v5", "Riverraid-v5"]
-    # games = ["Riverraid-v5"]
+    # games = ["Asterix-v5"]
 
     for game in games:
         smooth = 10
@@ -586,4 +599,12 @@ if __name__ == "__main__":
         #     with_duel=True,
         # )
 
-        plot_withCurl(game, wandb_path, value_name, key_name, smooth=smooth)
+        # plot_withCurl(game, wandb_path, value_name, key_name, smooth=smooth)
+        plot_metric(
+            game,
+            wandb_path,
+            value_name,
+            key_name,
+            file_name_suffix="reward_rebuttal",
+            smooth=smooth,
+        )
