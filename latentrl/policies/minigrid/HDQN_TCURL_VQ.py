@@ -146,6 +146,27 @@ class HDQN_TCURL_VQ(HDQN):
             self.ground_Q2.train()
             self.ground_Q_target.train()
 
+        if self.grd_mode == "avgdqn":
+            self.target_q_net_list = []
+            self.num_active_target = 1
+            self.avgdqn_k = args.avgdqn_k
+            for k in range(args.avgdqn_k):
+                Q_target = QNet(
+                    # observation_space=env.observation_space,
+                    action_space=env.action_space,
+                    # encoder=EncoderMaker(input_format=config.input_format, agent=self).make(),
+                    encoder=make_encoder(
+                        input_format=args.input_format,
+                        observation_space=env.observation_space,
+                        # hidden_channels=args.grd_hidden_channels,
+                        linear_dims=args.grd_encoder_linear_dims,
+                    ),
+                    mlp_hidden_dims=args.grd_critic_dims,
+                    # noisy=args.use_noisynet,
+                ).to(self.device)
+                Q_target.load_state_dict(self.ground_Q.state_dict())
+                self.target_q_net_list.append(Q_target)
+
         if args.use_abs_V:
             if args.share_encoder:
                 self.abs_V = DVN(
@@ -1296,9 +1317,30 @@ class HDQN_TCURL_VQ(HDQN):
                 n_abs_v = self.abs_V(n_obs)
                 # n_abs_v = self.abs_V_target(n_obs)
 
-            # [Vanilla DQN]
-            grd_q_next, encoded_next = self.ground_Q_target(n_obs)
-            grd_q_next_max = grd_q_next.max(1)[0].unsqueeze(1)
+            # [Average DQN]
+            if self.grd_mode == "avgdqn":
+                # save current weights of ground_Q_target into q_net_buffer
+                # self.target_q_net_list.append(copy.deepcopy(self.ground_Q_target.state_dict()))
+
+                # ksum_grd_q_next = torch.zeros(
+                #     self.batch_size, self.ground_Q_target.critic.output_dim
+                # ).to(self.device)
+                # for target_weight in reversed(self.target_q_net_list):
+                #     self.ground_Q_target.load_state_dict(target_weight)
+                #     grd_q_next, encoded_next = self.ground_Q_target(n_obs)
+                #     ksum_grd_q_next += grd_q_next
+                # kmean_grd_q_next = ksum_grd_q_next / len(self.target_q_net_list)
+                # grd_q_next_max = kmean_grd_q_next.max(1)[0].unsqueeze(1)
+                q_value_list = [
+                    q_func(n_obs)[0] for q_func in self.target_q_net_list[-self.num_active_target :]
+                ]
+                avg_q_value = sum(q_value_list) / len(q_value_list)
+                grd_q_next_max = avg_q_value.max(1)[0].unsqueeze(1)
+
+            else:
+                # [Vanilla DQN]
+                grd_q_next, encoded_next = self.ground_Q_target(n_obs)
+                grd_q_next_max = grd_q_next.max(1)[0].unsqueeze(1)
 
             grd_q_target = rew + gamma * grd_q_next_max
             # # [sarsa target]
@@ -2383,7 +2425,7 @@ class HDQN_TCURL_VQ(HDQN):
                 )
                 pass
             if steps % self.ground_learn_every == 0:
-                if self.grd_mode == "dqn":
+                if self.grd_mode == "dqn" or self.grd_mode == "avgdqn":
                     grdQ_loss, td_error_per = self.update_grdQ(
                         obs,
                         act,
@@ -2538,11 +2580,24 @@ class HDQN_TCURL_VQ(HDQN):
                 #     self.update_contrastive(anc, pos)
 
         if steps % self.ground_sync_every == 0:
-            soft_sync_params(
-                self.ground_Q.parameters(),
-                self.ground_Q_target.parameters(),
-                self.ground_Q_encoder_tau,
-            )
+            if self.grd_mode == "avgdqn":
+                if self.num_active_target < self.avgdqn_k:
+                    self.num_active_target += 1
+                # for i in range(self.num_active_target - 1, 0, -1):
+                #     self.target_q_net_list[i].load_state_dict(
+                #         self.target_q_net_list[i - 1].state_dict()
+                #     )
+                for idx, target_q_func in enumerate(self.target_q_net_list):
+                    if idx != len(self.target_q_net_list) - 1:  # if not last target q function
+                        target_q_func.load_state_dict(self.target_q_net_list[idx + 1].state_dict())
+                    else:
+                        target_q_func.load_state_dict(self.ground_Q.state_dict())
+            else:
+                soft_sync_params(
+                    self.ground_Q.parameters(),
+                    self.ground_Q_target.parameters(),
+                    self.ground_Q_encoder_tau,
+                )
             if self.grd_mode == "cddqn":
                 soft_sync_params(
                     self.ground_Q2.parameters(),

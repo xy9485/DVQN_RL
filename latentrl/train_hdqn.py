@@ -87,7 +87,10 @@ def parse_args():
     # cli.add_argument("--mode", default="grd", type=str)
     cli.add_argument("--args_from_cli", default=False, action="store_true")
     # cli.add_argument("--use_grd_Q", default=True, action="store_true")
-    cli.add_argument("--grd_mode", default="dqn", choices=["dqn", "ddqn", "cddqn"], type=str)
+    cli.add_argument(
+        "--grd_mode", default="dqn", choices=["dqn", "ddqn", "cddqn", "avgdqn"], type=str
+    )
+    cli.add_argument("--avgdqn_k", default=0, type=int)
     cli.add_argument("--grd_lower_bound", default=False, action=argparse.BooleanOptionalAction)
     cli.add_argument("--use_abs_V", default=False, action=argparse.BooleanOptionalAction)
     cli.add_argument("--use_curl", default=None, choices=["on_abs", "on_grd", "off"], type=str)
