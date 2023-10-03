@@ -9,7 +9,7 @@ error                   = htcondor_stderr.txt
 
 request_cpus   = 1
 request_gpus   = 1
-request_memory = 8 GB
+request_memory = 12 GB
 #queue args from htcondor_args/atari/absCurl_grd.txt
 queue args from htcondor_args/atari/abs_grd.txt
 #queue args from htcondor_args/atari/absVQ_grd.txt
