@@ -1,0 +1,147 @@
+program: train_hdqn.py
+method: bayes
+# method: random
+# method: grid
+metric:
+  name: avg_sample_effi_reps
+  goal: maximize
+
+parameters:
+  # args_from_cli:
+  #   value: False
+  # sweep:
+  #   value: False
+  grd_mode:
+    value: "dqn"
+  grd_lower_bound:
+    value: False
+  use_abs_V:
+    value: True
+  use_curl:
+    value: "off"
+  share_encoder:
+    value: True
+  curl_pair:
+    value: "temp"
+  use_vq:
+    value: False
+  curl_vq_cfg:
+    value: [0.0, 0.0, 0.0]
+  use_dueling:
+    value: False
+  use_noisynet:
+    value: False
+  use_curiosity:
+    value: False
+  clip_reward:
+    value: True
+  clip_grad:
+    value: True
+  dan:
+    value: False
+  per:
+    value: False
+  domain_name:
+    value: Breakout-v5
+  domain_type:
+    value: Atari
+  input_format:
+    value: full_img
+  env_seed:
+    value: 940805
+  total_timesteps:
+    value: 100000
+  init_steps:
+    value: 10000
+  batch_size:
+    values: [64, 128, 256]
+  size_replay_memory:
+    values: [30000, 100000]
+  gamma:
+    value: 0.99
+  exploration:
+    value: [0.99, 0.1, 0.1]
+  epsilon_decay:
+    value: 0.99998
+  epsilon_min:
+    value: 0.01
+  conservative_ratio:
+    value: 0.0
+  approach_abs_factor:
+    values: [0.1, 0.5, 1.0]
+  omega: # for reward shaping
+    value: 0.0
+  grd_encoder_linear_dims:
+    value: [-1]
+  grd_critic_dims:
+    value: [256, 256]
+  abs_encoder_linear_dims:
+    value: [-1]
+  abs_critic_dims:
+    value: [256, 256]
+  curl_projection_dims:
+    value: [-1]
+  curl_enc_detach:
+    value: False
+  critic_upon_vq:
+    value: False
+  abs_enc_detach:
+    value: False
+  grd_enc_detach:
+    value: False
+  num_vq_embeddings:
+    value: 16
+  vq_softmin_beta:
+    value: 0.5
+  lr_grd_Q: # unify all learning rates below in practice
+    values: [0.0001, 0.0005, 0.001]
+  lr_abs_V:
+    value: 0.0001
+  lr_curl:
+    value: 0.0001
+  lr_vq:
+    value: 0.0001
+  lr_decay:
+    value: 0.9999
+  lr_min:
+    value: 0.01
+  freq_grd_learn:
+    values: [1, 5]
+  freq_grd_sync:
+    value: [1000, 100]
+  freq_abs_learn:
+    values: [1, 5]
+  freq_abs_sync:
+    values: [1000, 100]
+  freq_curl_learn:
+    value: 1
+  freq_curl_sync:
+    value: 1
+  tau_grd_encoder:
+    value: 1.0
+  tau_grd_critic:
+    value: 1.0
+  tau_abs_encoder:
+    value: 1.0
+  tau_abs_critic:
+    value: 1.0
+  tau_curl:
+    value: 0.001
+  tau_vq:
+    value: 0.001
+  optimizer:
+    values: ["adamw", "rmsprop"]
+  freq_eval:
+    value: 10000
+  evaluation_episodes:
+    value: 10
+  wandb_tags:
+    value: null
+  wandb_mode:
+    value: online
+  extra_note:
+    value: ""
+  repetitions:
+    value: 20
+  htcondor_procid:
+    value: null

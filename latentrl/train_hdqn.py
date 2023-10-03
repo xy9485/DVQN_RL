@@ -12,6 +12,7 @@ from pprint import pprint
 from tkinter import N
 from types import SimpleNamespace
 import pathlib
+import multiprocessing
 
 print(pathlib.Path(__file__).parent.parent.absolute())
 
@@ -86,6 +87,7 @@ def parse_args():
 
     # cli.add_argument("--mode", default="grd", type=str)
     cli.add_argument("--args_from_cli", default=False, action="store_true")
+    cli.add_argument("--sweep", default=False, action="store_true")
     # cli.add_argument("--use_grd_Q", default=True, action="store_true")
     cli.add_argument("--grd_mode", default="dqn", choices=["dqn", "ddqn", "cddqn"], type=str)
     cli.add_argument("--grd_lower_bound", default=False, action=argparse.BooleanOptionalAction)
@@ -1327,6 +1329,301 @@ def train_atari_absT_grdN(args):
     env.close()
 
 
+def train_dvqn_sweep(args):
+    """
+    abstract level using table
+    ground level using table or network, by setting use_table4grd
+
+    """
+    # cfg_key = "Atari"
+    # cfg_key = "MinAtar/Breakout-v0"
+    # cfg_key = "MinAtar/Asterix-v0"
+    # cfg_key = "MinAtar/SpaceInvaders-v0"
+    # cfg_key = "MinAtar/Freeway-v0"
+    # cfg_key = "MinAtar/Seaquest-v0"
+
+    # load hyperparameters from yaml config file
+    # with open("/workspace/repos_dev/VQVAE_RL/hyperparams/atari/atari_soft_vq.yaml") as f:
+    #     cfg = yaml.load(f, Loader=yaml.FullLoader)[cfg_key]
+    #     pprint(cfg)
+    # with open("/workspace/repos_dev/VQVAE_RL/hyperparams/minatar/minatar.yaml") as f:
+    #     cfg = yaml.load(f, Loader=yaml.FullLoader)["MinAtar"]
+    #     pprint(cfg)
+    # with open("/workspace/repos_dev/VQVAE_RL/hyperparams/carracing.yaml") as f:
+    #     cfg = yaml.load(f, Loader=yaml.FullLoader)["CarRacing-v2"]
+    #     pprint(cfg)
+    # best_eval_reward = -np.inf
+    # best_train_reward = -np.inf
+    # Spin up workers before calling wandb.init()
+    # Workers will be blocked on a queue waiting to start
+    sweep_q = multiprocessing.Queue()
+    workers = []
+    for domain in all_domains:
+        domain_name
+
+    for num in range(args.repetitions):
+        q = multiprocessing.Queue()
+        p = multiprocessing.Process(
+            target=trian_atari_dvqn(), kwargs=dict(sweep_q=sweep_q, worker_q=q)
+        )
+        p.start()
+        workers.append(Worker(queue=q, process=p))
+
+    sweep_run = wandb.init()
+    sweep_id = sweep_run.sweep_id or "unknown"
+    sweep_run_name = sweep_run.name or "unknown"
+    sweep_run_config = sweep_run.config
+    # modify some arguments to make hyperparameter search easier
+    sweep_run_config.lr_abs_V = sweep_run_config.lr_grd_Q
+    sweep_run_config.lr_curl = sweep_run_config.lr_grd_Q
+    sweep_run_config.lr_vq = sweep_run_config.lr_grd_Q
+
+    metrics = []
+    for num in range(args.repetitions):
+        print(f"====Starting Repetition {num}, Sweep_id {sweep_id}====")
+        worker = workers[num]
+        # start worker
+        worker.queue.put(
+            WorkerInitData(
+                sweep_id=sweep_id, num=num, sweep_run_name=sweep_run_name, config=sweep_run_config
+            )
+        )
+        # get metric from worker
+        result = sweep_q.get()
+        # wait for worker to finish
+        worker.process.join()
+        # log metric to sweep_run
+        metrics.append(result.avg_sample_efficiency)
+
+        # if goal_found:
+        #     print("====Goal Found====")
+        # else:
+        #     print("====Goal Not Found in this repetition, deleting this run from wandb====")
+        # if not isinstance(run.mode, wandb.sdk.lib.disabled.RunDisabled):
+        #     api = wandb.Api()
+        #     run = api.run(f"team-yuan/HDQN_Neo/{run.id}")
+        #     run.delete()
+
+    print("Complete")
+
+    sweep_run.log(dict(avg_sample_effi_reps=sum(metrics) / len(metrics)))
+    wandb.finish()
+
+
+def trian_atari_dvqn(worker_q, sweep_q):
+    current_time = datetime.datetime.now() + datetime.timedelta(hours=2)
+    current_time = current_time.strftime("%b%d_%H-%M-%S")
+
+    worker_data = worker_q.get()
+    run_name = "{}-{}".format(worker_data.sweep_run_name, worker_data.num)
+    args = worker_data.config
+
+    project_name = args.domain_name
+    curl_projection = 0 if args.curl_projection_dims == [-1] else 1
+    if args.use_curl == None:
+        curl_mode = "off"
+    else:
+        curl_mode = args.use_curl.replace("on_", "")
+
+    group_name = f"A{int(args.use_abs_V)}_AEncD{int(args.abs_enc_detach)}_GEncD{int(args.grd_enc_detach)}_ShrEnc{int(args.share_encoder)}_Curl|{curl_mode},{args.curl_pair},P{curl_projection}|_VQ{int(args.use_vq)}|{args.num_vq_embeddings},{args.vq_softmin_beta},{int(args.critic_upon_vq)},{args.curl_vq_cfg}|_bs{args.batch_size}_ms{int(args.size_replay_memory/1000)}k_close{args.approach_abs_factor}|{args.extra_note}"
+
+    run = wandb.init(
+        # project="HDQN_AbsTable_GrdNN_Atari",
+        # project=f"HDQN_Atari_{project_name}",
+        # project="HDQN_MinAtar",
+        # project="HDQN_Neo_Carracing",
+        mode=args.wandb_mode,
+        group=group_name,
+        job_tyoe=worker_data.sweep_run_name,
+        name=run_name,
+        # notes=cfg["wandb_notes"],
+        config=vars(args) if isinstance(args, argparse.Namespace) else args._as_dict(),
+        tags=args.wandb_tags,
+    )
+    # wandb.run.log_code(".")
+    if not args.args_from_cli:
+        log_dir_root = os.path.join(
+            "/workspace/repos_dev/VQVAE_RL/results",
+            args.domain_type,
+            args.domain_name,
+            group_name,
+        )
+    else:
+        log_dir_root = os.path.join(
+            "/storage/raid/xue/rlyuan/repos_dev/VQVAE_RL/results",
+            args.domain_type,
+            args.domain_name,
+            group_name,
+        )
+    os.makedirs(os.path.join(log_dir_root, "best_models"), exist_ok=True)
+    current_time = datetime.datetime.now()
+    current_time = current_time.strftime("%b%d_%H-%M-%S")
+    log_dir = os.path.join(log_dir_root, current_time)
+    os.makedirs(log_dir, exist_ok=True)
+    L = LoggerWandb()
+    env = MAKE_ENV_FUNCS[args.domain_type]("ALE/" + args.domain_name, seed=args.env_seed)
+
+    # agent = HDQN_Pixel(config, env)
+    agent = HDQN_TCURL_VQ(args, env, logger=L)
+    if agent.use_vq:
+        wandb.watch(agent.vq, log="all", log_freq=100, idx=0)
+    # wandb.watch(agent.abs_V, log="all", log_freq=100, idx=1)
+    # wandb.watch(agent.ground_Q, log="all", log_freq=100, idx=2)
+    if agent.use_curl:
+        wandb.watch(agent.curl, log="all", log_freq=100, idx=3)
+
+    time_start_training = time.time()
+    # gym.reset(seed=int(time.time()))
+    total_steps = int(args.total_timesteps + args.init_steps)
+    # agent.cache_goal_transition()
+    episodic_reward_window = deque(maxlen=15)
+    eval_rwd_window = deque(maxlen=6)
+    ema_reward_list = []
+    time_steps_list = []
+    recent_dropping_episodes = 0
+    eps_rwd_run = []
+    eps_steps_run = []
+    while agent.timesteps_done < total_steps:
+        time_start_episode = time.time()
+        # Initialize the environment and state
+        state, info = env.reset()
+        episodic_reward = 0
+        episodic_negative_reward = 0
+        episodic_non_negative_reward = 0
+        episodic_shaped_reward = 0
+        for t in count():
+            # [Select and perform an action]
+            # with utils.eval_mode(agent):
+            action = agent.act(state)
+            # [Step]
+            next_state, reward, terminated, truncated, info = env.step(action)
+            agent.timesteps_done += 1
+
+            # abs_state1, abs_value1 = agent.get_abstract_value(info["agent_pos1"])
+            # abs_state2, abs_value2 = agent.get_abstract_value(info["agent_pos2"])
+            # interval4SemiMDP += 1
+            # info["interval4SemiMDP"] = interval4SemiMDP
+            # if not (abs_state1 == abs_state2 and reward == 0):
+            #     # this conditino should match the one in update_absV
+            #     interval4SemiMDP = 0
+            # if abs_state1 != abs_state2:
+            #     shaping = config.gamma * abs_value2 - abs_value1
+            #     episodic_shaped_reward += shaping
+            #     agent.shaping_distribution[
+            #         info["agent_pos2"][1], info["agent_pos2"][0], info["agent_dir2"]
+            #     ] += shaping
+
+            # for i in range(len(config.abs_ticks) - 1):
+            #     if agent.timesteps_done == (i + 1) * total_steps / len(config.abs_ticks):
+            #         agent.set_abs_ticks(config, i + 1)
+            # if isinstance(env.unwrapped, MiniGridEnv):
+            #     info["agent_pos"] = env.agent_pos
+            #     info["agent_dir"] = env.agent_dir
+            # print(env.agent_pos, env.agent_dir)
+            # time.sleep(10)
+
+            # [Store the transition in memory]
+            shaping = agent.cache(state, action, next_state, reward, terminated, info)
+            # agent.cache_ema(state, action, next_state, reward, terminated, info)
+            # agent.cache_lazy(state, action, next_state, reward, terminated)
+            episodic_shaped_reward += shaping
+
+            # reward = info["original_reward"]
+            episodic_reward += reward
+            if reward < 0:
+                episodic_negative_reward += reward
+            else:
+                episodic_non_negative_reward += reward
+            # [update]
+            # action_prime = agent.act_table(info)
+            if agent.timesteps_done >= args.init_steps:
+                agent.update()
+
+                if agent.timesteps_done % args.freq_eval == 0:
+                    print("start eval ...")
+                    avg_eval_rwd = test(agent, args, L)
+                    eval_rwd_window.append(avg_eval_rwd)
+                    print("eval end")
+                # here we use table to do update
+                # agent.update_table(use_shaping=config.use_shaping)
+                # agent.update_table_no_memory(
+                #     use_shaping=config.use_shaping, action_prime=action_prime
+                # )
+                # agent.update_table_abs_update_non_parallel2(use_shaping=config.use_shaping)
+
+            # agent.maybe_buffer_recent_states(state)
+            if agent.timesteps_done >= total_steps:
+                truncated = True
+
+            state = next_state
+            # action = action_prime
+
+            if terminated or truncated:
+                agent.episodes_done += 1
+                eps_rwd_run.append(episodic_reward)
+                eps_steps_run.append(t + 1)
+                episodic_reward_window.append(episodic_reward)
+                if agent.episodes_done > 0 and agent.episodes_done % 1 == 0:
+                    if agent.timesteps_done > args.init_steps:
+                        # agent.vis_abstraction()
+                        # agent.vis_abstract_values()
+                        # agent.vis_grd_visits(norm_log=50)
+                        # agent.vis_grd_visits(norm_log=0)
+                        # agent.vis_shaping_distribution(norm_log=100)
+                        # agent.vis_shaping_distribution(norm_log=0)
+                        pass
+
+                metrics = {
+                    "Episodic/reward": episodic_reward,
+                    "Episodic/negative_reward": episodic_negative_reward,
+                    "Episodic/non_negative_reward": episodic_non_negative_reward,
+                    "Episodic/shaped_reward": episodic_shaped_reward,
+                    # "Episodic/ema_reward": mean(episodic_reward_window),
+                    "reward/episodic_reward": episodic_reward,
+                    "reward/episodic_negative_reward": episodic_negative_reward,
+                    "reward/episodic_non_negative_reward": episodic_non_negative_reward,
+                    "time/timesteps_done": agent.timesteps_done,
+                    "Episodic/length": t + 1,
+                    "Time/total_time_elapsed": (time.time() - time_start_training) / 3600,
+                    "Time/fps_per_episode": int((t + 1) / (time.time() - time_start_episode)),
+                    # "RND/beta_t": agent.rnd.beta_t,
+                    # "Episodic/ema_reward_derivative": ema_reward_derivative,
+                }
+
+                L.log_and_dump(metrics, agent)
+                # L.dump2wandb(agent=agent, force=True)
+
+                print2console(
+                    agent=agent,
+                    episodic_reward=episodic_reward,
+                    terminated=terminated,
+                    truncated=truncated,
+                    t=t,
+                    time_start_episode=time_start_episode,
+                    rep=worker_data.num,
+                )
+
+                break
+    # if mean(eval_rwd_window) > best_eval_reward:
+    #     best_eval_reward = mean(eval_rwd_window)
+    #     torch.save(agent.ground_Q.state_dict(), f"{log_dir_root}/best_models/eval_grd_q.pt")
+    #     if agent.use_abs_V:
+    #         torch.save(agent.abs_V.state_dict(), f"{log_dir_root}/best_models/eval_abs_v.pt")
+    # if mean(episodic_reward_window) > best_train_reward:
+    #     best_train_reward = mean(episodic_reward_window)
+    #     torch.save(agent.ground_Q.state_dict(), f"{log_dir_root}/best_models/train_grd_q.pt")
+    #     if agent.use_abs_V:
+    #         torch.save(agent.abs_V.state_dict(), f"{log_dir_root}/best_models/train_abs_v.pt")
+    wandb.finish()
+    # create a list of integers from 1 to 100000 with interval of 50
+
+    # interpolate eps_rwd_run and eps_steps_run with x_axis
+    x_axis = np.arange(1, total_steps, 50)
+    eps_rwd_run = np.interp(x_axis, eps_steps_run[:-1], eps_rwd_run[:-1])
+    avg_sample_efficiency = np.mean(eps_rwd_run / x_axis)
+    sweep_q.put(WorkerDoneData(avg_sample_efficiency=avg_sample_efficiency))
+
+
 def test(agent, args, L: LoggerWandb):
     env = MAKE_ENV_FUNCS[args.domain_type]("ALE/" + args.domain_name)
     # env.eval()
@@ -1415,6 +1712,14 @@ def find_gpu():
     os.environ["GPU_DEBUG"] = str(DEVICE_ID)
 
 
+import collections
+
+Worker = collections.namedtuple("Worker", ("queue", "process"))
+WorkerInitData = collections.namedtuple(
+    "WorkerInitData", ("num", "sweep_id", "sweep_run_name", "config")
+)
+WorkerDoneData = collections.namedtuple("WorkerDoneData", ("avg_sample_efficiency"))
+
 if __name__ == "__main__":
     # print("sys.path:", sys.path)
 
@@ -1431,11 +1736,21 @@ if __name__ == "__main__":
         print("No GPU available, aborting")
         raise SystemExit
     os.environ["WANDB__SERVICE_WAIT"] = "1200"
-    # train_hdqn()
-    # train_dqn_kmeans()
-    # train_manual_absT_grdTN()
-    # train_adaptive_absT_grdTN(args)
-    train_atari_absT_grdN(args)
+    if args.sweep:
+        # some arguments passed via CLI will be replaced via sweep config
+        yml_path = "/home/yuan/workspace/repos_dev/examples/examples/wandb-sweeps/sweeps-cross-validation/sweep-cross-validation.yaml"
+        # read yaml file to a dict, using full load
+        with open(yml_path, "r") as f:
+            sweep_cfg = yaml.load(f, Loader=yaml.FullLoader)
+
+        sweep_id = wandb.sweep(sweep=sweep_cfg, project="my-test-sweep")
+        wandb.agent(sweep_id, function=train_dvqn_sweep, count=30)
+    else:
+        # train_hdqn()
+        # train_dqn_kmeans()
+        # train_manual_absT_grdTN()
+        # train_adaptive_absT_grdTN(args)
+        train_atari_absT_grdN(args)
 
     # env = make_env_minigrid(env_id="MiniGrid-Empty-6x6-v0")
     # print(env.observation_space.shape)
