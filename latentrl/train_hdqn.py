@@ -186,7 +186,7 @@ def parse_args():
         print("loading args from txt file...")
         with open(
             # "/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/abs_grd.txt",
-            f"/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/temp.txt",
+            f"/storage/xue/repos/DVQN_RL/latentrl/htcondor_args/atari/temp.txt",
             "r",
         ) as f:
             for args_str in f:
@@ -1146,20 +1146,12 @@ def train_atari_absT_grdN(args):
             config=vars(args),
         )
         # wandb.run.log_code(".")
-        if not args.args_from_cli:
-            log_dir_root = os.path.join(
-                "/workspace/repos_dev/VQVAE_RL/results",
-                args.domain_type,
-                args.domain_name,
-                group_name,
-            )
-        else:
-            log_dir_root = os.path.join(
-                "/storage/raid/xue/rlyuan/repos_dev/VQVAE_RL/results",
-                args.domain_type,
-                args.domain_name,
-                group_name,
-            )
+        log_dir_root = os.path.join(
+            "/storage/xue/repos/DVQN_RL/results",
+            args.domain_type,
+            args.domain_name,
+            group_name,
+        )
         os.makedirs(os.path.join(log_dir_root, "best_models"), exist_ok=True)
         current_time = datetime.datetime.now()
         current_time = current_time.strftime("%b%d_%H-%M-%S")
