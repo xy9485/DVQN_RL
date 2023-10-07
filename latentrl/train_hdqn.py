@@ -132,7 +132,8 @@ def parse_args():
         print("loading args from txt file...")
         with open(
             # "/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/abs_grd.txt",
-            f"/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/temp.txt",
+            # f"/workspace/repos_dev/VQVAE_RL/latentrl/htcondor_args/atari/temp.txt",
+            f"/storage/xue/repos/DVQN_RL/latentrl/htcondor_args/atari/temp.txt",
             "r",
         ) as f:
             for args_str in f:
@@ -198,7 +199,8 @@ def train_atari_absT_grdN(args):
         # wandb.run.log_code(".")
         if not args.args_from_cli:
             log_dir_root = os.path.join(
-                "/workspace/repos_dev/VQVAE_RL/results",
+                # "/workspace/repos_dev/VQVAE_RL/results",
+                "/storage/xue/repos/DVQN_RL/results",
                 args.domain_type,
                 args.domain_name,
                 group_name,
