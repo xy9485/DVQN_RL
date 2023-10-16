@@ -1284,6 +1284,25 @@ class HDQN_TCURL_VQ(HDQN):
                 grd_q_next_max = self.ground_Q_target(n_obs)[0].gather(
                     1, self.ground_Q(n_obs)[0].argmax(dim=1, keepdim=True)
                 )
+            # [Average DQN]
+            elif self.grd_mode == "avgdqn":
+                # save current weights of ground_Q_target into q_net_buffer
+                # self.target_q_net_list.append(copy.deepcopy(self.ground_Q_target.state_dict()))
+
+                # ksum_grd_q_next = torch.zeros(
+                #     self.batch_size, self.ground_Q_target.critic.output_dim
+                # ).to(self.device)
+                # for target_weight in reversed(self.target_q_net_list):
+                #     self.ground_Q_target.load_state_dict(target_weight)
+                #     grd_q_next, encoded_next = self.ground_Q_target(n_obs)
+                #     ksum_grd_q_next += grd_q_next
+                # kmean_grd_q_next = ksum_grd_q_next / len(self.target_q_net_list)
+                # grd_q_next_max = kmean_grd_q_next.max(1)[0].unsqueeze(1)
+                q_value_list = [
+                    q_func(n_obs)[0] for q_func in self.target_q_net_list[-self.num_active_target :]
+                ]
+                avg_q_value = sum(q_value_list) / len(q_value_list)
+                grd_q_next_max = avg_q_value.max(1)[0].unsqueeze(1)
 
             # Compute ground target Q value
             grd_q_target = rew + gamma * grd_q_next_max
@@ -1595,7 +1614,7 @@ class HDQN_TCURL_VQ(HDQN):
                 # pos = torch.concat([n_obs, obs], dim=0)
                 # anc = obs
                 # pos = n_obs
-                if hasattr(self, "rnd"):
+                if self.use_curiosity:
                     loss = self.rnd.update(obs)
                     self.L.log(
                         {
@@ -1603,13 +1622,14 @@ class HDQN_TCURL_VQ(HDQN):
                             "RND/beta_t": self.rnd.beta_t,
                         }
                     )
-                with torch.no_grad():
-                    obs = self.aug(obs)
-                    n_obs = self.aug(n_obs)
-                    if self.curl_pair == "raw":
-                        pos = self.aug(obs)
-                    else:
-                        pos = n_obs
+                if self.input_format == "full_img":
+                    with torch.no_grad():
+                        obs = self.aug(obs)
+                        n_obs = self.aug(n_obs)
+                        if self.curl_pair == "raw":
+                            pos = self.aug(obs)
+                        else:
+                            pos = n_obs
                 self.update_grdQ_pure(obs, act, n_obs, rew, gamma)
 
             if self.use_curl and steps % self.curl_learn_every == 0:
