@@ -444,6 +444,7 @@ def plot_metric(
     value_name,
     key_name,
     file_name_suffix="",
+    universal_group_name=False,
     smooth=10,
 ):
     if value_name == "Episodic/reward":
@@ -453,9 +454,21 @@ def plot_metric(
     if key_name == "General/timesteps_done":
         key_name_plot = "Timesteps"
 
-    labels = [r"DVQN $\alpha=0.5$", r"DVQN $\alpha=1.0$", "DQN", "DDQN", "CDDQN", "Duel DQN"]
+    labels = [
+        "DVQN",
+        # r"DVQN $\alpha=0.5$", 
+        # r"DVQN $\alpha=1.0$", 
+        "DQN", 
+        # "DDQN", 
+        # "CDDQN", 
+        "Avg DQN freq=10", 
+        "Avg DQN freq=50", 
+        "Avg DQN freq=100", 
+        "Avg DQN freq=1000", 
+        # "Duel DQN",
+        ]
 
-    file_name = f"/{value_name_plot}_{game}#{file_name_suffix}.png"
+    file_name = f"/{value_name_plot}_{game}_{file_name_suffix}.png"
 
     # group_names = [
     #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2", #Boxing, Asterix
@@ -469,16 +482,30 @@ def plot_metric(
     #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
     #     # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
     # ]
-    if game == "Boxing-v5":
+    if universal_group_name:
+        group_names = [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms300k_close0.5|dvqn_1M",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms300k_close1.0|dvqn_1M#",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms300k_close0.0|dqn_1M",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms300k_close0.0|ddqn_1M",            
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms300k_close0.0|cddqn_1M",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms300k_close0.0|avgdqnK10_1M",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms300k_close0.0|duel_1M",            
+        ]      
+    elif game == "Boxing-v5":
         group_names = [
             "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w",  # Boxing
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
-            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
             "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
-            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
-            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
-            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync10",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync50",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync100",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10",
+            # "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
             # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
         ]
@@ -488,11 +515,15 @@ def plot_metric(
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|^dvqn_Vcur",  # Riverraid
             "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
-            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
             "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
-            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
-            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
-            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync10",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync50",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync100",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10",
+            # "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|#_*",
             # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
         ]
@@ -500,12 +531,16 @@ def plot_metric(
         group_names = [
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2", #Boxing, Asterix
             "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
-            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
             "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
-            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
-            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
-            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync10",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync50",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync100",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10",
+            # "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
             # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
         ]
@@ -515,11 +550,15 @@ def plot_metric(
             "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2",  # Breakout
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",  # Breakout
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
-            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
             "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
-            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
-            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
-            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync10",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync50",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync100",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10",
+            # "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|dqn+tc",
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|#_*",
             # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
@@ -529,12 +568,16 @@ def plot_metric(
         group_names = [
             "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2",
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
-            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
             "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
-            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|@ddqn",
-            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|@cddqn2",
-            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|@ddqn",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|@cddqn2",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync10",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync50",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync100",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10",
+            # "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|&dvqn_Vcur_10w",  # temp
             # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
             # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
@@ -564,7 +607,7 @@ def plot_metric(
     # plt.show()
     # if value_name_plot == "max Q(s,a)":
     #     plt.axhline(y=-1.0292871913294073, color="dimgrey", linestyle="dashed", linewidth=2.0)
-    prefix = "/workspace/repos_dev/VQVAE_RL/plots/"
+    prefix = "/storage/xue/repos/DVQN_RL/plots/"
     path = os.path.join(prefix, f"{game}")
     os.makedirs(path, exist_ok=True)
     plt.savefig(path + file_name)
@@ -605,6 +648,7 @@ if __name__ == "__main__":
             wandb_path,
             value_name,
             key_name,
-            file_name_suffix="reward_rebuttal",
+            file_name_suffix="compare_sync_freqs",
             smooth=smooth,
+            universal_group_name=False,
         )
