@@ -1,4 +1,4 @@
-# This is the repository for the NIPS2023 submission: Regulating Action Value Estimation in Deep Reinforcement Learning
+# This is the repository for the paper: Regulating Action Value Estimation in Deep Reinforcement Learning
 
 ## Requirements
 ```
