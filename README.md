@@ -1,5 +1,4 @@
-# This is the repository for the paper: Regulating Action Value Estimation in Deep Reinforcement Learning
-
+# Repository for paper: VQ-learning: Towards Unbiased Action Value Estimation in Reinforcement Learning
 ## Requirements
 ```
 conda env create -f conda_env.yml
