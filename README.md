@@ -4,6 +4,9 @@
 conda env create -f conda_env.yml
 ```
 ## Instructions
+### Run VQ-learning in 2-room grid world
+Follow steps in ./gridworld/two_room.ipynb
+### Run DVQN and baselines
 The training is logged by wandb by default.
 
 - To train a DVQN agent:
