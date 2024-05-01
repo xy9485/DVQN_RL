@@ -1,0 +1,3 @@
+[submodule "gridworld"]
+	path = gridworld
+	url = git@github.com:xy9485/gym-simplegrid.git
