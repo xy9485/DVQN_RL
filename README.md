@@ -1,9 +1,10 @@
 # Repository for paper: VQ-learning: Towards Unbiased Action Value Estimation in Reinforcement Learning
-## Requirements
-```
-conda env create -f conda_env.yml
-```
-## Instructions
+
+## Run Tabular VQ-learning and Baselines
+- Toy MDP via ./toy_mdp/compare_TD_algos.ipynb
+- 2-room gridworld via ./gridworld/two_room.ipynb
+
+## Run DVQN and Baselines
 The training is logged by wandb by default.
 
 - To train a DVQN agent:
