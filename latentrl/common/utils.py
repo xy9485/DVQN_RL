@@ -5,7 +5,7 @@ import os
 from itertools import zip_longest
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Type, Union
 
-import gym
+import gymnasium as gym
 import numpy as np
 import torch
 import torchvision
@@ -364,3 +364,27 @@ class DotDict(dict):
 
     def __repr__(self):
         return "<DictX " + dict.__repr__(self) + ">"
+
+
+def smooth_l1_loss(prediction, target, beta=1.0):
+    """
+    Computes Smooth L1 Loss (Huber Loss) between prediction and target.
+
+    Parameters:
+    prediction : array-like or scalar
+        Predicted values.
+    target : array-like or scalar
+        Ground truth values.
+    beta : float
+        Transition point between L1 and L2 loss. Default is 1.0.
+    
+    Returns:
+    loss : array-like or scalar
+        Smooth L1 loss for each prediction-target pair.
+    """
+    diff = torch.abs(prediction - target)
+    
+    # Apply the piecewise condition
+    loss = torch.where(diff < beta, 0.5 * (diff ** 2) / beta, diff - 0.5 * beta)
+    
+    return loss

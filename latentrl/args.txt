@@ -1,0 +1,6 @@
+--domain_name Carnival-v5 --clip_reward --clip_grad_mode norm --freq_Q_sync 1 --tau_Q_encoder 0.001 --tau_Q_critic 0.001 --wandb_mode online --repetitions 5 --size_replay_memory 1000000 --total_timesteps 1000000 --extra_note cddqn_1M cddqn
+--domain_name Carnival-v5 --clip_reward --clip_grad_mode norm --freq_Q_sync 1 --tau_Q_encoder 0.001 --tau_Q_critic 0.001 --wandb_mode online --repetitions 5 --size_replay_memory 1000000 --total_timesteps 1000000 --extra_note ddqn_1M ddqn
+--domain_name Carnival-v5 --clip_reward --clip_grad_mode norm --freq_Q_sync 1 --tau_Q_encoder 0.001 --tau_Q_critic 0.001 --wandb_mode online --repetitions 5 --size_replay_memory 1000000 --total_timesteps 1000000 --extra_note dueldqn_1M dueldqn
+--domain_name Carnival-v5 --clip_reward --clip_grad_mode norm --freq_Q_sync 1 --tau_Q_encoder 0.001 --tau_Q_critic 0.001 --wandb_mode online --repetitions 5 --size_replay_memory 1000000 --total_timesteps 1000000 --extra_note avgdqn_1M avgdqn --avgdqn_k 10
+
+--domain_name Breakout-v5 --clip_reward --clip_grad_mode norm --freq_Q_sync 1 --tau_Q_encoder 0.001 --tau_Q_critic 0.001 --wandb_mode online --repetitions 6 --size_replay_memory 1000000 --total_timesteps 1000000 --extra_note vq-learning dvqn --share_encoder --freq_V_sync 1 --tau_V_encoder 0.001 --tau_V_critic 0.001

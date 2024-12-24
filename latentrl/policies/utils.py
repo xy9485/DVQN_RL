@@ -2,6 +2,7 @@ import math
 from operator import itemgetter
 import random
 from collections import deque, namedtuple
+import itertools
 
 import numpy as np
 import torch
@@ -11,6 +12,52 @@ from nn_models import EncoderImg
 from typing import Any, Deque, Dict, List, Optional, Tuple, Type, TypeVar, Union
 from torch import Tensor
 
+class ReplayBufferV2:
+    """A simple numpy replay buffer."""
+
+    def __init__(self, obs_dim: int, size: int, batch_size: int = 32):
+        self.obs_buf = np.zeros([size, obs_dim], dtype=np.float32)
+        self.next_obs_buf = np.zeros([size, obs_dim], dtype=np.float32)
+        self.acts_buf = np.zeros([size], dtype=np.float32)
+        self.rews_buf = np.zeros([size], dtype=np.float32)
+        self.done_buf = np.zeros(size, dtype=np.float32)
+        self.max_size, self.batch_size = size, batch_size
+        self.ptr, self.size, = 0, 0
+
+    def store(
+        self,
+        obs: np.ndarray,
+        act: np.ndarray, 
+        rew: float, 
+        next_obs: np.ndarray, 
+        done: bool,
+    ):
+        self.obs_buf[self.ptr] = obs
+        self.next_obs_buf[self.ptr] = next_obs
+        self.acts_buf[self.ptr] = act
+        self.rews_buf[self.ptr] = rew
+        self.done_buf[self.ptr] = done
+        self.ptr = (self.ptr + 1) % self.max_size
+        self.size = min(self.size + 1, self.max_size)
+
+    def sample_batch(self) -> Dict[str, np.ndarray]:
+        idxs = np.random.choice(self.size, size=self.batch_size, replace=False)
+        return dict(obs=self.obs_buf[idxs],
+                    next_obs=self.next_obs_buf[idxs],
+                    acts=self.acts_buf[idxs],
+                    rews=self.rews_buf[idxs],
+                    done=self.done_buf[idxs])
+    
+    def reset(self):
+        self.obs_buf = np.zeros([self.size, self.obs_dim], dtype=np.float32)
+        self.next_obs_buf = np.zeros([self.size, self.obs_dim], dtype=np.float32)
+        self.acts_buf = np.zeros([self.size], dtype=np.float32)
+        self.rews_buf = np.zeros([self.size], dtype=np.float32)
+        self.done_buf = np.zeros(self.size, dtype=np.float32)
+        self.ptr, self.size = 0, 0
+
+    def __len__(self) -> int:
+        return self.size
 
 class ReplayMemory(object):
     def __init__(self, capacity, device, gamma=0.99, batch_size=32):
@@ -142,17 +189,24 @@ class ReplayMemory(object):
 class ReplayBufferNStep(object):
     def __init__(self, capacity, device, gamma=0.99, batch_size=32):
         self.memory = deque([], maxlen=capacity)
+        self.capacity = capacity
         self.recent_goal_transitions = []
         self.device = device
         self.Transition = namedtuple("Transition", ("obs", "act", "n_obs", "rew", "gamma", "info"))
         self.gamma = gamma
         self.batch_size = batch_size
+    
+    def reset(self):
+        self.memory = deque([], maxlen=self.capacity)
 
-    def push(self, transition):
+    def push(self, transition, random_del=False):
         """
         Save a transition:
         obs, act, n_obs, rew, terminated, info
         """
+        if len(self.memory) == self.capacity and random_del:
+            rand_idx = random.randint(0, len(self.memory)-1)
+            del self.memory[rand_idx]
         obs, act, n_obs, rew, gamma, info = transition
         self.memory.append(self.Transition(obs, act, n_obs, rew, gamma, info))
 
@@ -173,6 +227,19 @@ class ReplayBufferNStep(object):
         info_B = B.info
 
         return obs_B, act_B, n_obs_B, rew_B, gamma_B, info_B
+    
+    def sample_latest_n(self, n):
+        transitions = list(itertools.islice(reversed(self.memory), n))
+        B = self.Transition(*zip(*transitions))
+        obs_B = torch.as_tensor(np.array(B.obs)).to(self.device)
+        n_obs_B = torch.as_tensor(np.array(B.n_obs)).to(self.device)
+        act_B = torch.as_tensor(B.act).unsqueeze(1).to(self.device)
+        rew_B = torch.as_tensor(B.rew).unsqueeze(1).to(self.device)
+        gamma_B = torch.as_tensor(B.gamma).unsqueeze(1).to(self.device)
+        info_B = B.info
+
+        return obs_B, act_B, n_obs_B, rew_B, gamma_B, info_B
+
 
     def sample_n_step_transits2(
         self,

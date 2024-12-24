@@ -1,4 +1,4 @@
-import gym
+import gymnasium as gym
 
 
 def make_env_atari(env_id, **kwargs):

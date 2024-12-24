@@ -1,1 +1,10 @@
 .DS_Store
+wandb/*
+
+*__pycache__
+
+?*wandb*
+
+results/*
+
+latentrl/wandb

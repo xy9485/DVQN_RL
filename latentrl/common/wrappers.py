@@ -10,7 +10,7 @@ from turtle import position
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 import cv2
-import gym
+import gymnasium as gym
 import numpy as np
 import torch
 from gym import spaces

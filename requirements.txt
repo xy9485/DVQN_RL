@@ -1,0 +1,122 @@
+absl-py==2.1.0
+ale-py==0.8.1
+antlr4-python3-runtime==4.9.3
+asttokens==2.4.1
+AutoROM==0.4.2
+AutoROM.accept-rom-license==0.6.1
+beautifulsoup4==4.12.3
+black==24.10.0
+box2d-py==2.3.5
+Brotli @ file:///croot/brotli-split_1714483155106/work
+captum==0.2.0
+certifi @ file:///croot/certifi_1717618050233/work/certifi
+charset-normalizer==3.3.2
+cilog==1.3.0
+click==8.1.7
+cloudpickle==3.0.0
+colored-traceback==0.4.2
+contourpy==1.2.1
+cycler==0.12.1
+decorator==4.4.2
+-e git+https://github.com/divelab/DIG.git@21476b079c9226f38915dcd082b5c2ee0cddaac8#egg=dive_into_graphs
+docker-pycreds==0.4.0
+et-xmlfile==1.1.0
+executing==2.0.1
+Farama-Notifications==0.0.4
+filelock @ file:///croot/filelock_1700591183607/work
+fonttools==4.53.1
+fsspec==2024.6.1
+gdown==5.2.0
+gitdb==4.0.11
+GitPython==3.1.43
+gmpy2 @ file:///work/ci_py311/gmpy2_1676839849213/work
+grpcio==1.64.1
+gymnasium==0.29.1
+h5py==3.11.0
+hydra-core==1.3.2
+idna @ file:///croot/idna_1714398848350/work
+imageio==2.34.2
+imageio-ffmpeg==0.5.1
+importlib_resources==6.4.0
+ipython==8.26.0
+jedi==0.19.1
+Jinja2 @ file:///croot/jinja2_1716993405101/work
+joblib==1.4.2
+kiwisolver==1.4.5
+llvmlite==0.43.0
+lz4==4.3.3
+Markdown==3.6
+MarkupSafe @ file:///croot/markupsafe_1704205993651/work
+matplotlib==3.9.1
+matplotlib-inline==0.1.7
+minigrid==2.3.1
+mkl-fft @ file:///croot/mkl_fft_1695058164594/work
+mkl-random @ file:///croot/mkl_random_1695059800811/work
+mkl-service==2.4.0
+moviepy==1.0.3
+mpmath @ file:///croot/mpmath_1690848262763/work
+munch==4.0.0
+mypy-extensions==1.0.0
+networkx @ file:///croot/networkx_1720002482208/work
+numba==0.60.0
+numpy @ file:///croot/numpy_and_numpy_base_1708638617955/work/dist/numpy-1.26.4-cp311-cp311-linux_x86_64.whl#sha256=5f96f274d410a1682519282ae769c877d32fdbf171aa8badec7bf5e1d3a1748a
+omegaconf==2.3.0
+opencv-python==4.10.0.84
+openpyxl==3.1.5
+packaging==24.1
+pandas==2.2.2
+parso==0.8.4
+pathspec==0.12.1
+pexpect==4.9.0
+pillow @ file:///croot/pillow_1714398848491/work
+platformdirs==4.2.2
+proglog==0.1.10
+prompt_toolkit==3.0.47
+protobuf==4.25.3
+psutil==6.0.0
+ptyprocess==0.7.0
+pure_eval==0.2.3
+pygame==2.6.0
+Pygments==2.18.0
+pyparsing==3.1.2
+pyscf==2.6.2
+PySocks @ file:///work/ci_py311/pysocks_1676822712504/work
+python-dateutil==2.9.0.post0
+pytz==2024.1
+PyYAML @ file:///croot/pyyaml_1698096049011/work
+rdkit-pypi==2022.9.5
+requests @ file:///croot/requests_1716902831423/work
+scikit-learn==1.5.1
+scipy==1.14.0
+sentry-sdk==2.10.0
+setproctitle==1.3.3
+shap==0.46.0
+Shimmy==0.2.1
+six==1.16.0
+slicer==0.0.8
+smmap==5.0.1
+soupsieve==2.6
+stable_baselines3==2.3.2
+stack-data==0.6.3
+swig==4.2.1
+sympy @ file:///croot/sympy_1701397643339/work
+tabulate==0.9.0
+tensorboard==2.17.0
+tensorboard-data-server==0.7.2
+threadpoolctl==3.5.0
+torch==2.3.1
+torch-tb-profiler==0.4.3
+torchaudio==2.3.1
+torchsummary==1.5.1
+torchvision==0.18.1
+tqdm==4.66.4
+traitlets==5.14.3
+triton==2.3.1
+typed-argument-parser==1.7.2
+typing-inspect==0.9.0
+typing_extensions @ file:///croot/typing_extensions_1715268824938/work
+tzdata==2024.1
+urllib3 @ file:///croot/urllib3_1718912636303/work
+wandb==0.18.6
+wcwidth==0.2.13
+Werkzeug==3.0.3

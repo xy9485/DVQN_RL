@@ -135,7 +135,7 @@ if __name__ == "__main__":
     from pathlib import Path
     import matplotlib.pyplot as plt
     import numpy as np
-    import gym
+    import gymnasium as gym
 
     import torch
     import torchvision.transforms as T
