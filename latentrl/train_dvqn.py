@@ -76,6 +76,7 @@ def parse_args(args_str=None):
     parser_dvqn.add_argument("--V_encoder_linear_dims", default=[-1], nargs="*", type=int)
     parser_dvqn.add_argument("--V_critic_dims", default=[256, 256], nargs="*", type=int)
     parser_dvqn.add_argument("--V_enc_detach", default=False, action=argparse.BooleanOptionalAction)
+    parser_dvqn.add_argument("--use2Q", default=False, action=argparse.BooleanOptionalAction)
 
     cli.add_argument("--lr_Q", default="0.0001", type=str, help="sometimes start with lin")
     parser_dvqn.add_argument("--lr_V", default="0.0001", type=str, help="sometimes start with lin")
@@ -101,7 +102,7 @@ def parse_args(args_str=None):
     cli.add_argument("--tau_curl", default=0.001, type=float)
     cli.add_argument("--tau_vq", default=0.001, type=float)
 
-    cli.add_argument("--optimizer", default="rmsprop", type=str)
+    cli.add_argument("--optimizer", default="rmsprop", choices=["rmsprop", "adam"],type=str)
     cli.add_argument("--criterion", default="l1", choices=["l1", "l2"], type=str)
     cli.add_argument("--freq_eval", default=1e4, type=int)
     cli.add_argument("--evaluation_episodes", default=10, type=int)
@@ -127,8 +128,10 @@ def parse_args(args_str=None):
     # cli.add_argument("--dim_vq_embeddings", default=128, type=int)
     cli.add_argument("--vq_softmin_beta", default=0.5, type=float)
 
-    assert args_str is not None
-    args = cli.parse_args(args_str.split())
+    if args_str is not None:
+        args = cli.parse_args(args_str.split())
+    else:
+        args = cli.parse_args()
 
 
     if args.use_curl == "off":
@@ -337,17 +340,27 @@ def print2console(agent, episodic_reward, terminated, truncated, t, time_start_e
 
 
 if __name__ == "__main__":
+    # check if cuda is available
+    print("CUDA available: ", torch.cuda.is_available())
+    # check number of gpus
+    print("Number of GPUs: ", torch.cuda.device_count())
     os.environ["WANDB__SERVICE_WAIT"] = "1200"
-    with open(
-        f"/home/xue/repos/DVQN_RL/latentrl/args.txt",
-        "r",
-    ) as f:
-        for args_str in f:
-            # break if the line is empty
-            if not args_str or args_str == "\n":
-                break
-            args = parse_args(args_str)
-            train(args)
+
+    # [parse the args from the args file]
+    # with open(
+    #     f"/user/yuan.xue/u13186/DVQN_RL/latentrl/args.txt",
+    #     "r",
+    # ) as f:
+    #     for args_str in f:
+    #         # break if the line is empty
+    #         if not args_str or args_str == "\n":
+    #             break
+    #         args = parse_args(args_str)
+    #         train(args)
+    
+    # [parse the args from the command line]
+    args = parse_args()
+    train(args)
 
 
 

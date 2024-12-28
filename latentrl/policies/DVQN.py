@@ -38,7 +38,6 @@ class DVQN(HDQN):
         self.act_boltzmann_temperature = self.init_act_boltzmann_temperature
         self.boltzmann_decay_rate = 0.1 ** (1/self.total_timesteps)
         self.n_update = 1
-        self.clip_grad_mode = self.clip_grad_mode
         if args.criterion == "l1":
             self.criterion = nn.SmoothL1Loss()
         elif args.criterion == "l2":
@@ -252,6 +251,7 @@ class DVQN(HDQN):
             self.V_critic_tau = args.tau_V_critic
             self.V_enc_detach = args.V_enc_detach
             self.share_encoder = args.share_encoder
+            self.use2Q = args.use2Q
 
         if args.use_curl:
             self.curl_learn_every = args.freq_curl_learn
@@ -380,7 +380,7 @@ class DVQN(HDQN):
                 return action, action_prob
 
             if random.random() > self.exploration_rate:
-                if self.algo == "dvqn":
+                if self.algo == "dvqn" and self.use2Q:
                     q = (self.Q(state)[0] + self.Q2(state)[0]) / 2
                 else:
                     q = self.Q(state)[0]
@@ -709,16 +709,15 @@ class DVQN(HDQN):
 
         with torch.no_grad():
             q_next, encoded_next = self.Q_target(n_obs)
-            q_next_max = q_next.max(1)[0].unsqueeze(1)
             
             # boltzmann policy
-            next_action_probs = F.softmax(q_next/self.act_boltzmann_temperature, dim=1)
-            next_action = torch.multinomial(next_action_probs, num_samples=1)  
+            # next_action_probs = F.softmax(q_next/self.act_boltzmann_temperature, dim=1)
+            # next_action = torch.multinomial(next_action_probs, num_samples=1)  
 
             # epsilon greedy policy
-            # next_action = q_next.argmax(dim=1, keepdim=True)
-            # mask = torch.randn_like(next_action) > self.exploration_rate 
-            # next_action = next_action * mask + torch.randint_like(next_action, self.n_actions) * ~mask
+            next_action = q_next.argmax(dim=1, keepdim=True)
+            mask = torch.randn_like(next_action.float()) > self.exploration_rate 
+            next_action = next_action * mask + torch.randint_like(next_action, self.n_actions) * ~mask
             
             # action_prob = next_action_probs[action].item()
             q_target = rew + gamma * (q_next.gather(1, next_action))
