@@ -36,7 +36,7 @@ class DVQN(HDQN):
         self.act_boltzmann = False
         self.init_act_boltzmann_temperature = 0.1
         self.act_boltzmann_temperature = self.init_act_boltzmann_temperature
-        self.boltzmann_decay_rate = 0.1 ** (1/self.total_timesteps)
+        self.boltzmann_decay_rate = self.explore_final_fraction ** (1/self.total_timesteps)
         self.n_update = 1
         if args.criterion == "l1":
             self.criterion = nn.SmoothL1Loss()
@@ -269,6 +269,7 @@ class DVQN(HDQN):
         self.epsilon_decay = args.epsilon_decay
         self.lr_decay = args.lr_decay
         self.lr_min = args.lr_min
+        self.explore_final_fraction = args.explore_final_fraction
         self.per = args.per
 
 
@@ -382,6 +383,7 @@ class DVQN(HDQN):
             if random.random() > self.exploration_rate:
                 if self.algo == "dvqn" and self.use2Q:
                     q = (self.Q(state)[0] + self.Q2(state)[0]) / 2
+                    # q = torch.minimum(self.Q(state)[0], self.Q2(state)[0])
                 else:
                     q = self.Q(state)[0]
                 action = q.argmax(dim=1).item()

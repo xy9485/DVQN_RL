@@ -84,6 +84,7 @@ def parse_args(args_str=None):
     cli.add_argument("--lr_vq", default="0.0001", type=str)
     cli.add_argument("--lr_decay", default=0.9999, type=float)
     cli.add_argument("--lr_min", default=0.01, type=float)
+    cli.add_argument("--explore_final_fraction", default=0.1, type=float)
 
     cli.add_argument("--Q_gradient_steps", default=1, type=int)
     parser_dvqn.add_argument("--V_gradient_steps", default=1, type=int)
