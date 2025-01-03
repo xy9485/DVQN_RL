@@ -59,6 +59,7 @@ def parse_args(args_str=None):
     cli.add_argument("--per", default=False, action=argparse.BooleanOptionalAction, help="prioritized experience replay")
     cli.add_argument("--input_format", default="full_img", type=str)
     cli.add_argument("--env_seed", default=940805, type=int)
+    cli.add_argument("--redundant_actions", default=0, type=int)
 
     cli.add_argument("--init_steps", default=1e4, type=int)
     cli.add_argument("--batch_size", default=256, type=int)
@@ -152,7 +153,7 @@ def train(args):
         # 🐝 initialise a wandb run
         project_name = args.domain_name
 
-        group_name = f"{args.algo}_step{int(args.total_timesteps/1000)}k_bs{args.batch_size}|{args.extra_note}"
+        group_name = f"step{int(args.total_timesteps/1000)}k_bs{args.batch_size}|{args.algo}_{args.extra_note}"
 
         run = wandb.init(
             # project="HDQN_AbsTable_GrdNN_Atari",
@@ -180,7 +181,7 @@ def train(args):
         log_dir = os.path.join(log_dir_root, current_time)
         os.makedirs(log_dir, exist_ok=True)
         L = LoggerWandb()
-        env = MAKE_ENV_FUNCS[args.domain_type]("ALE/" + args.domain_name, seed=args.env_seed)
+        env = MAKE_ENV_FUNCS[args.domain_type]("ALE/" + args.domain_name, seed=args.env_seed, redundant_actions=args.redundant_actions)
 
         # agent = HDQN_Pixel(config, env)
         agent = DVQN(args, env, logger=L)

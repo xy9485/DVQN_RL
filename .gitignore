@@ -12,3 +12,5 @@ latentrl/wandb
 job_scripts/*
 slurm_files/*
 .vscode/settings.json
+shell_scripts/shell_output/*
+shell_scripts/wandb/*

@@ -26,7 +26,9 @@ def make_env_atari(env_id, **kwargs):
         env_id,
         frameskip=1,
     )
-    env = RedundantActionWrapper(env, action_redundancy=20)
+    action_redundancy = kwargs.get("redundant_actions", 0)
+    if action_redundancy > 0:
+        env = RedundantActionWrapper(env, action_redundancy=action_redundancy)
     env = gym.wrappers.AtariPreprocessing(env)
     env = gym.wrappers.FrameStack(env, num_stack=4)
     env = gym.wrappers.TimeLimit(env, max_episode_steps=3000)
