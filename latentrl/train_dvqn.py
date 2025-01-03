@@ -77,6 +77,7 @@ def parse_args(args_str=None):
     parser_dvqn.add_argument("--V_critic_dims", default=[256, 256], nargs="*", type=int)
     parser_dvqn.add_argument("--V_enc_detach", default=False, action=argparse.BooleanOptionalAction)
     parser_dvqn.add_argument("--use2Q", default=False, action=argparse.BooleanOptionalAction)
+    parser_dvqn.add_argument("--use_n_newdata", default=0, type=int)
 
     cli.add_argument("--lr_Q", default="0.0001", type=str, help="sometimes start with lin")
     parser_dvqn.add_argument("--lr_V", default="0.0001", type=str, help="sometimes start with lin")

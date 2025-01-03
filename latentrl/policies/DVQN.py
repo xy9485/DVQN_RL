@@ -252,6 +252,7 @@ class DVQN(HDQN):
             self.V_enc_detach = args.V_enc_detach
             self.share_encoder = args.share_encoder
             self.use2Q = args.use2Q
+            self.use_n_newdata = args.use_n_newdata
 
         if args.use_curl:
             self.curl_learn_every = args.freq_curl_learn
@@ -983,7 +984,23 @@ class DVQN(HDQN):
 
         steps = self.timesteps_done - self.init_steps
         if steps % self.Q_learn_every == 0:
-            obs, act, n_obs, rew, gamma, info = self.memory.sample(self.batch_size)
+            if self.algo == "dvqn" and self.use_n_newdata > 0:
+                obs, act, n_obs, rew, gamma, info = self.memory.sample(self.batch_size)
+                obs2, act2, n_obs2, rew2, gamma2, info2 = self.memory.sample_latest_n(self.use_n_newdata)
+                obs = torch.cat([obs, obs2], dim=0)
+                act = torch.cat([act, act2], dim=0)
+                n_obs = torch.cat([n_obs, n_obs2], dim=0)
+                rew = torch.cat([rew, rew2], dim=0)
+                gamma= torch.cat([gamma, gamma2], dim=0)
+                # permute the data
+                idx = torch.randperm(obs.shape[0])
+                obs = obs[idx]
+                act = act[idx]
+                n_obs = n_obs[idx]
+                rew = rew[idx]
+                gamma = gamma[idx]
+            else:
+                obs, act, n_obs, rew, gamma, info = self.memory.sample(self.batch_size)
 
             # [data augmentation]
             if self.input_format == "full_img":

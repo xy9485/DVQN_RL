@@ -8,3 +8,7 @@ wandb/*
 results/*
 
 latentrl/wandb
+
+job_scripts/*
+slurm_files/*
+.vscode/settings.json
