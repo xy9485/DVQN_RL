@@ -38,15 +38,11 @@ class SimpleGridEnv(Env):
     metadata = {"render_modes": ["human", "rgb_array"], 'render_fps': 5}
     FREE: int = 0
     OBSTACLE: int = 1
-    MOVES: dict[int,tuple] = {
-        0: (-1, 0), #UP
-        1: (1, 0),  #DOWN
-        2: (0, -1), #LEFT
-        3: (0, 1)   #RIGHT
-    }
+
 
     def __init__(self,     
         obstacle_map: str | list[str],
+        MOVES: dict[int,tuple] = None,
         render_mode: str | None = None,
         max_episodic_steps: int = 9999999
     ):
@@ -69,6 +65,15 @@ class SimpleGridEnv(Env):
         # Env confinguration
         self.obstacles = self.parse_obstacle_map(obstacle_map) #walls
         self.nrow, self.ncol = self.obstacles.shape
+        if MOVES is None:
+            self.MOVES = {
+                0: (-1, 0), #UP
+                1: (1, 0),  #DOWN
+                2: (0, -1), #LEFT
+                3: (0, 1),   #RIGHT
+            }
+        else:
+            self.MOVES = MOVES
 
         self.action_space = spaces.Discrete(len(self.MOVES))
         self.observation_space = spaces.Discrete(n=self.nrow*self.ncol)
@@ -146,16 +151,16 @@ class SimpleGridEnv(Env):
 
         truncated = False
         self.episodic_step += 1
-        if self.episodic_step == self.max_episodic_steps:
-            truncated = True
+        # if self.episodic_step == self.max_episodic_steps:
+        #     truncated = True
         info = self.get_info()
-        if self.done:
-            if self.agent_xy == self.goals_xy[0]:
-                info.update({"reached_goal": 0})
-            elif self.agent_xy == self.goals_xy[1]:
-                info.update({"reached_goal": 1})
-            else:
-                raise ValueError("The agent reached an unknown goal.")
+        # if self.done or truncated:
+        #     if self.agent_xy == self.goals_xy[0]:
+        #         info.update({"reached_goal": 0})
+        #     else:
+        #         info.update({"reached_goal": 1})
+            # else:
+            #     raise ValueError("The agent reached an unknown goal.")
         return self.get_obs(), self.reward, self.done, truncated, info
     
     def parse_obstacle_map(self, obstacle_map) -> np.ndarray:

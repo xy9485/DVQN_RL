@@ -51,12 +51,21 @@ class Logger(object):
         self._log_paths = log_paths
         self.episodic_log_path = log_paths["episodic"]
         self.avg_meter_log_path = log_paths["avg_meter"]
+        self.eval_log_path = log_paths["eval"]
+        self.true_return_log_path = log_paths["true_return"]
         self._mg = MetersGroup(
            self.avg_meter_log_path
         )
         
     def dump_episodic_data(self, data):
         with open(self.episodic_log_path, 'a') as f:
+            f.write(json.dumps(data) + '\n')
+
+    def dump_data(self, data, path, overwrite=False):
+        if overwrite:
+            with open(path, 'w') as f:
+                pass
+        with open(path, 'a') as f:
             f.write(json.dumps(data) + '\n')
 
     def log(self, key, value, n=1):

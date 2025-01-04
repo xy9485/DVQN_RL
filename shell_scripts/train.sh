@@ -45,6 +45,7 @@ case $algo in
         ;;
     avgdqn)
         avgdqn_k=10
+        # avgdqn_k denotes number of previous learned Q values to average.
         common_args="--clip_reward --clip_grad_mode ${clip_grad_mode} --freq_Q_sync ${freq_Q_sync} --tau_Q_encoder ${tau_Q_encoder} --tau_Q_critic ${tau_Q_encoder} --wandb_mode ${wandb_mode} --repetitions ${repetitions} --size_replay_memory ${size_replay_memory} --total_timesteps ${total_timesteps} --redundant_actions ${redundant_actions} --explore_final_fraction ${explore_final_fraction} --extra_note ${extra_note} ${algo} --avgdqn_k ${avgdqn_k}"
         ;;   
     cddqn)
