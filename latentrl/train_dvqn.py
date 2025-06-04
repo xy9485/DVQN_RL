@@ -107,8 +107,8 @@ def parse_args(args_str=None):
 
     cli.add_argument("--optimizer", default="rmsprop", choices=["rmsprop", "adam"],type=str)
     cli.add_argument("--criterion", default="l1", choices=["l1", "l2"], type=str)
-    cli.add_argument("--freq_eval", default=1e4, type=int)
-    cli.add_argument("--evaluation_episodes", default=10, type=int)
+    cli.add_argument("--freq_eval", default=2e4, type=int)
+    cli.add_argument("--evaluation_episodes", default=30, type=int)
     cli.add_argument("--wandb_tags", default=None, nargs="*", type=str)
     cli.add_argument("--wandb_mode", default="online", type=str)
     cli.add_argument("--extra_note", default="", type=str)
@@ -185,6 +185,10 @@ def train(args):
 
         # agent = HDQN_Pixel(config, env)
         agent = DVQN(args, env, logger=L)
+        # summary(agent.Q, (4, 84, 84))
+        # summary(agent.V, (4, 84, 84))
+        # print(agent.Q)
+        # print(agent.V)
         if agent.use_vq:
             wandb.watch(agent.vq, log="all", log_freq=100, idx=0)
         # wandb.watch(agent.abs_V, log="all", log_freq=100, idx=1)
@@ -275,10 +279,14 @@ def train(args):
     env.close()
 
 
-def test(agent, args, L: LoggerWandb):
+def test(agent:DVQN, args, L: LoggerWandb):
     env = MAKE_ENV_FUNCS[args.domain_type]("ALE/" + args.domain_name)
     # env.eval()
 
+    trajectory_rews = []
+    mean_returns = []
+    trajectory_Qs = []
+    mean_Qs = []
     episodic_rews = []
     episodic_non_negative_rews = []
     episodic_negative_rews = []
@@ -294,9 +302,11 @@ def test(agent, args, L: LoggerWandb):
                 negative_reward_sum = 0
                 terminated = False
 
-            action = agent.act_e_greedy(state, epsilon=0.01)  # Choose an action ε-greedily
+            action, action_Q = agent.act_e_greedy(state, epsilon=0.0)  # Choose an action ε-greedily
             state, reward, terminated, truncated, info = env.step(action)  # Step
             reward_sum += reward
+            trajectory_rews.append(reward)
+            trajectory_Qs.append(action_Q)
             if reward >= 0:
                 non_negative_reward_sum += reward
             else:
@@ -306,18 +316,29 @@ def test(agent, args, L: LoggerWandb):
                 episodic_rews.append(reward_sum)
                 episodic_non_negative_rews.append(non_negative_reward_sum)
                 episodic_negative_rews.append(negative_reward_sum)
+                returns = []
+                G =0
+                for rew in reversed(trajectory_rews):
+                    G = rew + agent.gamma * G
+                    returns.append(G)
+                mean_returns.append(sum(returns)/len(returns))
+                mean_Qs.append(sum(trajectory_Qs)/len(trajectory_Qs))
                 break
     env.close()
     if len(episodic_non_negative_rews) == 0:
         episodic_non_negative_rews.append(0)
     if len(episodic_negative_rews) == 0:
         episodic_negative_rews.append(0)
+    avg_return = sum(mean_returns) / len(mean_returns)
+    avg_Q = sum(mean_Qs) / len(mean_Qs)
     avg_reward = sum(episodic_rews) / len(episodic_rews)
     avg_non_negative_reward = sum(episodic_non_negative_rews) / len(episodic_non_negative_rews)
     avg_negative_reward = sum(episodic_negative_rews) / len(episodic_negative_rews)
     # Return average reward and Q-value
 
     metrics = {
+        "Evaluation/avg_return": avg_return,
+        "Evaluation/avg_Q": avg_Q,
         "Evaluation/avg_episodic_reward": avg_reward,
         "Evaluation/avg_episodic_non_negative_reward": avg_non_negative_reward,
         "Evaluation/avg_episodic_negative_reward": avg_negative_reward,

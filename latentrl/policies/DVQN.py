@@ -396,13 +396,17 @@ class DVQN(HDQN):
         return action, action_prob
 
     def act_e_greedy(self, state, epsilon=0.001):
+        assert epsilon == 0.0
         with torch.no_grad():
             state = torch.from_numpy(state[:]).unsqueeze(0).to(self.device)
             if random.random() > epsilon:
-                action = self.Q(state)[0].argmax(dim=1).item()
+                Q_values = self.Q(state)[0].squeeze()
+                action = Q_values.argmax()
+                value_of_action = Q_values[action].item()
+                action = action.item()
             else:
                 action = random.randrange(self.n_actions)
-            return action
+            return action, value_of_action
 
 
     def update_V(
@@ -1004,6 +1008,7 @@ class DVQN(HDQN):
 
             # [data augmentation]
             if self.input_format == "full_img":
+                # pos = n_obs
                 with torch.no_grad():
                     obs = self.aug(obs)
                     n_obs = self.aug(n_obs)
