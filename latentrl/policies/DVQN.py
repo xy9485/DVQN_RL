@@ -187,7 +187,7 @@ class DVQN(HDQN):
                 self.curl_ema.train()
 
         self.aug = RandomShiftsAug(pad=4)
-
+        self.use_obs_aug = args.use_obs_augmentation
         if self.per:
             self.memory = Memory(self.size_replay_memory, self.total_timesteps)
         else:
@@ -1008,14 +1008,16 @@ class DVQN(HDQN):
 
             # [data augmentation]
             if self.input_format == "full_img":
-                # pos = n_obs
-                with torch.no_grad():
-                    obs = self.aug(obs)
-                    n_obs = self.aug(n_obs)
-                    if self.curl_pair == "raw":
-                        pos = self.aug(obs)
-                    else:
-                        pos = n_obs
+                if not self.use_obs_aug:
+                    pos = n_obs
+                else:
+                    with torch.no_grad():
+                        obs = self.aug(obs)
+                        n_obs = self.aug(n_obs)
+                        if self.curl_pair == "raw":
+                            pos = self.aug(obs)
+                        else:
+                            pos = n_obs
             if self.algo == "dvqn":
                 self.update_V(
                     obs,

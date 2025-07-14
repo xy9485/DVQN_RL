@@ -73,6 +73,8 @@ def parse_args(args_str=None):
     cli.add_argument("--Q_encoder_linear_dims", nargs="*", default=[-1], type=int)
     cli.add_argument("--Q_critic_dims", nargs="*", default=[256, 256], type=int)
     cli.add_argument("--Q_enc_detach", default=False, action=argparse.BooleanOptionalAction)
+    cli.add_argument("--use_obs_augmentation", default=False, action=argparse.BooleanOptionalAction)
+
     parser_dvqn.add_argument("--share_encoder", default=False, action=argparse.BooleanOptionalAction)
     parser_dvqn.add_argument("--V_encoder_linear_dims", default=[-1], nargs="*", type=int)
     parser_dvqn.add_argument("--V_critic_dims", default=[256, 256], nargs="*", type=int)
