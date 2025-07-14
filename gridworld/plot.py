@@ -163,11 +163,18 @@ def plot_metric(log_path, key_name, value_name, x_label, y_label, label_name, in
 
 def plot_avg_true_Q(log_path):
     avg_return = -np.inf
+    true_returns = []
     with open(log_path, "r") as f:
         for _, line in enumerate(f):
             # line is a list and compute and average value of the list
             data = json.loads(line)
-            if np.mean(data) > avg_return:
-                avg_return = np.mean(data)
+            true_returns.append(data)
+            # if np.mean(data) > avg_return:
+            #     avg_return = np.mean(data)
     # plot np.mean(avg_repeats) as a horizontal line
-    plt.axhline(y=avg_return, color='r', linestyle='-', label='True Value') 
+
+
+    # print("true_returns.shape", true_returns.shape)
+    true_returns = np.mean(true_returns, axis=0)
+    # print("true_returns.shape", true_returns.shape)
+    plt.axhline(y=np.mean(true_returns), color="r", linestyle="-", label="True Value")

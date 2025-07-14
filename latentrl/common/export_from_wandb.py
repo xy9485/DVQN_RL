@@ -1,0 +1,767 @@
+import os
+import wandb
+import numpy as np
+import scipy.interpolate
+import matplotlib.pyplot as plt
+
+
+def extract_data_from_wandb(
+    wandb_path,
+    group_name,
+    key_name,
+    value_name,
+    smooth=10,
+    max_key=True,
+    best_k=None,
+    exclude_runs=[],
+):
+
+    api = wandb.Api()
+    runs = api.runs(wandb_path, filters={"group": group_name})
+    print("find runs:", len(runs))
+
+    all_keys = []
+    all_values = []
+    for run in runs:
+        if run.name in exclude_runs:
+            print(f"run {run.name} is excluded")
+            continue
+        if run.state == "finished":
+            keys = []
+            values = []
+            for row in run.scan_history():
+                # check if "x" is in a key of row
+                if value_name in row and row[value_name] is not None:
+                    # print(row[value_name], row[key_name])
+                    keys.append(row[key_name])
+                    values.append(row[value_name])
+                else:
+                    pass
+            keys, values = np.array(keys), np.array(values)
+            if smooth > 1 and values.shape[0] > 0:
+                K = np.ones(smooth)
+                ones = np.ones(values.shape[0])
+                values = np.convolve(values, K, "same") / np.convolve(ones, K, "same")
+            all_keys.append(np.array(keys))
+            all_values.append(np.array(values))
+
+            # try:
+            #     print(row["Info/grdQ/grd_q"])
+            #     print(row["General/timesteps_done"])
+            #     x.append(row["General/timesteps_done"])
+            #     y.append(row["Info/grdQ/grd_q"])
+            # except:
+            #     pass
+            # pass
+            # break
+    print("runs to plot:", len(all_keys))
+
+    all_keys_tmp = sorted(all_keys, key=lambda x: x[-1])
+    keys = all_keys_tmp[-1] if max_key else all_keys_tmp[0]
+    threshold = keys.shape[0]
+
+    # interpolate
+    for idx, (key, value) in enumerate(zip(all_keys, all_values)):
+        f = scipy.interpolate.interp1d(key, value, fill_value="extrapolate")
+        all_keys[idx] = keys
+        all_values[idx] = f(keys)
+
+    means, half_stds = [], []
+    for i in range(threshold):
+        vals = []
+
+        for v in all_values:
+            if i < v.shape[0]:
+                vals.append(v[i])
+        if best_k is not None:
+            vals = sorted(vals)[-best_k:]
+        means.append(np.mean(vals))
+        # half_stds.append(0.5 * np.std(vals))
+        # half_stds.append(np.std(vals))
+        half_stds.append(np.std(vals) / np.sqrt(len(vals))) # standard error
+
+    means = np.array(means)
+    half_stds = np.array(half_stds)
+
+    keys = all_keys[-1][:threshold]
+    assert means.shape[0] == keys.shape[0]
+
+    return keys, means, half_stds
+
+
+def plot_data(
+    keys,
+    means,
+    half_stds,
+    max_time=None,
+    label="DVQN",
+    color=None,
+    key_name=None,
+    value_name=None,
+):
+    if max_time is not None:
+        idxs = np.where(keys <= max_time)
+        keys = keys[idxs]
+        means = means[idxs]
+        half_stds = half_stds[idxs]
+
+    plt.rcParams["figure.figsize"] = (10, 7)
+    plt.rcParams["figure.dpi"] = 200
+    plt.rcParams["font.size"] = 20
+    plt.subplots_adjust(left=0.165, right=0.99, bottom=0.16, top=0.95)
+    plt.tight_layout()
+
+    plt.plot(keys, means, label=label, color=color)
+    plt.locator_params(nbins=10, axis="x")
+    plt.locator_params(nbins=10, axis="y")
+    # plt.ylim(0, 1050)
+
+    plt.grid(alpha=0.8)
+    # ax.title(title)
+    plt.fill_between(keys, means - half_stds, means + half_stds, alpha=0.15)
+    # plt.legend(loc="lower right", prop={"size": 6}).get_frame().set_edgecolor("0.1")
+    # plt.legend(loc="upper left", ncol=1)
+    plt.legend(ncol=1)
+    plt.xlabel(key_name)
+    plt.ylabel(value_name)
+    plt.ticklabel_format(axis="x", style="sci", scilimits=(0, 0))
+
+
+def plot_redundant_actions(
+    game, wandb_path, value_name, key_name, suffix="", smooth=10, with_duel=True
+):
+    if value_name == "Episodic/reward":
+        value_name_plot = "Reward"
+    if key_name == "General/timesteps_done":
+        key_name_plot = "Timesteps"
+    if with_duel:
+        labels = ["DVQN", "DQN", "Duel DQN", "DVQN-R", "DQN-R", "Duel DQN-R"]
+    else:
+        labels = ["DVQN", "DQN", "DVQN-R", "DQN-R"]
+    file_name = f"/{value_name_plot}_{game}#{suffix}.png"
+
+    if game == "Boxing-v5":
+        group_names = [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w",  # Boxing
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+
+    elif game == "Riverraid-v5":
+        group_names = [
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|^dvqn_Vcur",  # Riverraid
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+    elif game == "Asterix-v5":
+        group_names = [
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2", #Boxing, Asterix
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+
+    elif game == "Breakout-v5":
+        group_names = [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2",  # Breakout
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",  # Breakout
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+
+    elif game == "Pong-v5":
+        group_names = [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+    if with_duel:
+        group_names += [
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel"
+        ]
+    # group_names += [
+    #     "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|dvqn_nAx3#2",
+    #     "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|dqn_nAx3#2",
+    #     "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|duel_nAx3",
+    # ]
+    # group_names += [
+    #     "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|dvqn_EachActionx5",
+    #     "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|dqn_EachActionx5",
+    #     "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|duel_EachActionx5",
+    # ]
+    # group_names += [
+    #     "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|dvqn_nAction30",
+    #     "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|dqn_nAction30",
+    #     "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|duel_nAction30",
+    # ]
+    if game == "Riverraid-v5":
+        group_names += [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|dvqn_nA+10NOOP_2",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|dqn_nA+10NOOP",
+        ]
+    else:
+        group_names += [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|dvqn_nA+10NOOP",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|dqn_nA+10NOOP",
+        ]
+    if with_duel:
+        group_names += [
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|duel_nA+10NOOP",
+        ]
+
+    for i, group_name in enumerate(group_names):
+        keys, means, half_stds = extract_data_from_wandb(
+            wandb_path,
+            group_name,
+            key_name=key_name,
+            value_name=value_name,
+            smooth=smooth,
+            max_key=False,
+            best_k=None,
+            exclude_runs=["resilient-deluge-1925", "sandy-glade-1920"],
+        )
+
+        plot_data(
+            keys=keys,
+            means=means,
+            half_stds=half_stds,
+            label=labels[i],
+            # color=colors[i],
+            key_name=key_name_plot,
+            value_name=value_name_plot,
+        )
+
+    # plt.show()
+    # if value_name_plot == "max Q(s,a)":
+    #     plt.axhline(y=-1.0292871913294073, color="dimgrey", linestyle="dashed", linewidth=2.0)
+    prefix = "/workspace/repos_dev/VQVAE_RL/plots/"
+    path = os.path.join(prefix, f"{game}")
+    os.makedirs(path, exist_ok=True)
+    plt.savefig(path + file_name)
+    print("finished")
+
+    plt.close()
+
+
+def plot_TC(game, value_name="Episodic/reward", key_name="General/timesteps_done", smooth=10):
+    wandb_path = f"team-yuan/HDQN_Atari_{game}"
+    if value_name == "Episodic/reward":
+        value_name_plot = "Reward"
+    if key_name == "General/timesteps_done":
+        key_name_plot = "Timesteps"
+    labels = ["DVQN", "DQN", "DVQN+TC", "DQN+TC"]
+    file_name = f"/{value_name_plot}_{game}#with_TC_SEM.png"
+
+    # group_names = [
+    #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2", #Boxing, Asterix
+    #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w",  # Breakout
+    #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|^dvqn_Vcur",  # Riverraid
+    #     "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+    #     "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+    #     "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
+    #     "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
+    #     "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
+    #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+    #     # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+    # ]
+    if game == "Boxing-v5":
+        group_names = [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w",  # Boxing
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+
+    elif game == "Riverraid-v5":
+        group_names = [
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|^dvqn_Vcur",  # Riverraid
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|#_*",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+    elif game == "Asterix-v5":
+        group_names = [
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2", #Boxing, Asterix
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+
+    elif game == "Breakout-v5":
+        group_names = [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2",  # Breakout
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",  # Breakout
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|dqn+tc",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|#_*",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+
+    elif game == "Pong-v5":
+        group_names = [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|&dvqn_Vcur_10w",  # temp
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+
+    for i, group_name in enumerate(group_names):
+        keys, means, half_stds = extract_data_from_wandb(
+            wandb_path,
+            group_name,
+            key_name=key_name,
+            value_name=value_name,
+            smooth=smooth,
+            max_key=False,
+            best_k=None,
+        )
+
+        plot_data(
+            keys=keys,
+            means=means,
+            half_stds=half_stds,
+            label=labels[i],
+            # color=colors[i],
+            key_name=key_name_plot,
+            value_name=value_name_plot,
+        )
+
+    # plt.show()
+    # if value_name_plot == "max Q(s,a)":
+    #     plt.axhline(y=-1.0292871913294073, color="dimgrey", linestyle="dashed", linewidth=2.0)
+    prefix = "/Users/yuan/DVQN_RL/plots/"
+    path = os.path.join(prefix, f"{game}")
+    os.makedirs(path, exist_ok=True)
+    plt.savefig(path + file_name)
+    print("finished")
+
+    plt.close()
+
+
+def plot_withCurl(game, wandb_path, value_name, key_name, smooth=10):
+    if value_name == "Episodic/reward":
+        value_name_plot = "Reward"
+    if key_name == "General/timesteps_done":
+        key_name_plot = "Timesteps"
+
+    labels = ["DVQN", "DQN", "DVQN+Curl", "DQN+Curl"]
+    file_name = f"/{value_name_plot}_{game}#with_Curl.png"
+
+    # group_names = [
+    #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2", #Boxing, Asterix
+    #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w",  # Breakout
+    #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|^dvqn_Vcur",  # Riverraid
+    #     "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+    #     "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+    #     "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
+    #     "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
+    #     "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
+    #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+    #     # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+    # ]
+    if game == "Boxing-v5":
+        group_names = [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w",  # Boxing
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,raw,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|dvqn_curl",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,raw,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+
+    elif game == "Riverraid-v5":
+        group_names = [
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|^dvqn_Vcur",  # Riverraid
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,raw,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|dvqn_curl",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,raw,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+    elif game == "Asterix-v5":
+        group_names = [
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2", #Boxing, Asterix
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,raw,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|dvqn_curl",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,raw,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+
+    elif game == "Breakout-v5":
+        group_names = [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2",  # Breakout
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",  # Breakout
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,raw,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|dvqn_curl",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|#_*",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,raw,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+
+    elif game == "Pong-v5":
+        group_names = [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,raw,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|dvqn_curl",  # temp
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,raw,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+
+    for i, group_name in enumerate(group_names):
+        keys, means, half_stds = extract_data_from_wandb(
+            wandb_path,
+            group_name,
+            key_name=key_name,
+            value_name=value_name,
+            smooth=smooth,
+            max_key=False,
+            best_k=None,
+        )
+
+        plot_data(
+            keys=keys,
+            means=means,
+            half_stds=half_stds,
+            label=labels[i],
+            # color=colors[i],
+            key_name=key_name_plot,
+            value_name=value_name_plot,
+        )
+
+    # plt.show()
+    # if value_name_plot == "max Q(s,a)":
+    #     plt.axhline(y=-1.0292871913294073, color="dimgrey", linestyle="dashed", linewidth=2.0)
+    prefix = "/workspace/repos_dev/VQVAE_RL/plots/"
+    path = os.path.join(prefix, f"{game}")
+    os.makedirs(path, exist_ok=True)
+    plt.savefig(path + file_name)
+    print("finished")
+
+    plt.close()
+
+
+def plot_metric(
+    game,
+    wandb_group_name,
+    key_name,
+    value_name,
+    x_label,
+    y_label,
+    curve_label,
+    file_name_suffix="",
+    smooth=10,
+    save=False,
+):
+    wandb_path = f"team-yuan/HDQN_Atari_{game}"
+
+    # if value_name == "Episodic/reward":
+    #     value_name_plot = "Reward"
+    # if value_name == "Info/grdQ/grd_q_max":
+    #     value_name_plot = "max Q(s,a)"
+    # if key_name == "General/timesteps_done":
+    #     key_name_plot = "Timesteps"
+
+    file_name = f"/{file_name_suffix}.png"
+
+    keys, means, half_stds = extract_data_from_wandb(
+        wandb_path,
+        wandb_group_name,
+        key_name=key_name,
+        value_name=value_name,
+        smooth=smooth,
+        max_key=False,
+        best_k=None,
+    )
+
+    plot_data(
+        keys=keys,
+        means=means,
+        half_stds=half_stds,
+        label=curve_label,
+        # color=colors[i],
+        key_name=x_label,
+        value_name=y_label,
+    )
+
+    # plt.show()
+    # if value_name_plot == "max Q(s,a)":
+    #     plt.axhline(y=-1.0292871913294073, color="dimgrey", linestyle="dashed", linewidth=2.0)
+    if save:
+        prefix = "./plots/"
+        path = os.path.join(prefix, f"{game}")
+        os.makedirs(path, exist_ok=True)
+        plt.savefig(path + file_name)
+    print(f"{game} finished")
+
+
+
+def get_wandb_group_name(game, universal_group_name):
+    # group_names = [
+    #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2", #Boxing, Asterix
+    #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w",  # Breakout
+    #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|^dvqn_Vcur",  # Riverraid
+    #     "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+    #     "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+    #     "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
+    #     "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
+    #     "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
+    #     # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+    #     # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+    # ]
+    if universal_group_name:
+        group_names = [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms300k_close0.5|dvqn_1M",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms300k_close1.0|dvqn_1M#",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms300k_close0.0|dqn_1M",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms300k_close0.0|ddqn_1M",            
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms300k_close0.0|cddqn_1M",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms300k_close0.0|avgdqnK10_1M",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms300k_close0.0|duel_1M",            
+        ]      
+    elif game == "Boxing-v5":
+        group_names = [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w",  # Boxing
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync10",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync50",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync100",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+
+    elif game == "Riverraid-v5":
+        group_names = [
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|^dvqn_Vcur",  # Riverraid
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync10",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync50",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync100",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|#_*",
+            # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+    elif game == "Asterix-v5":
+        group_names = [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2", #Boxing, Asterix
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync10",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync50",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync100",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+
+    elif game == "Breakout-v5":
+        group_names = [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2",  # Breakout
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",  # Breakout
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@ddqn",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|@cddqn",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync10",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync50",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync100",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|dqn+tc",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|#_*",
+            # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+
+    elif game == "Pong-v5":
+        group_names = [
+            "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|?dvqn_Vcur_10w#2",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|?dvqn_Vcur_10w",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close1.0|dvqn_alpha1.0",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,raw,P0|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|@ddqn",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|@cddqn2",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync10",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync50",
+            # "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10_sync100",
+            "A0_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P1|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|avgdqn_K10",
+            "A1_AEncD0_GEncD0_ShrEnc0_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.0|%duel",
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|off,temp,P0|_VQ0|16,0.5,0,[0.0, 0.0, 0.0]|_bs128_ms100k_close0.5|&dvqn_Vcur_10w",  # temp
+            # "A1_AEncD0_GEncD0_ShrEnc1_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.5|!",
+            # "A1_AEncD0_GEncD0_ShrEnc0_Curl|grd,temp,P1|_VQ0|300,1.0,0,[0.0, 0.1, 0.0]|_bs128_ms100k_close0.0|!",
+        ]
+    
+    return group_names
+
+if __name__ == "__main__":
+    # value_name = "Info/grdQ/grd_q_max"
+    # value_name_plot = "max Q(s,a)"
+    # value_name = "Episodic/reward"
+    # value_name_plot = "Reward"
+
+    # value_name = "Info/grdQ/absV_grdQ_l1"
+    # value_name_plot = "VQ_diff"
+
+    
+    # key_name_plot = "Timesteps"
+
+    games = ["Breakout-v5", "Pong-v5", "Asterix-v5", "Boxing-v5", "Riverraid-v5", "Carnival-v5", "Alien-v5", "Phoenix-v5", "DemonAttack-v5", "SpaceInvaders-v5"]
+    # games = ["Asterix-v5"]
+    labels = [
+        "DVQN",
+        # "DVQN-1Q"
+        # r"DVQN $\alpha=0.5$", 
+        # r"DVQN $\alpha=1.0$", 
+        "Deep SARSA",
+        "DQN", 
+        "DDQN", 
+        "CDDQN", 
+        # "Avg DQN freq=10", 
+        # "Avg DQN freq=50", 
+        # "Avg DQN freq=100", 
+        # "Avg DQN freq=1000", 
+        "Avg DQN",
+        "Duel DQN",
+        ]
+    
+    for game in games:
+        # suffix = "redundant_EachActionX5", "redundant_nAction30, redundant_nA+10NOOP"
+        # plot_redundant_actions(
+        #     game,
+        #     wandb_path,
+        #     value_name,
+        #     key_name,
+        #     suffix="redundant_nA+10NOOP_2*",
+        #     smooth=smooth,
+        #     with_duel=True,
+        # )
+
+        # plot_TC(game, value_name="Episodic/reward", key_name="General/timesteps_done", smooth=10)
+        # wandb_group_names = get_wandb_group_name(game, universal_group_name=False)
+        # wandb_group_names = [
+        #     "dvqn_step100k_bs256|dvqn_kis",
+        #     "sarsa_step100k_bs256|sarsa_kis",
+        #     "dqn_step100k_bs256|dqn_kis",
+        #     "ddqn_step100k_bs256|ddqn_kis",
+        #     "cddqn_step100k_bs256|cddqn_kis",
+        #     "avgdqn_step100k_bs256|avgdqn_kis",
+        #     "dueldqn_step100k_bs256|dueldqn_kis",
+        # ]
+        # wandb_group_names = [
+        #     "dvqn_step1000k_bs256|dvqn_kis",
+        #     "sarsa_step1000k_bs256|sarsa_kis",
+        #     "dqn_step1000k_bs256|dqn_kis",
+        #     "ddqn_step1000k_bs256|ddqn_kis",
+        #     "cddqn_step1000k_bs256|cddqn_kis",
+        #     "avgdqn_step1000k_bs256|avgdqn_kis",
+        #     "dueldqn_step1000k_bs256|dueldqn_kis",
+        # ]
+        wandb_group_names = [
+            "step1000k_bs256|dvqn_kis_noaug",
+            "step1000k_bs256|sarsa_kis_noaug",
+            "step1000k_bs256|dqn_kis_noaug",
+            "step1000k_bs256|ddqn_kis_noaug",
+            "step1000k_bs256|cddqn_kis_noaug",
+            "step1000k_bs256|avgdqn_kis_noaug",
+            "step1000k_bs256|dueldqn_kis_noaug",
+        ]
+        # wandb_group_names = [
+        #     "dvqn_step1000k_bs256|dvqn_kis",
+        # ]
+        # wandb_group_names = [
+        #     "dvqn_step1000k_bs256|dvqn_kis",
+        #     "step1000k_bs256|dvqn_dvqn_kis_no2Q"
+        # ]
+
+        labels = [
+        "DVQN",
+        "DQN",
+        "DVQN (20 NOOP)",
+        "DQN (20 NOOP)",
+        ]
+        wandb_group_names = [
+            "dvqn_step1000k_bs256|dvqn_kis",
+            "dqn_step1000k_bs256|dqn_kis",
+            "dvqn_step1000k_bs256|dvqn_kis_noop20",
+            "dqn_step1000k_bs256|dqn_kis_noop20",
+        ]
+        # save_name = f"/kis_1000k_reward_SEM_{game}"
+        # save_name = f"/kis_1000k_vq_SEM_{game}"  
+        # save_name = f"/kis_1000k_2Qablation_SEM_{game}"
+        # save_name = f"/kis_1000k_noaug_SEM_{game}"
+        save_name = f"/kis_1000k_reward_noop_SEM_{game}"
+
+        # assert len(labels) == len(wandb_group_names)
+        for curve_label, wandb_group_name in zip(labels, wandb_group_names):
+            # key_name = "Episodic/timesteps_done"
+            key_name = "General/timesteps_done"
+            value_name = "Episodic/reward"
+            # value_name = "Info/Q/q_max"
+
+            plot_metric(
+                game,
+                wandb_group_name,
+                key_name,
+                value_name,
+                x_label= "Timesteps",
+                y_label= "Reward",
+                curve_label=curve_label,                
+                # file_name_suffix="kis_reward_SEM",
+                smooth=100,
+                # save=False
+            )
+
+            # # value_name = "Info/grdQ/absV_grdQ_l1"
+            # value_name1 = "Info/Q/q"
+            # value_name2 = "Info/V/v"
+
+            # plot_metric(
+            #     game,
+            #     wandb_group_name,
+            #     key_name,
+            #     value_name1,
+            #     x_label= "Timesteps",
+            #     y_label= "Q(s,a)",
+            #     curve_label="DVQN-Q(s,a)",                
+            #     file_name_suffix="V_Q",
+            #     smooth=10,
+            #     save=False
+            # )
+            # plot_metric(
+            #     game,
+            #     wandb_group_name,
+            #     key_name,
+            #     value_name2,
+            #     x_label= "Timesteps",
+            #     y_label= "Q(s,a) and V(s)",
+            #     curve_label="DVQN-V(s)",                
+            #     file_name_suffix="V_Q",
+            #     smooth=10,
+            #     save=False
+            # )
+
+        prefix = "./plots/"
+        path = os.path.join(prefix, f"{game}")
+        os.makedirs(path, exist_ok=True)
+        plt.savefig(path + save_name)
+        print(f"Plot saved for {game} at {path + save_name}")
+        plt.close()
