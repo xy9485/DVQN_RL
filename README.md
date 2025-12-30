@@ -1,6 +1,6 @@
 **This is the repository for paper:**
 
-**VQ-learning: Towards Unbiased Action Value Estimation in Reinforcement Learning**
+**Towards Unbiased Action Value Estimation in Reinforcement Learning**
 
 
 ### Run DVQN and Baselines
