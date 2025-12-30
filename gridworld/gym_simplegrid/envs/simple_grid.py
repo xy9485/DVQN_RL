@@ -477,3 +477,25 @@ class SimpleGridEnv(Env):
 
     #     return grid, vis_mask
         pass
+
+
+class GridEnvFromDoubleQLearning(SimpleGridEnv):
+    """
+    Grid environment for double Q-learning. Just using a different reward function.
+    """
+    def __init__(self,
+        obstacle_map: str | list[str],
+        MOVES: dict[int,tuple] = None,
+        render_mode: str | None = None,
+        max_episodic_steps: int = 9999999
+    ):
+        super().__init__(obstacle_map=obstacle_map, MOVES=MOVES, render_mode=render_mode, max_episodic_steps = max_episodic_steps)
+
+    def get_reward(self, x, y):
+        """
+        Get the reward of a given cell.
+        """
+        if (x, y) in self.goals_xy:
+            return 5.0
+        else:
+            return np.random.choice([-12.0, 10.0], p=[0.5, 0.5])

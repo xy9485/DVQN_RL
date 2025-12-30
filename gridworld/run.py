@@ -161,9 +161,9 @@ def run(
 
             if done or truncated:
                 if env.unwrapped.agent_xy == env.unwrapped.goals_xy[0]:
-                    data.update({"reach_desired_goal": 1})
-                else:
                     data.update({"reach_desired_goal": 0})
+                else:
+                    data.update({"reach_desired_goal": 1})
             logger.dump_episodic_data(data)
 
             obs, info = env.reset(options={"start_loc": start_loc, "goal_loc": goal_loc})
@@ -263,7 +263,7 @@ def run(
                 for k, v in learn_info.items():
                     logger.log(key=k, value=v)
             if config["noisy_update"] > 0.0:
-                agent.simulate_noisy_update()
+                agent.simulate_noisy_update(noise=config["noisy_update"], gaussian=False)
         trajectory.append(new_obs)
 
         # [Evaluation]
@@ -304,9 +304,9 @@ def run_experiment(MDP, config, n_repeat=8):
     env = gym.make(
         env_name,
         obstacle_map=obstacle_map,
-        render_mode='human',
+        # render_mode='human',
         MOVES=MOVES,  # if None, it will use the default 4 moves
-        # render_mode=None,
+        render_mode=None,
         max_episode_steps=config['max_episode_steps'],  # This is for TimeLimit wrapper
     )
 

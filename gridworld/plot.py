@@ -149,6 +149,8 @@ def plot_metric(log_path, key_name, value_name, x_label, y_label, label_name, in
         interpolate=interpolate,
         )
     pass
+    if label_name == "VQ-learning":
+        label_name = "QV-learning"
     plot_data(
         keys,
         means,

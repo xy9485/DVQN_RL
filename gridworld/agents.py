@@ -90,10 +90,12 @@ class Agent:
     def learn(self, state, action, reward, state_, done, **kwargs):
         pass
 
-    def simulate_noisy_update(self, noise=0.01):
-        # self.Q = np.random.normal(self.Q, noise)
-        # sample a noise from a uniform distribution between -noise and noise and add it to self.Q
-        self.Q = self.Q + np.random.uniform(-noise, noise, self.Q.shape)
+    def simulate_noisy_update(self, noise=0.01, gaussian=False):
+        if gaussian:
+            self.Q = np.random.normal(self.Q, noise)
+        else:
+            # sample a noise from a uniform distribution between -noise and noise and add it to self.Q
+            self.Q = self.Q + np.random.uniform(-noise, noise, self.Q.shape)
 
 
 class Q_Agent(Agent):
@@ -158,6 +160,14 @@ class DoubleQ_Agent(Agent):
         else:
             self.Q = np.zeros((self.n_states, self.n_actions))
             self.Q_ = np.zeros((self.n_states, self.n_actions))
+
+    def simulate_noisy_update(self, noise=0.01, gaussian=False):
+        if gaussian:
+            self.Q = np.random.normal(self.Q, noise)
+            self.Q_ = np.random.normal(self.Q_, noise)
+        else:
+            self.Q = self.Q + np.random.uniform(-noise, noise, self.Q.shape)
+            self.Q_ = self.Q_ + np.random.uniform(-noise, noise, self.Q_.shape)
 
 
 class VQ_Agent(Agent):
@@ -300,12 +310,14 @@ class VQ_Agent(Agent):
         self.V = copy.deepcopy(self.V_)
         self.Q = copy.deepcopy(self.Q_)
 
-    def simulate_noisy_update(self, noise=0.01):
-        # self.Q = np.random.normal(self.Q, noise)
-        # self.V = np.random.normal(self.V, noise)
-        # sample a noise from a uniform distribution between -noise and noise and add it to self.Q
-        self.Q = self.Q + np.random.uniform(-noise, noise, self.Q.shape)
-        self.V = self.V + np.random.uniform(-noise, noise, self.V.shape)
+    def simulate_noisy_update(self, noise=0.01, gaussian=False):
+        if gaussian:
+            self.V = np.random.normal(self.V, noise)
+            self.Q = np.random.normal(self.Q, noise)
+        else:
+            # sample a noise from a uniform distribution between -noise and noise and add it to self.Q
+            self.Q = self.Q + np.random.uniform(-noise, noise, self.Q.shape)
+            self.V = self.V + np.random.uniform(-noise, noise, self.V.shape)
 
 
 class SARSA_Agent(Agent):

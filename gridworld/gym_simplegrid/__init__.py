@@ -7,6 +7,12 @@ register(
 )
 
 register(
+    id='GridEnvFromDoubleQLearning-v0',
+    entry_point='gym_simplegrid.envs:GridEnvFromDoubleQLearning',
+    max_episode_steps=200
+)
+
+register(
     id='SimpleGrid-8x8-v0',
     entry_point='gym_simplegrid.envs:SimpleGridEnv',
     max_episode_steps=200,
